@@ -165,10 +165,10 @@ in the tree (the `optional` marker itself); a var with any `optional`
 occurrence must have `default !== nothing`.
 
 ```julia
-@data VarSpec{T} begin               # Moshi ADT — concrete tagged type
+@data VarSpec begin                  # Moshi ADT — concrete tagged type
     struct Slot
         predicate::Union{Nothing, PredT}
-        default::Union{Nothing, BasicSymbolic{T}}   # nothing = required
+        default::Union{Nothing, BasicSymbolic{SymReal}}  # nothing = required
     end
     struct Segment
         predicate::Union{Nothing, PredT}
@@ -178,6 +178,12 @@ occurrence must have `default !== nothing`.
     end
 end
 ```
+
+`VarSpec` is deliberately non-parametric: `PredT`/`SeqPredT` are already
+`SymReal`-fixed, so a vartype parameter would only decorate `default` — and
+it would be uninferrable at `default === nothing` (caught by Aqua's
+unbound-args check). If `SafeReal`/`TreeReal` support lands, parameterize all
+fields together or none.
 
 Kind is the variant tag — no flag, no dead fields, and legality of each
 spec field is structural (`default` literally cannot exist on a `Segment`).
@@ -448,7 +454,7 @@ struct Matcher{T}
     root::Int32                               # node index of whole pattern
     plans::Vector{NodePlan}                   # indexed by node idx — ADT below
     var_syms::Vector{BasicSymbolic{T}}        # var_id -> inner Sym
-    var_specs::Vector{VarSpec{T}}             # var_id -> spec (§3.1)
+    var_specs::Vector{VarSpec}                # var_id -> spec (§3.1)
     var_of::IdDict{BasicSymbolic{T}, Int32}   # inner sym -> var_id (=== identity)
     is_ground::BitVector                      # subtree contains no variables
     nvars::Int                                # number of distinct variables
