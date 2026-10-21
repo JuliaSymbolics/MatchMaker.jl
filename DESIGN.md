@@ -122,14 +122,16 @@ that drive every design decision below:
 
 Pattern variables are ordinary `Term`s headed by singleton marker constants:
 
-- `slot(x[, pred[, default]])` — matches exactly one term/argument.
-- `segment(x[, pred[, seqpred[, min[, max]]]])` — matches a contiguous run
-  (free/associative heads) or a sub-multiset (commutative/AC heads) of an
-  argument list.
-- `optional(x, default)` — sugar for `slot(x, Returns(true), default)`.
+- `slot(x)` — matches exactly one term/argument.
+- `segment(x)` — matches a contiguous run (free/associative heads) or a
+  sub-multiset (commutative/AC heads) of an argument list.
+- `optional(x)` — a slot occurrence that may instead bind the variable's
+  declared `default` (per-occurrence marker; the default *value* lives in the
+  `VarSpec`, not in the tree).
 
 `slot`, `segment`, `optional` are constants of distinct singleton types; each
-is callable and produces a `Term` whose `operation` is the marker itself:
+is callable and produces a `Term` whose `operation` is the marker itself.
+They take **exactly one argument — the inner `Sym`** — and nothing else:
 
 ```julia
 slot(x) isa BasicSymbolic{SymReal}        # a Term
@@ -138,42 +140,36 @@ operation(slot(x)) === slot               # object-identity detection — O(1),
 ```
 
 Because a marker term is a real expression node, pattern-variable declarations
-are *visible in the tree*, are distinguished by `isequal` (`slot(x, f)` ≠
-`slot(x, g)` ≠ `slot(x)`), require no metadata plumbing, and can be built with
+are *visible in the tree*, require no metadata plumbing, and can be built with
 plain symbolic arithmetic (`slot(x) + y`, `sin(segment(xs))`).
 
 **Variable identity.** A *variable* is the inner `Sym` `x` — a plain symbolic
 variable created by `@syms`/`Sym`, whose own `symtype` is the type constraint.
-`unwrap_varspec(node)` strips a marker term to its inner sym. A `Sym` that
-appears as the inner argument of ≥1 marker term is a variable *everywhere it
-occurs in the pattern, wrapped or bare* — so `sin(slot(x)) + x` is a non-linear
-slot pattern (Mathematica's `sin(x_) + x_`). Corollary (documented caveat):
-a literal sym and a variable cannot share a name in one pattern — to have a
-literal `x` alongside `slot(x)`, use a different name.
+`unwrap_varspec(node)` strips a marker term to its inner sym. All marker-term
+occurrences of `x` refer to the same variable. **A variable must appear only
+inside marker terms: a bare occurrence of a marked sym anywhere in the pattern
+is a compile error** — `sin(slot(x)) + x` is rejected, not silently non-linear.
+Likewise a variable may not appear in both `slot`/`optional` and `segment`
+markers (kind conflict → error). Both rules are cheap compile-time checks over
+the pattern IR and remove an entire class of silent misreads.
 
-**Spec data lives outside the expression.** Per-variable constraint data
-(`predicate`, `sequence_predicate`, `min`, `max`, `default`) is stored in a
-`VarSpec` table owned by the `Matcher` — not in the expression. Two sources
-populate it, merged and consistency-checked at compile time:
-
-- *inline*: extra positional args of the marker terms (sugar);
-- *external*: `compile_pattern(expr; vars::AbstractDict)` mapping inner syms
-  to spec fields — so one pattern can be reused with different specs.
-
-Merge rules: `kind` must agree across all occurrences of a var (slot vs
-segment — a conflict is a compile error); occurrence predicates are kept
-per-occurrence and checked at that node, while external-map `predicate` is
-var-level and checked once at binding; `min`/`max`/`default` are var-level and
-must agree everywhere they are declared (conflict → error). `optional`ness is
-a per-occurrence property (a `slot`/`optional`-marked node is optional iff a
-default is available for it).
+**Spec data lives entirely outside the expression.** The compiled matcher is
+independent of predicates: they affect which matches are accepted, never how
+the search is structured — so they belong in a swappable table, not baked into
+the expression. `compile_pattern(expr; vars::AbstractDict)` maps inner syms to
+spec fields (`NamedTuple`s merged into `VarSpec`); unlisted vars get defaults
+(`predicate = nothing`, `min = 0`, `max = typemax(Int)`, `default = nothing`).
+Specs keyed on syms that are not pattern variables are a compile error
+(typo-catcher). Per-occurrence optionalness is the *only* spec fact that lives
+in the tree (the `optional` marker itself); a var with any `optional`
+occurrence must have `default !== nothing`.
 
 ```julia
-struct VarSpec                       # fully concrete — no params
+struct VarSpec{T}                    # concrete fields; T = vartype
     kind::VarKind.T                  # enumx: SLOT | SEGMENT
-    predicate::Union{Nothing, PredT} # var-level element/binding predicate
+    predicate::Union{Nothing, PredT} # element/binding predicate
     sequence_predicate::Union{Nothing, SeqPredT}   # segments only
-    default::Union{Nothing, Any}     # user value; `nothing` = required
+    default::Union{Nothing, BasicSymbolic{T}}      # an expr (maybe Const)
     min::Int                         # segments; slots fix at 1
     max::Int
 end
@@ -199,26 +195,23 @@ is checked *before* calling so unconstrained vars pay zero predicate cost.
 ### 3.3 Constructors and macros
 
 ```julia
-slot(x; type = nothing, shape = nothing, predicate = nothing, default = nothing)
-slot(x, pred)  slot(x, pred, default)          # positional sugar
-segment(x; type = nothing, predicate = nothing, sequence_predicate = nothing,
-        min = 0, max = typemax(Int))
-segment(x, pred, seqpred, min, max)
-optional(x, default)
-unwrap_varspec(x) -> BasicSymbolic             # strip marker(s) to inner sym
+slot(x)              # marker term wrapping Sym x
+segment(x)
+optional(x)
+unwrap_varspec(x) -> BasicSymbolic             # strip marker term to inner sym
 is_pattern_var(x) -> Bool
 varsym(x) -> Sym                               # inner sym of a marker term
 ```
 
-`x` may be a `Symbol` (a fresh `Sym` is created with `type`/`shape` keywords)
-or an existing `Sym`. Validation at construction: inner arg must be a `Sym`
-(`slot(f(x))`, `slot(slot(x))` → error); `min ≥ 0`, `max ≥ min`; `default` may
-not be `nothing` inside `optional`.
+`x` may be a `Symbol` (a fresh `Sym` is created; `slot(:x; type, shape)`
+keywords apply) or an existing `Sym`. Validation at construction: the argument
+must be a `Sym` (`slot(f(x))`, `slot(slot(x))` → error).
 
-Macros bind *marker terms* in local scope — minimal grammar (`name` and
-`name::Type` only), richer specs via functions or the external map:
+Macros bind *marker terms* — `@slot x` produces the expression `slot(x)` for
+an existing symbolic `x`; the plural forms create syms and wrap them:
 
 ```julia
+@slot x               # → slot(x); x must already be a Sym
 @slots x y::Real      # x = slot(Sym(:x)); y = slot(Sym(:y; type = Real))
 @segments xs ys::Real # xs = segment(Sym(:xs)); ys = segment(Sym(:ys; type=Real))
 ```
@@ -239,11 +232,19 @@ Macros bind *marker terms* in local scope — minimal grammar (`name` and
   are strictly better where it matters: visible in the tree, `isequal`-
   distinguished, zero dict probes. Metadata remains the channel for *symbolic
   head* operation traits (§3.5), where there is no marker term to hang data on.
-- **A standalone `predicate(x, f)` wrapper term.** Redundant spelling of the
-  `slot(x, f)` positional arg — one mechanism, two spellings. Rejected.
+- **Inline spec args on marker terms** (`slot(x, pred, default)`). Rejected:
+  the compiled matcher is independent of predicates, so baking them into the
+  expression buys nothing; `VarSpec` + `vars` map is uniform, swappable
+  without recompiling the plan, keeps `slot(x)` clean even for complicated
+  functors, and stores callables as `FunctionWrapper`s. Same rejection for a
+  standalone `predicate(x, f)` wrapper term.
 - **Variable = whole marker term (per-occurrence identity).** Rejected in
-  favor of sym-identity: `slot(x) + x` should be non-linear, not "var +
-  literal sym".
+  favor of sym-identity: `slot(x)` twice is one variable; a bare `x` is a
+  compile error rather than a silent literal.
+- **Occurrence-level predicates.** With specs in `VarSpec`, predicates are
+  var-level only — checked once at binding; later occurrences only `isequal`-
+  recheck. If a real use-case needs per-position predicates it would return
+  as a plan-level field, not expression syntax.
 
 ### 3.5 Operation traits
 
@@ -273,7 +274,7 @@ back to the traits for the general case — dynamic dispatch on `(Any, DataType)
 is otherwise paid on every call node of every match:
 
 ```julia
-@inline _is_ac_head(op, ::Type{ST}) where {ST} =
+_is_ac_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils.TypeT)) =
     if op === (+) || op === (*)
         _is_number_st(ST) && return true     # enumerated common symtypes
     elseif op isa Function || op isa Type    # etc — cheap negative fast paths
@@ -281,17 +282,21 @@ is otherwise paid on every call node of every match:
     end;
     is_associative(op, ST) && is_commutative(op, ST)
 
-@inline _is_number_st(::Type{T}) where {T} =
+_is_number_st(@nospecialize(T::SymbolicUtils.TypeT)) =
     T === Number || T === Real || T === Integer || T === Int ||
     T === Float64 || T === Float32 || T === Rational{Int} ||
     T === Bool  || T <: Number
 ```
 
-(Schematic — the real wrappers enumerate the combos that dominate, ending in
-the general `<:`/trait fallback.) The same pattern recurs for `symtype <:`
-checks (§5.5b) and is stated once as a rule in §9: **subtype checks are not
-free — they call into the compiler runtime — so hot paths enumerate common
-concrete cases and memoize the rest.**
+Both are `@nospecialize`d: at every call site `op` and `ST` are uninferrable,
+so a specialized method would only be reached through dynamic dispatch —
+there is no point fast-pathing inside a function the compiler can't inline
+into. `@nospecialize` keeps one compiled body; the enumeration runs *inside*
+that body. (Schematic — the real wrappers enumerate the combos that dominate,
+ending in the general `<:`/trait fallback.) The same pattern recurs for
+`symtype <:` checks (§5.5b) and is stated once as a rule in §9: **subtype
+checks are not free — they call into the compiler runtime — so hot paths
+enumerate common concrete cases and memoize the rest.**
 
 **Decision:** traits take the result symtype, not the argument symtypes.
 Rationale: it is a lookup, not a computation; the common distinctions
@@ -316,18 +321,17 @@ internal.
 3. **Slots** match exactly one term, subject to: symtype constraint
    (`symtype(candidate) <: symtype(inner_sym)`), shape constraint (concrete
    `ShapeVecT` must equal the candidate's shape; `Unknown` is unconstrained),
-   then the occurrence's `predicate` (the FunctionWrapper'd check, skipped
+   then the variable's `predicate` (the FunctionWrapper'd check, skipped
    entirely when none is declared). `<:` calls into the compiler runtime —
    it is **not** free — so the check goes through the fast-path wrapper +
-   per-variable memo described in §5.5b.
+   (optionally) the memo described in §5.5b.
 
-4. **Non-linear patterns.** Every occurrence of a variable is a distinct
-   pattern node (or the same node visited twice via shared parents); the first
-   binds, later occurrences check `isequal` against the bound value (`===`
-   fast path first — subject subterms are interned, so structural equality
-   usually resolves in O(1)). Occurrence predicates are re-evaluated at each
-   occurrence — `slot(x, f)` … `slot(x, g)` requires `f(v) && g(v)` on the
-   bound value `v`.
+4. **Non-linear patterns.** Every occurrence of a variable is a marker-term
+   node; the first binds, later occurrences check `isequal` against the bound
+   value (`===` fast path first — subject subterms are interned, so
+   structural equality usually resolves in O(1)). Var-level predicates are
+   evaluated once, at binding — there are no occurrence-level predicates
+   (§3.4).
 
 5. **Segments** under a free or associative head capture a *contiguous run*;
    under a commutative or AC head they capture a *sub-multiset* materialized
@@ -347,11 +351,13 @@ internal.
    `matchpy/matching/_common.py::check_one_identity` `[R5]`), and is what makes
    `+`-headed patterns work on non-`Add` subjects.
 
-7. **Optional slots** enumerate two alternatives at an AC/A node: consume one
-   remaining argument (a normal slot match) or bind `default`. Enumeration
-   order: consume first, default second — adapted from MatchPy's
-   `Optional`/`Wildcard.optional` semantics and its use in
-   `one_to_one.py::_fixed_var_iter_factory` `[R5]`.
+7. **Optional slots.** An `optional(x)` occurrence at an AC/A node enumerates
+   two alternatives: consume one remaining argument (a normal slot match) or
+   bind the var's `VarSpec.default`. Enumeration order: consume first,
+   default second — adapted from MatchPy's `Optional`/`Wildcard.optional`
+   semantics and its use in `one_to_one.py::_fixed_var_iter_factory` `[R5]`.
+   A var carrying `optional` occurrences must declare `default` in its spec;
+   outside an AC/A node an `optional` occurrence is a compile error.
 
 8. **Enumeration order.** Deterministic *and* canonical where it counts:
    AC/A subject arguments are iterated in `sorted_arguments` order (`<ₑ` —
@@ -422,7 +428,7 @@ struct Matcher{T}
     root::Int32                               # node index of whole pattern
     plans::Vector{NodePlan}                   # indexed by node idx — ADT below
     var_syms::Vector{BasicSymbolic{T}}        # var_id -> inner Sym
-    var_specs::Vector{VarSpec}                # var_id -> merged spec (§3.1)
+    var_specs::Vector{VarSpec{T}}             # var_id -> spec (§3.1)
     var_of::IdDict{BasicSymbolic{T}, Int32}   # inner sym -> var_id (=== identity)
     is_ground::BitVector                      # subtree contains no variables
     nvars::Int                                # number of distinct variables
@@ -439,8 +445,8 @@ each marker node to `var_of[unwrap_varspec(node)]`.
 ```julia
 @data NodePlan begin
     Literal()                          # match iff isequal (consts, plain syms)
-    Slot(var_id::Int32, occ_pred::Union{Nothing, PredT}, optional::Bool)
-    Segment(var_id::Int32, occ_pred::Union{Nothing, PredT})
+    Slot(var_id::Int32, optional::Bool)
+    Segment(var_id::Int32)
     Call(op, children::SmallV{Int32}, order)   # free head: positional children
     ACCall(op, fixed::SmallV{Int32}, varslots, segments, optionals, ...)
     ...
@@ -454,8 +460,10 @@ comparison. This is the single most valuable compile-time fact (real patterns
 are mostly ground).
 
 Compile-time validations (loud errors, not silent mismatches):
-- kind conflicts across occurrences of one variable (slot vs segment);
-- `min`/`max`/`default` conflicts across occurrences;
+- **bare occurrence of a marked sym** (`sin(slot(x)) + x` → error);
+- kind conflicts across occurrences of one variable (slot/optional vs segment);
+- `optional` occurrence of a var without `default` in its spec;
+- `vars` map entries keyed on syms that are not pattern variables;
 - segment under a position where capture is undefined (see §4.5);
 - marker terms in head position (`slot(x)(y)` — undefined, rejected);
 - `min > arity bound` where provable.
@@ -507,17 +515,19 @@ Engine state:
 mutable struct MatchEngine{T}
     const pat::Matcher{T}
     const subj::IRStructure{T}
-    frames::Vector{MatchFrame}     # stack; top = deepest obligation
-    binds::Bindings{T}
-    trail::Vector{Int32}
+    const frames::Vector{MatchFrame}  # stack; top = deepest obligation
+    const binds::Bindings{T}
+    const trail::Vector{Int32}
     const constraints::Vector{Constraint}
-    pending::BitVector             # constraint-ready bookkeeping
-    steps::Int                     # work meter; compare against budget
+    const pending::BitVector          # constraint-ready bookkeeping
+    steps::Int                        # work meter; compare against budget
 end
 ```
 
-`const` on every field that is never rebound after construction (`pat`,
-`subj`, `constraints`) — buffers and counters stay mutable.
+`const` on every field that names a container (they're mutated *through* the
+reference, never rebound — `push!`/`pop!` on `frames`, element writes on
+`binds.node` etc. all work fine under `const`). Only `steps`, a plain `Int`
+counter, needs interior mutability.
 
 `advance!` protocol — every frame kind implements:
 
@@ -551,13 +561,16 @@ we keep `matches` as a plain `iterate` wrapper over `next_match!`.
 **(a) Literal / ground subtree** — `isequal(p_subtree, s_node)`; interned DAG
 makes this near-O(1). Never pushes a frame.
 
-**(b) Slot** — bound → `isequal` recheck (+ occurrence predicate re-eval);
-unbound → symtype+shape+occurrence/var predicates, bind, trail-record, then
-run ready constraints. The `symtype <: ` check goes through a fast-path
-wrapper (`cand === want`, `want === Any`, enumerated concrete combos) ending
-in a per-variable memo `Dict{Tuple{DataType,DataType},Bool}` — subtype checks
-are pure over the symtype lattice, so results cache safely for the life of
-the engine (§9 rule).
+**(b) Slot** — bound → `isequal` recheck; unbound → symtype+shape+var
+predicates, bind, trail-record, then run ready constraints. The
+`symtype <: ` check goes through the `@nospecialize` fast-path wrapper
+(`cand === want`, `want === Any`, enumerated concrete combos — most
+real-world specs are `Any`/`Number`/`Real`, so enumeration alone should
+carry most of the win). Whether a per-variable memo
+(`Dict{Tuple{DataType,DataType},Bool}`) pays for its own bookkeeping vs
+simply paying the enumerated check is an open question — it is a benchmark
+item in `perf/hardening` (§12), and the wrapper seam is exactly the kind of
+component the modular design below lets us swap for measurement.
 
 **(c) `Seq` (free head)** — `operation` must agree (`===`/`isequal` for
 function heads, `isequal`/slot-match for symbolic heads); fixed arity; children
@@ -660,8 +673,8 @@ end
     *order-dependent*.
   - The bound value is a first-class expression users can keep manipulating.
 - **Key normalization** (`unwrap_varspec` on lookup): `d[x]`, `d[slot(x)]`,
-  `d[slot(x, f)]`, `d[segment(x)]`, `d[optional(x, 0)]` all resolve to the same
-  variable — implemented on `getindex`/`get`/`haskey`/`setindex!`/`iterate`.
+  `d[segment(x)]`, `d[optional(x)]` all resolve to the same variable —
+  implemented on `getindex`/`get`/`haskey`/`setindex!`/`iterate`.
   Keys are stored as inner syms only; because `isequal` ignores nothing here,
   `d[plain_sym]` also hits (wanted: substitute works on the plain variable).
 
@@ -693,6 +706,29 @@ materialize(view) -> Substitution
 ```
 
 `eachmatch` is the zero-allocation hot path rewriters should use.
+
+### 5.7 Swappable algorithms
+
+The design is not built around pluggable algorithms, but two seams make
+swapping cheap where it matters:
+
+- **Plan-level seam.** `NodePlan` variants are the unit of algorithm choice:
+  at compile time an AC node could produce `ACCall` (Uno+HK bipartite
+  enumeration) or, say, an `ACBrute` plan (naive permutation/subset
+  enumeration for benchmarking or verification) or a future `ACLinear` plan
+  (§5.5f analysis) — the engine does not care which frame it executes.
+  `compile_pattern(...; alg = :default | :naive)` (or a per-head table) is a
+  small surface addition that costs nothing when unused. This is the natural
+  home for the §5.5b memo-vs-enumerate experiment and any future linear-path
+  or AddMul-dict matcher.
+- **Top-level seam.** A wholly different matcher (e.g. our own naive oracle
+  for cross-validation, or a recursive baseline for benchmarks) is simply a
+  different entry point with the same `match`/`matches` signature — no
+  engine internals shared, no coupling.
+
+Anything more invasive (e.g. swapping the frame machine itself) is out of
+scope by intent — two seams cover the interesting variation points without
+paying an abstraction tax in the hot loop.
 
 ---
 
@@ -794,11 +830,13 @@ this section exists only to keep today's choices compatible.
   inference works, no overspecialization, no `Any` call; a `nothing` check
   skips the call entirely when unconstrained.
 - **Subtype checks are not free** (they enter the compiler runtime). Hot
-  checks — `symtype(candidate) <: T`, op-trait lookups — go through wrappers
-  that enumerate common concrete cases (`===`, literal tables) and memoize
-  the rest (`Dict{Tuple{DataType,DataType},Bool}` per variable, lifetime =
-  engine). Stated once as a rule: *design for extensibility; internally
-  fast-path common cases.*
+  checks — `symtype(candidate) <: T`, op-trait lookups — go through
+  `@nospecialize`d wrappers that enumerate common concrete cases (`===`,
+  literal tables) before the general `<:`/trait fallback. Whether a
+  `Dict{Tuple{DataType,DataType},Bool}` memo on top of that is a net win vs
+  the enumeration alone (most real specs are `Any`/`Number`/`Real`) is
+  decided by the §12 benchmark, not assumed. Stated once as a rule: *design
+  for extensibility; internally fast-path common cases.*
 - No `Vector{Any}` in the search state; bindings store `Int32` node ids;
   `seg_op` is the sole `Any` field and is cold (materialization only).
 - Buffers reused across matches of one engine; `Substitution` materialization
@@ -862,14 +900,14 @@ coverage before the next starts.
    *Tests: package loads, QA green.*
 1. `feat/pattern-vars` — §3.1–3.3: marker singletons, `unwrap_varspec`,
    `VarSpec`, constructors, macros, `Substitution` dict wrapper.
-   *Tests: marker-term identity/equality, var identity & name-collision
-   caveat, constructor validation, macro expansion, dict key normalization.*
+   *Tests: marker-term identity/equality, constructor validation, macro
+   expansion, dict key normalization.*
 2. `feat/op-traits` — §3.5 incl. fast-path wrappers. *Tests: +/* AC for
    Number, A-not-C for matrices, symbolic-head metadata fallback, user
    extension, fast-path equivalence vs trait fallback.*
-3. `feat/pattern-compiler` — §5.2: `Matcher`, `NodePlan`, spec merge,
-   validation. *Tests: plan shape per node kind, ground flags, varspec
-   merge/conflict errors.*
+3. `feat/pattern-compiler` — §5.2: `Matcher`, `NodePlan`, `vars` map →
+   `VarSpec` merge, validation. *Tests: plan shape per node kind, ground
+   flags, bare-occurrence error, kind-conflict error, spec-key errors.*
 4. `feat/match-core` — engine + literal/slot/`Seq`; `match`, `matches`,
    `eachmatch`, `Substitution`(+View). *Tests: unit per leaf logic; oracle on
    linear patterns; fuzz (free-heads only).*
@@ -882,13 +920,16 @@ coverage before the next starts.
    *Tests: unit on candidate matrix & distribution; oracle fuzz incl.
    non-linear; `test/matchpy/` suite; singleton coercion.*
 9. `feat/optional-slots` — §4.7/§5.5g. *Tests: defaults under +,*; both
-   enumeration branches; compile error outside AC/A; `optional` marker sugar.*
+   enumeration branches; `optional` w/o default → compile error; outside
+   AC/A → compile error.*
 10. `feat/constraints` — §4.9. *Tests: early-prune call-count instrumentation,
     correctness vs post-hoc filtering.*
 11. `feat/instantiate` — §5.6 remainder. *Tests: splice correctness, end-to-end
     rewrite examples.*
 12. `perf/hardening` — allocation audit, `@code_typed` notes committed,
-    benchmark suite vs `@acrule`, budget parameter.
+    benchmark suite vs `@acrule`, budget parameter, memo-vs-enumerate
+    experiment for `symtype <:` (§5.5b), `:naive` plan variants for
+    benchmarking (§5.7).
 13. `docs/user-guide` — pattern syntax & semantics incl. the normalization
     caveat and complexity notes.
 
