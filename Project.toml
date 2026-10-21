@@ -1,0 +1,37 @@
+name = "MatchMaker"
+uuid = "a3da1e36-6513-4d47-b86d-5347c7de0145"
+authors = ["Aayush Sabharwal <aayush.sabharwal@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+DocStringExtensions = "ffbed154-4ef7-542d-bbb7-c09d3a79fcae"
+FunctionWrappers = "069b7b12-0de2-55c6-9aab-29f3d0a68a2e"
+Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
+Moshi = "2e0e35c7-a2e4-4343-998d-7ef72827ed2d"
+ReadOnlyArrays = "988b38a3-91fc-5605-94a2-ee2116b3bd83"
+SymbolicUtils = "d1185830-fcd6-423d-90d6-eec64667417b"
+
+[sources]
+SymbolicUtils = {path = "../SymbolicUtils.jl"}
+
+[extras]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
+SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Aqua", "JET", "SafeTestsets", "Test"]
+
+[compat]
+Aqua = "0.8"
+DocStringExtensions = "0.9"
+FunctionWrappers = "1.1"
+Graphs = "1.13.4"
+JET = "0.12"
+Moshi = "0.3.6 - 0.3.9, 0.3.13"
+ReadOnlyArrays = "0.2"
+SafeTestsets = "0.1"
+SymbolicUtils = "4.53"
+Test = "1"
+julia = "1.10"
