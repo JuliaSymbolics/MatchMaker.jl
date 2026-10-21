@@ -106,7 +106,7 @@ that drive every design decision below:
 | *slot* | a variable matching exactly one argument/term (`~x` analogue; MatchPy `Wildcard.dot`/`Wildcard.symbol`) |
 | *optional slot* | a slot occurrence that may instead bind a declared default (`~!x` analogue; MatchPy `Optional`/`Wildcard.optional`) |
 | *segment* | a variable matching a contiguous run (A/free ops) or a sub-multiset (C/AC ops) of an argument list (`~~x` analogue; MatchPy `Wildcard.plus`/`Wildcard.star`; our `min`/`max` bounds generalize `Wildcard.min_count`/`fixed_count`) |
-| *VarSpec* | per-variable spec record (kind, predicates, min/max, default) owned by the `Matcher` |
+| *VarSpec* | per-variable spec ADT (`Slot`/`Segment` variants) owned by the `Matcher` |
 | *ground* | a pattern (sub)node containing no variables |
 | *linear* | a pattern in which every variable occurs at most once |
 | *substitution* | a complete assignment slot→subject-term, segment→`f(captured…)` |
@@ -157,36 +157,40 @@ the pattern IR and remove an entire class of silent misreads.
 independent of predicates: they affect which matches are accepted, never how
 the search is structured — so they belong in a swappable table, not baked into
 the expression. `compile_pattern(expr; vars::AbstractDict)` maps inner syms to
-spec fields (`NamedTuple`s merged into `VarSpec`); unlisted vars get defaults
-(`predicate = nothing`, `min = 0`, `max = typemax(Int)`, `default = nothing`).
+`VarSpec` variant objects; unlisted vars get unconstrained defaults
+(`Slot(nothing, nothing)` / `Segment(nothing, nothing, 0, typemax(Int))`).
 Specs keyed on syms that are not pattern variables are a compile error
 (typo-catcher). Per-occurrence optionalness is the *only* spec fact that lives
 in the tree (the `optional` marker itself); a var with any `optional`
 occurrence must have `default !== nothing`.
 
 ```julia
-struct VarSpec{T}                    # concrete fields; T = vartype
-    kind::VarKind.T                  # enumx: SLOT | SEGMENT
-    predicate::Union{Nothing, PredT} # element/binding predicate
-    sequence_predicate::Union{Nothing, SeqPredT}   # segments only
-    default::Union{Nothing, BasicSymbolic{T}}      # an expr (maybe Const)
-    min::Int                         # segments; slots fix at 1
-    max::Int
+@data VarSpec{T} begin               # Moshi ADT — concrete tagged type
+    struct Slot
+        predicate::Union{Nothing, PredT}
+        default::Union{Nothing, BasicSymbolic{T}}   # nothing = required
+    end
+    struct Segment
+        predicate::Union{Nothing, PredT}
+        sequence_predicate::Union{Nothing, SeqPredT}
+        min::Int
+        max::Int
+    end
 end
 ```
 
-`kind` is a deliberate denormalization, not a second source of truth: node
-dispatch reads the `NodePlan` variants, never `VarSpec.kind`, and marker terms
-are the sole declarer of kind. Its two jobs: (a) the *merge-validation
-record* — which `vars`-map fields are legal depends on kind (`min`/`max`/
-`sequence_predicate` on a slot → compile error; `default` on a segment →
-compile error), and `VarSpec` is where the merged spec lands; (b) the
-*interpretation key* making the flat record self-describing for
-introspection. Runtime disambiguation of "unbound slot" vs "segment bound to
-empty" is covered by `seg_op` instead. Alternative, rejected: a type-tagged
-`Union{SlotSpec{T}, SegmentSpec{T}}` — eliminates the flag and the dead
-fields, but pays a 2-way union split on every spec read (incl. the warm-path
-predicate check) for a one-enum saving.
+Kind is the variant tag — no flag, no dead fields, and legality of each
+spec field is structural (`default` literally cannot exist on a `Segment`).
+The `vars` map binds inner syms to `VarSpec` variants (plain or via the
+`slotspec`/`segmentspec` helper ctors that fix `T = SymReal`); validation is
+variant↔marker agreement — a `VarSpec.Segment` mapped onto a `slot`-marked
+var (or vice versa) is a compile error. Because `VarSpec` is a Moshi ADT —
+one concrete type with a variant tag, the `BSImpl` idiom — `Vector{VarSpec{T}}`
+is a plain concrete array: spec reads destructure via `@match` as a single
+tag branch, identical in cost to the `kind` flag this replaces. (An earlier
+draft priced this as a Julia `Union{SlotSpec, SegmentSpec}` in the array,
+which would pay union splitting per read — that was the wrong comparison;
+the ADT form has neither cost.)
 
 ### 3.2 Stored callables: `FunctionWrappers`
 
@@ -214,6 +218,9 @@ optional(x)
 unwrap_varspec(x) -> BasicSymbolic             # strip marker term to inner sym
 is_pattern_var(x) -> Bool
 varsym(x) -> Sym                               # inner sym of a marker term
+slotspec(; predicate = nothing, default = nothing) -> VarSpec.Slot{SymReal}
+segmentspec(; predicate = nothing, sequence_predicate = nothing,
+             min = 0, max = typemax(Int)) -> VarSpec.Segment{SymReal}
 ```
 
 `x` may be a `Symbol` (a fresh `Sym` is created; `slot(:x; type, shape)`
@@ -475,6 +482,7 @@ are mostly ground).
 Compile-time validations (loud errors, not silent mismatches):
 - **bare occurrence of a marked sym** (`sin(slot(x)) + x` → error);
 - kind conflicts across occurrences of one variable (slot/optional vs segment);
+- `vars`-map `VarSpec` variant mismatches the marker kind;
 - `optional` occurrence of a var without `default` in its spec;
 - `vars` map entries keyed on syms that are not pattern variables;
 - segment under a position where capture is undefined (see §4.5);
@@ -919,8 +927,9 @@ coverage before the next starts.
    Number, A-not-C for matrices, symbolic-head metadata fallback, user
    extension, fast-path equivalence vs trait fallback.*
 3. `feat/pattern-compiler` — §5.2: `Matcher`, `NodePlan`, `vars` map →
-   `VarSpec` merge, validation. *Tests: plan shape per node kind, ground
-   flags, bare-occurrence error, kind-conflict error, spec-key errors.*
+   `VarSpec` variants, validation. *Tests: plan shape per node kind, ground
+   flags, bare-occurrence error, marker-kind conflict, variant-mismatch
+   error, spec-key errors.*
 4. `feat/match-core` — engine + literal/slot/`Seq`; `match`, `matches`,
    `eachmatch`, `Substitution`(+View). *Tests: unit per leaf logic; oracle on
    linear patterns; fuzz (free-heads only).*
