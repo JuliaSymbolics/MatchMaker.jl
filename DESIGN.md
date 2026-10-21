@@ -10,6 +10,10 @@ ordinary symbolic expressions; pattern variables are `Sym`s carrying metadata
 tags. The matcher is an explicitly iterative backtracking engine that enumerates
 all matches, ordered deterministically.
 
+Algorithmic ideas adapted from MatchPy and the term-matching literature are
+cited inline as `[Rx]`; the full citation list is in §14, and the citation
+policy for source code is in §11.
+
 ---
 
 ## 1. Background: the SymbolicUtils v4 model
@@ -89,9 +93,9 @@ that drive every design decision below:
 |---|---|
 | *pattern* | a `BasicSymbolic{SymReal}` containing zero or more pattern variables |
 | *subject* | a `BasicSymbolic{SymReal}` matched against a pattern |
-| *slot* | a pattern variable matching exactly one argument/term (`~x` analogue) |
-| *optional slot* | a slot that may instead bind a declared default (`~!x` analogue) |
-| *segment* | a pattern variable matching a contiguous run (A/free ops) or a sub-multiset (AC ops) of an argument list (`~~x` analogue; `min`/`max` length bounds replace MatchPy's star/plus distinction) |
+| *slot* | a pattern variable matching exactly one argument/term (`~x` analogue; MatchPy `Wildcard.dot`/`Wildcard.symbol`) |
+| *optional slot* | a slot that may instead bind a declared default (`~!x` analogue; MatchPy `Optional`/`Wildcard.optional`) |
+| *segment* | a pattern variable matching a contiguous run (A/free ops) or a sub-multiset (AC ops) of an argument list (`~~x` analogue; MatchPy `Wildcard.plus`/`Wildcard.star`, generalized by `Wildcard.min_count`/`fixed_count` — our `min`/`max` bounds cover both) |
 | *ground* | a pattern (sub)node containing no pattern variables |
 | *linear* | a pattern in which every pattern variable occurs at most once |
 | *substitution* | a complete assignment slot→subject-term, segment→term-sequence |
@@ -182,6 +186,9 @@ Users extend by adding methods for their functions. For *symbolic* heads
 (`f(x)` where `f` is itself a `Sym`), the trait lookup falls back to reading
 an `OperationTraitsCtx` metadata entry on the head sym — this is the only
 channel available for commutative symbolic functions and is exercised by tests.
+(This is the analogue of MatchPy's per-`Operation` `associative`/`commutative`/
+`one_identity` flags `[R1, R3]`; the metadata channel replaces MatchPy's
+`CommutativeOperation` subclasses.)
 
 **Decision:** traits take the result symtype, not the argument symtypes.
 Rationale: it is a lookup, not a computation; the common distinctions
@@ -227,12 +234,16 @@ internal.
    subject is *not* an `f`-call, the subject is treated as a singleton argument
    multiset `[subject]` iff `identity_element(f, ST) !== nothing`. Example:
    `slot(:a) + segment(:rest)` matches subject `x` as `a ↦ x, rest ↦ ()`. This
-   is the MatchPy/ Mathematica Flat+OneIdentity behavior and is what makes
+   is Mathematica's `Flat`+`OneIdentity` behavior, adapted from MatchPy
+   (`matchpy/matching/one_to_one.py::_match_one_identity` and
+   `matchpy/matching/_common.py::check_one_identity` `[R5]`), and is what makes
    `+`-headed patterns work on non-`Add` subjects.
 
 7. **Optional slots** enumerate two alternatives at an AC/A node: consume one
    remaining argument (a normal slot match) or bind `default`. Enumeration
-   order: consume first, default second (MatchPy order; deterministic).
+   order: consume first, default second — adapted from MatchPy's
+   `Optional`/`Wildcard.optional` semantics and its use in
+   `one_to_one.py::_fixed_var_iter_factory` `[R5]`.
 
 8. **Enumeration order.** Fully deterministic: subject arguments are consumed
    in `arguments()` order (already canonical for `AddMul`); AC assignments
@@ -246,7 +257,9 @@ internal.
    of pattern variables it reads. A constraint is evaluated as soon as all its
    variables are bound (early pruning), not just at yield — non-negotiable for
    AC performance and cheap to implement via a per-variable "remaining
-   dependents" counter.
+   dependents" counter. (MatchPy's `CustomConstraint`/`Constraint` machinery:
+   `matchpy/expressions/constraints.py`, enforced in
+   `one_to_one.py::_check_constraints` `[R5]`.)
 
 10. **Literal heads.** A pattern whose head is a slot sym (`f_ = slot(:f)`;
     `f_(x)`) matches the *operation* position: subject head must satisfy the
@@ -337,7 +350,11 @@ Rebinding (non-linear check) never touches the trail.
 
 `MatchEngine{T}` is a **defunctionalized backtracking machine**. Each
 in-progress node match is a *frame*: a suspended single-result enumerator with
-mutable resumption state. Frames are the `@data` ADT `MatchFrame`:
+mutable resumption state. This is the compiled analogue of MatchPy's
+generator-based matchers (`matchpy/matching/many_to_one.py::_MatchIter`,
+`CommutativeMatcher.match` `[R5]`) — Python generators are resumable
+coroutines; Julia lacks cheap coroutines, so we make the suspension state
+explicit and inspectable instead. Frames are the `@data` ADT `MatchFrame`:
 
 ```julia
 @data mutable MatchFrame begin
@@ -410,15 +427,19 @@ matched positionally as nested enumeration (child `i+1` initialized under
 child `i`'s fresh bindings; on child `i+1` exhaustion, advance child `i`).
 
 **(d) `Comm`** — `arity(p) == arity(s)` required; enumerate permutations of
-subject args in index order; each permutation is an inner `Seq`.
+subject args in index order; each permutation is an inner `Seq`. (As in
+MatchPy's ordered fall-through for commutative operations,
+`one_to_one.py::_non_commutative_match` `[R5]`.)
 
 **(e) `Assoc`** — pattern arg list is a sequence of fixed elements and
 segments; subject is a fixed-size arg list. Segments consume contiguous runs;
 enumerate compositions of the subject length into (fixed=1 | segment=variable)
 parts honoring min/max, shortest-capture-first. Non-segment positions are
-positional `Seq` obligations.
+positional `Seq` obligations. (The segment-splitting machinery is adapted from
+`one_to_one.py::_build_full_partition`/`_count_seq_vars` `[R5]`.)
 
-**(f) `AC`** — the core algorithm (MatchPy §4; Eker 1995 lineage):
+**(f) `AC`** — the core algorithm, adapted from MatchPy's commutative matcher
+`[R3 §4, R5]` which is itself in the Eker bipartite-matching lineage `[R6]`:
 
 ```
 pattern args partition into FIXED (ground and non-var subpatterns),
@@ -430,23 +451,31 @@ Phase 1 — candidates: for each fixed pattern arg, compute the set of subject
    indices it can match (each submatch is itself a nested frame obligation).
    Sort fixed parts by ascending candidate count (most constrained first).
    Fail fast on any empty candidate set.
+   (Cf. `CommutativeMatcher._build_bipartite`/`_extract_sequence_wildcards`
+   in `matchpy/matching/many_to_one.py` and `_match_commutative_operation` in
+   `matchpy/matching/one_to_one.py` `[R5]`.)
 
 Phase 2 — assignment: enumerate matchings of (fixed ∪ slots) → subject args,
-   all distinct (bipartite backtracking; slots get the same candidate filtering
-   via their constraints). Each complete assignment binds its vars (trail).
+   all distinct. Slots get the same candidate filtering via their constraints.
+   Each complete assignment binds its vars (trail).
+   Implemented as maximal-matching enumeration on a bipartite graph, after
+   `matchpy/matching/bipartite.py::enum_maximum_matchings_iter`, which is Uno's
+   alternating-cycle enumeration `[R7]` on top of a Hopcroft–Karp seed matching
+   (`matchpy/matching/hopcroft_karp.py`, `[R8]`).
 
 Phase 3 — leftovers: distribute remaining subject args among segments
    (unordered subsets; capture order = canonical order) honoring min/max.
    With one segment this is O(1): it takes everything left. Optionals that did
    not consume bind their defaults.
+   (Cf. `CommutativeMatcher._match_sequence_variables` `[R5]`.)
 
 Failure anywhere unwinds the trail to the frame's mark and advances the
 innermost non-exhausted enumerator.
 ```
 
 Complexity honesty (documented in user docs): general AC matching is
-NP-complete (Benanav–Kapur–Narendran 1985); with *linear* patterns it is
-polynomial. We do not special-case linearity in v1 — the enumeration order
+NP-complete `[R9]`; with *linear* patterns it is polynomial (O(|p|·|s|³)
+`[R9]`). We do not special-case linearity in v1 — the enumeration order
 and pruning get most of the win in practice; a dedicated linear fast path is a
 recorded optimization (§9).
 
@@ -494,6 +523,7 @@ rewriters should use.
 MatchMaker.jl/
   DESIGN.md                 # this document
   DEVELOPING.md             # codebase navigation + implicit contracts (phase 0)
+  README.md                 # includes the §14 reference list (phase 0)
   Project.toml
   src/
     MatchMaker.jl           # module, includes, exports
@@ -532,9 +562,9 @@ Every feature branch ships its tests in the same merge.
   `+`,`*`,`^`,`/`,`sin`,`cos`,`f` with slots/segments/optionals at controlled
   rates; bounded subject size; fixed seed committed so failures reproduce.
 - **Golden** (`test/golden/`): examples transcribed from MatchPy's test suite
-  and the literature (`sin²+cos²`, `∫xⁿ`-style, distributivity, sequence
-  captures) + the *negative* corpus: patterns that must NOT match (arity,
-  symtype, non-linear inequality).
+  (`matchpy` repo `tests/` `[R5]`) and the literature (`sin²+cos²`, `∫xⁿ`-style,
+  distributivity, sequence captures) + the *negative* corpus: patterns that
+  must NOT match (arity, symtype, non-linear inequality).
 - **Type stability**: `@inferred` on `compile_pattern`, `next_match!`,
   `instantiate`; a `test/qa` env with JET for the hot paths; Cthulhu
   spot-checks documented in DEVELOPING.md.
@@ -545,14 +575,18 @@ Every feature branch ships its tests in the same merge.
 ## 8. Many-to-one outlook (deferred, but designed-for)
 
 After the one-to-one engine stabilizes: compile *sets* of `CompiledPattern`s
-into a discrimination-net-style shared automaton (Bachmair–Chen–Ramakrishnan;
-Krebber's generalization). Integration points already in the design:
+into a discrimination-net-style shared automaton — the AC discrimination-net
+lineage `[R10]` generalized by Krebber to sequence variables and non-linear
+patterns `[R3]`, as realized in `matchpy/matching/many_to_one.py::ManyToOneMatcher`
+(with the purely syntactic variant in `matchpy/matching/syntactic.py::
+DiscriminationNet`) `[R5]`. Integration points already in the design:
 
 - `CompiledPattern` plans are indexed instructions — a net state is just a
   *set of* `(pattern, node)` pairs sharing one subject cursor.
 - `IRStructure` on the subject amortizes across all patterns.
-- AC nodes map to MatchPy's `CommutativeMatcher` net nodes; our `AC` frame
-  machinery is reused per net node rather than rewritten.
+- AC nodes map to MatchPy's `CommutativeMatcher` net states (states whose
+  `matcher` field is a `CommutativeMatcher` in `many_to_one.py` `[R5]`); our
+  `AC` frame machinery is reused per net node rather than rewritten.
 
 Rough shape: `ManyToOneMatcher{T}` holding shared pattern IR, net states as
 `Vector{StateId}`, transitions keyed by node features (variant, op identity,
@@ -602,6 +636,12 @@ this section exists only to keep today's choices compatible.
   boundaries typeasserted and commented.
 - `DEVELOPING.md`: module map, the engine invariants (frame protocol, trail
   contract, enumeration order), how to run the fuzz oracle and Cthulhu checks.
+- **Citation policy:** algorithms, data structures, and semantics adapted from
+  MatchPy or the matching literature are credited in three places — the paper
+  in `README.md`'s reference list (§14), the `[Rx]` tag in this document, and a
+  source comment naming the MatchPy file::function or paper section adjacent
+  to the adapted code (e.g. `# Adapted from matchpy/matching/bipartite.py::
+  enum_maximum_matchings_iter (Uno 1997)`).
 - **Design doc governance:** implementation changes that alter behavior,
   semantics, or architecture update this file in the same PR; reviewed code
   changes that diverge are doc bugs until fixed.
@@ -644,3 +684,57 @@ coverage before the next starts.
     benchmark suite vs `@acrule`, budget parameter.
 13. `docs/user-guide` — pattern syntax & semantics incl. the normalization
     caveat and complexity notes.
+
+## 14. References
+
+Adapted algorithms and their sources. In the source code, `[Rx]` tags are
+expanded to these entries; MatchPy code is referenced by path within
+`[R5]` (repository root) plus function/class name.
+
+- `[R1]` M. Krebber, H. Barthels, P. Bientinesi. *MatchPy: A Pattern Matching
+  Library*. Proc. 15th Python in Science Conf. (SciPy 2017).
+  <https://proceedings.scipy.org/articles/shinma-7f4c6e7-00b>
+- `[R2]` M. Krebber, H. Barthels, P. Bientinesi. *Efficient Pattern Matching in
+  Python*. PyHPC/SC workshops 2017. <https://doi.org/10.1145/3149869.3149871>,
+  arXiv:1710.00077
+- `[R3]` M. Krebber. *Non-linear Associative-Commutative Many-to-One Pattern
+  Matching with Sequence Variables*. MSc thesis, RWTH Aachen, 2017.
+  arXiv:1705.00907 — primary algorithmic reference for the AC frame (§5.5f)
+  and the many-to-one net (§8).
+- `[R4]` M. Krebber, H. Barthels. *MatchPy: Pattern Matching in Python*. JOSS
+  3(26), 2018. <https://doi.org/10.21105/joss.00670>
+- `[R5]` MatchPy source code, <https://github.com/HPAC/matchpy> —
+  `matchpy/matching/one_to_one.py` (one-to-one matcher: `_match`,
+  `_match_commutative_operation`, `_match_one_identity`, `_build_full_partition`,
+  `_check_constraints`), `matchpy/matching/many_to_one.py` (`ManyToOneMatcher`,
+  `CommutativeMatcher`, `_MatchIter`), `matchpy/matching/bipartite.py`
+  (`BipartiteGraph`, `enum_maximum_matchings_iter`),
+  `matchpy/matching/hopcroft_karp.py`, `matchpy/matching/syntactic.py`
+  (`DiscriminationNet`), `matchpy/matching/_common.py`
+  (`CommutativePatternsParts`, `check_one_identity`),
+  `matchpy/expressions/constraints.py`.
+- `[R6]` S. Eker. *Associative-Commutative Matching via Bipartite Graph
+  Matching*. Computer Journal 38(5):381–399, 1995.
+  <https://doi.org/10.1093/comjnl/38.5.381> — origin of the
+  candidates→assignment→rest decomposition used by `CommutativeMatcher` and
+  our `AC` frame.
+- `[R7]` T. Uno. *Algorithms for Enumerating All Perfect, Maximum and Maximal
+  Matchings in Bipartite Graphs*. ISAAC '97, LNCS 1350:92–101.
+  <https://doi.org/10.1007/3-540-63890-3_11> — the algorithm inside
+  `enum_maximum_matchings_iter` our Phase-2 assignment enumerator follows.
+- `[R8]` J. E. Hopcroft, R. M. Karp. *An n^{5/2} Algorithm for Maximum
+  Matchings in Bipartite Graphs*. SIAM J. Comput. 2(4):225–231, 1973.
+  <https://doi.org/10.1137/0202019> — seed matching for Phase 2.
+- `[R9]` D. Benanav, D. Kapur, P. Narendran. *Complexity of Matching Problems*.
+  RTA 1985; JSC 3(1–2):203–216, 1987.
+  <https://doi.org/10.1007/3-540-15976-2_22> — NP-completeness of AC matching;
+  polynomial bound for linear patterns.
+- `[R10]` L. Bachmair, T. Chen, I. V. Ramakrishnan. *Associative-Commutative
+  Discrimination Nets*. TAPSOFT 1993, LNCS 668.
+  <https://doi.org/10.1007/3-540-56610-4_56> — the net architecture deferred
+  in §8; see also the experiments paper (IJCAI 1995) for the
+  linearize-then-check two-stage strategy.
+- `[R11]` R. Sekar, R. Ramesh, I. V. Ramakrishnan. *Adaptive Pattern Matching*.
+  SIAM J. Comput. 24(6):1207–1234, 1995.
+  <https://doi.org/10.1137/S0097539793246252> — traversal-order synthesis for
+  pattern-set automata; relevant when §8 becomes a real design.
