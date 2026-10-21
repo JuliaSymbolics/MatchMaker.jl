@@ -11,7 +11,7 @@ tags. The matcher is an explicitly iterative backtracking engine that enumerates
 all matches, ordered deterministically.
 
 Algorithmic ideas adapted from MatchPy and the term-matching literature are
-cited inline as `[Rx]`; the full citation list is in §14, and the citation
+cited inline as `[Rx]`; the full citation list is in §13, and the citation
 policy for source code is in §11.
 
 ---
@@ -35,12 +35,23 @@ that drive every design decision below:
    reconstructed argument vector is cached on the node (`ArgumentCache`).
 
    **Consequence:** matching over the `iscall`/`operation`/`arguments` semantic
-   interface (never the raw dict) gives us a flattened, canonically ordered
-   argument multiset for `+`/`*` for free. `AddMul` *is* the AC node.
+   interface (never the raw dict) gives us a flattened argument multiset for
+   `+`/`*` for free. `AddMul` *is* the AC node.
+
+   **Ordering caveat (order-dependent behavior):** `arguments(::AddMul)`
+   iterates the underlying `Dict`, so the argument order of `+`/`*` expressions
+   is **hash-order-dependent**, not canonically sorted. `sorted_arguments`
+   provides a deterministic `<ₑ`-sorted view (itself a `@cache`d function, so
+   amortized O(1) per node). Any place where observable behavior depends on
+   argument order — enumeration order, segment capture order, result order of
+   `matches` — uses `sorted_arguments` where a canonical order is required, and
+   is otherwise explicitly marked *order-dependent*. It is acceptable for
+   results or performance to vary with this order; it is not acceptable for
+   such dependence to be undocumented.
 
    **Consequence (pattern normalization caveat):** patterns are normalized by
-   the algebra at construction time. `slot(:x) * slot(:x)` is `x_slot^2`, and
-   `slot(:x) + slot(:x)` is `2 * x_slot`. A "repeated slot" inside the same
+   the algebra at construction time. `slot(x) * slot(x)` is `slot(x)^2`, and
+   `slot(x) + slot(x)` is `2 * slot(x)`. A "repeated slot" inside the same
    `+`/`*` collapses before the matcher ever sees it. This matches Mathematica
    semantics (`x_ * x_` ≡ `x_^2`) and is *correct*, but it is non-obvious and
    must be documented in user docs. Users who need literal tree matching of
@@ -48,20 +59,12 @@ that drive every design decision below:
 
 3. **Metadata.** `metadata` is `Base.ImmutableDict{DataType, Any}`, keyed by
    context *types*. `setmetadata`/`getmetadata`/`hasmetadata` are public.
-   Crucially, `Base.hash` and `Base.isequal` on `BasicSymbolic` ignore metadata
-   by default (metadata-aware comparison only under task-local `COMPARE_FULL`,
-   used by the hash-cons table). Therefore:
-
-   - A slot-tagged `Sym` is `isequal` to its untagged counterpart and hashes
-     identically. Pattern variables behave exactly like ordinary variables in
-     every algebraic operation — patterns can be built with ordinary `+`, `*`,
-     `term`, function calls.
-   - `hashcons` distinguishes tagged/untagged (via `hash2`), so both can
-     coexist in an `IRStructure`.
-   - `substitute(expr, Dict(slot_sym => v))` will also substitute plain `x`,
-     since lookup is `isequal`-based. This is *desired* (the slot names a
-     variable) but is a documented sharp edge: two slots that differ only in
-     predicate are `isequal` to each other.
+   `Base.hash`/`Base.isequal` ignore metadata by default (metadata-aware
+   comparison only under task-local `COMPARE_FULL`, used by the hash-cons
+   table). We do *not* encode pattern variables in metadata (§3.4) — but the
+   channel is still load-bearing in one place: operation traits on *symbolic*
+   heads are read from an `OperationTraitsCtx` entry on the head `Sym` (§3.5),
+   since a `Sym` has no marker term to hang data on.
 
 4. **IRStructure.** `IRStructure{T}` stores a DAG: `symbols::Vector{BasicSymbolic{T}}`
    indexed by `Int32`, `definition::IdDict` (`===` identity), `weak_definitions::Dict`
@@ -78,11 +81,16 @@ that drive every design decision below:
      (the many-to-one story in §8).
 
 5. **Existing matcher.** `src/matchers.jl` compiles `~x`/`~~x`/`~!x` patterns
-   into nested CPS closures. It is dynamically typed throughout, handles AC
-   only via argument permutation with a backtrack budget, and is the reference
-   *behavioral* baseline (tests, not code reuse). The `^`/`sqrt`/`exp`/`1/x`
-   "frankenstein" special cases in `pow_term_matcher`/`sqrt_matcher`/`exp_matcher`
-   are **rewrite-domain normalizations, not matching semantics** — they are
+   into nested CPS (continuation-passing style) closures — each matcher is a
+   function `(subject, bindings, success)` where `success` is a callback
+   invoked once per candidate match. It is dynamically typed throughout,
+   handles AC only via argument permutation with a backtrack budget, and has
+   **known behavioral sharp edges: its AC handling can produce incorrect
+   results. It is not a behavioral oracle** — our oracle is the naive reference
+   matcher we write ourselves (§7). Its tests are useful as a source of cases,
+   not of expected values. The `^`/`sqrt`/`exp`/`1/x` "frankenstein" special
+   cases in `pow_term_matcher`/`sqrt_matcher`/`exp_matcher` are
+   **rewrite-domain normalizations, not matching semantics** — they are
    out of scope for the core matcher (see §10, Out of scope).
 
 ---
@@ -93,83 +101,151 @@ that drive every design decision below:
 |---|---|
 | *pattern* | a `BasicSymbolic{SymReal}` containing zero or more pattern variables |
 | *subject* | a `BasicSymbolic{SymReal}` matched against a pattern |
-| *slot* | a pattern variable matching exactly one argument/term (`~x` analogue; MatchPy `Wildcard.dot`/`Wildcard.symbol`) |
-| *optional slot* | a slot that may instead bind a declared default (`~!x` analogue; MatchPy `Optional`/`Wildcard.optional`) |
-| *segment* | a pattern variable matching a contiguous run (A/free ops) or a sub-multiset (AC ops) of an argument list (`~~x` analogue; MatchPy `Wildcard.plus`/`Wildcard.star`, generalized by `Wildcard.min_count`/`fixed_count` — our `min`/`max` bounds cover both) |
-| *ground* | a pattern (sub)node containing no pattern variables |
-| *linear* | a pattern in which every pattern variable occurs at most once |
-| *substitution* | a complete assignment slot→subject-term, segment→term-sequence |
+| *marker term* | a `Term` whose operation is the singleton `slot`, `segment`, or `optional` — declares a pattern variable |
+| *variable* | the inner `Sym` of a marker term; all its occurrences in the pattern refer to the same variable |
+| *slot* | a variable matching exactly one argument/term (`~x` analogue; MatchPy `Wildcard.dot`/`Wildcard.symbol`) |
+| *optional slot* | a slot occurrence that may instead bind a declared default (`~!x` analogue; MatchPy `Optional`/`Wildcard.optional`) |
+| *segment* | a variable matching a contiguous run (A/free ops) or a sub-multiset (C/AC ops) of an argument list (`~~x` analogue; MatchPy `Wildcard.plus`/`Wildcard.star`; our `min`/`max` bounds generalize `Wildcard.min_count`/`fixed_count`) |
+| *VarSpec* | per-variable spec record (kind, predicates, min/max, default) owned by the `Matcher` |
+| *ground* | a pattern (sub)node containing no variables |
+| *linear* | a pattern in which every variable occurs at most once |
+| *substitution* | a complete assignment slot→subject-term, segment→`f(captured…)` |
 | *AC node* | a call whose operation is associative+commutative for the relevant symtype |
+| *CPS* | continuation-passing style: matchers as `(subject, bindings, success)->…` closures invoking `success` once per match — the `matchers.jl` architecture, rejected here (§5.4) |
+| *order-dependent* | behavior that may vary with `Dict` hash order of `AddMul` args — permitted, always marked (§1.2) |
 
 ---
 
 ## 3. Pattern variable representation
 
-### 3.1 Metadata schema
+### 3.1 Marker terms
 
-A single metadata context key distinguishes pattern variables; the *value type*
-carries the kind and constraints.
+Pattern variables are ordinary `Term`s headed by singleton marker constants:
+
+- `slot(x[, pred[, default]])` — matches exactly one term/argument.
+- `segment(x[, pred[, seqpred[, min[, max]]]])` — matches a contiguous run
+  (free/associative heads) or a sub-multiset (commutative/AC heads) of an
+  argument list.
+- `optional(x, default)` — sugar for `slot(x, Returns(true), default)`.
+
+`slot`, `segment`, `optional` are constants of distinct singleton types; each
+is callable and produces a `Term` whose `operation` is the marker itself:
 
 ```julia
-# Context key type — used as the ImmutableDict key.
-struct PatternVariableCtx end   # getmetadata(sym, PatternVariableCtx)
+slot(x) isa BasicSymbolic{SymReal}        # a Term
+operation(slot(x)) === slot               # object-identity detection — O(1),
+                                          # no metadata lookup, no trait call
+```
 
-# Metadata values. All fields concrete.
-struct SlotInfo{P, D}
-    predicate::P      # ::BasicSymbolic{SymReal} -> Bool; checked after symtype/shape
-    default::D        # D === Nothing for required slots; otherwise the default value
-end
+Because a marker term is a real expression node, pattern-variable declarations
+are *visible in the tree*, are distinguished by `isequal` (`slot(x, f)` ≠
+`slot(x, g)` ≠ `slot(x)`), require no metadata plumbing, and can be built with
+plain symbolic arithmetic (`slot(x) + y`, `sin(segment(xs))`).
 
-struct SegmentInfo{P, SP}
-    predicate::P              # elementwise ::BasicSymbolic{SymReal} -> Bool
-    sequence_predicate::SP    # SP === Nothing, or ::AbstractVector -> Bool on the capture
-    min::Int                  # minimum capture length (0 = MatchPy star, 1 = plus)
-    max::Int                  # maximum capture length (typemax(Int) = unbounded)
+**Variable identity.** A *variable* is the inner `Sym` `x` — a plain symbolic
+variable created by `@syms`/`Sym`, whose own `symtype` is the type constraint.
+`unwrap_varspec(node)` strips a marker term to its inner sym. A `Sym` that
+appears as the inner argument of ≥1 marker term is a variable *everywhere it
+occurs in the pattern, wrapped or bare* — so `sin(slot(x)) + x` is a non-linear
+slot pattern (Mathematica's `sin(x_) + x_`). Corollary (documented caveat):
+a literal sym and a variable cannot share a name in one pattern — to have a
+literal `x` alongside `slot(x)`, use a different name.
+
+**Spec data lives outside the expression.** Per-variable constraint data
+(`predicate`, `sequence_predicate`, `min`, `max`, `default`) is stored in a
+`VarSpec` table owned by the `Matcher` — not in the expression. Two sources
+populate it, merged and consistency-checked at compile time:
+
+- *inline*: extra positional args of the marker terms (sugar);
+- *external*: `compile_pattern(expr; vars::AbstractDict)` mapping inner syms
+  to spec fields — so one pattern can be reused with different specs.
+
+Merge rules: `kind` must agree across all occurrences of a var (slot vs
+segment — a conflict is a compile error); occurrence predicates are kept
+per-occurrence and checked at that node, while external-map `predicate` is
+var-level and checked once at binding; `min`/`max`/`default` are var-level and
+must agree everywhere they are declared (conflict → error). `optional`ness is
+a per-occurrence property (a `slot`/`optional`-marked node is optional iff a
+default is available for it).
+
+```julia
+struct VarSpec                       # fully concrete — no params
+    kind::VarKind.T                  # enumx: SLOT | SEGMENT
+    predicate::Union{Nothing, PredT} # var-level element/binding predicate
+    sequence_predicate::Union{Nothing, SeqPredT}   # segments only
+    default::Union{Nothing, Any}     # user value; `nothing` = required
+    min::Int                         # segments; slots fix at 1
+    max::Int
 end
 ```
 
-**Decision:** one context key (`PatternVariableCtx`), kind discriminated by the
-value's type (`SlotInfo` vs `SegmentInfo`). Rationale: a `Sym` cannot be both;
-a single-key lookup with a two-way `isa` split is the smallest union we can
-give the compiler and keeps `is_pattern_var` a single dict probe.
+### 3.2 Stored callables: `FunctionWrappers`
 
-`SlotInfo.default`: stored unwrapped (e.g. `0`, or a `BasicSymbolic`); wrapped
-to `Const{SymReal}` at binding time if not already symbolic. `default === nothing`
-means "required slot". A `nothing` *value* as a deliberate default is
-meaningless and rejected at construction.
-
-**Invariants enforced at construction (`slot`/`segment`):**
-- `min >= 0`, `max >= min`, `max >= 1` for segments.
-- The base `Sym` is scalar-shaped (`ShapeVecT()`); non-scalar pattern variables
-  are rejected for now (array-shape matching is future work).
-- `predicate`/`sequence_predicate` are callable.
-
-### 3.2 Constructors
+Predicates and constraint functions are user callables with *known signatures
+but unknown types*. Storing them raw either bakes each concrete function type
+into our structs (overspecialization → recompilation per pattern) or erases to
+`Any` (dynamic dispatch per call + no inference). Instead:
 
 ```julia
-slot(name::Symbol; type::Type = Number, shape = ShapeVecT(),
-     predicate = Returns(true), default = nothing) -> Sym{SymReal}
-slot(s::BasicSymbolic{SymReal}; predicate = ..., default = ...)  # retag an existing sym
-segment(name::Symbol; type::Type = Number, predicate = Returns(true),
-        sequence_predicate = nothing, min::Int = 0, max::Int = typemax(Int)) -> Sym{SymReal}
-segment(s::BasicSymbolic{SymReal}; ...)                          # retag existing sym
-optional(name_or_sym; default, ...)                              # slot(...; default)
+const PredT    = FunctionWrapper{Bool, Tuple{BasicSymbolic{SymReal}}}
+const SeqPredT = FunctionWrapper{Bool, Tuple{Vector{BasicSymbolic{SymReal}}}}
+const ConstrT  = FunctionWrapper{Bool, Tuple{Vector{BasicSymbolic{SymReal}}}}
+```
+
+`Union{Nothing, FunctionWrapper}` fields stay small-union; a `nothing` field
+is checked *before* calling so unconstrained vars pay zero predicate cost.
+(FunctionWrappers.jl — MIT.)
+
+### 3.3 Constructors and macros
+
+```julia
+slot(x; type = nothing, shape = nothing, predicate = nothing, default = nothing)
+slot(x, pred)  slot(x, pred, default)          # positional sugar
+segment(x; type = nothing, predicate = nothing, sequence_predicate = nothing,
+        min = 0, max = typemax(Int))
+segment(x, pred, seqpred, min, max)
+optional(x, default)
+unwrap_varspec(x) -> BasicSymbolic             # strip marker(s) to inner sym
 is_pattern_var(x) -> Bool
-pattern_var_info(x) -> Union{SlotInfo, SegmentInfo, Nothing}
+varsym(x) -> Sym                               # inner sym of a marker term
 ```
 
-Convenience macros bind tagged syms in local scope:
+`x` may be a `Symbol` (a fresh `Sym` is created with `type`/`shape` keywords)
+or an existing `Sym`. Validation at construction: inner arg must be a `Sym`
+(`slot(f(x))`, `slot(slot(x))` → error); `min ≥ 0`, `max ≥ min`; `default` may
+not be `nothing` inside `optional`.
+
+Macros bind *marker terms* in local scope — minimal grammar (`name` and
+`name::Type` only), richer specs via functions or the external map:
 
 ```julia
-@slots x y::Real          # ≡ x = slot(:x); y = slot(:y; type = Real)
-@segments xs ys::Real     # ≡ xs = segment(:xs); ys = segment(:ys; type = Real)
+@slots x y::Real      # x = slot(Sym(:x)); y = slot(Sym(:y; type = Real))
+@segments xs ys::Real # xs = segment(Sym(:xs)); ys = segment(Sym(:ys; type=Real))
 ```
 
-Macro grammar is deliberately minimal: `name` and `name::Type` only. Anything
-richer (predicates, bounds, defaults) goes through the functions — macros that
-half-support the feature set are worse than none.
+### 3.4 Rejected alternatives (analysis)
 
-### 3.3 Operation traits
+- **`Slot{T}`/`Segment{T,min,max}` as the variable's `symtype`.** Appealing
+  (detection via `<:`, constraints in the type, bounds in `Int` type params),
+  but rejected: (a) once spec data lives in the `VarSpec` table it duplicates
+  the mechanism without adding capability; (b) a magic symtype leaks into
+  `promote_symtype` — every operation on it returns `Any`, so pattern trees
+  lose all symtype information rather than carrying meaningful types; (c)
+  `Segment{Real, 0, 9223372036854775807}` is unreadable in `dump`/printing;
+  (d) isbits type params cannot carry runtime values (defaults, predicates)
+  so the marker term is needed anyway. The inner sym's *own* `symtype` is the
+  type constraint — no wrapper type needed.
+- **Metadata tags on `Sym`s** (the original draft). Works, but marker terms
+  are strictly better where it matters: visible in the tree, `isequal`-
+  distinguished, zero dict probes. Metadata remains the channel for *symbolic
+  head* operation traits (§3.5), where there is no marker term to hang data on.
+- **A standalone `predicate(x, f)` wrapper term.** Redundant spelling of the
+  `slot(x, f)` positional arg — one mechanism, two spellings. Rejected.
+- **Variable = whole marker term (per-occurrence identity).** Rejected in
+  favor of sym-identity: `slot(x) + x` should be non-linear, not "var +
+  literal sym".
+
+### 3.5 Operation traits
 
 Whether a call's arguments may be reordered/flattened is a property of the
 *operation object* conditioned on the *result symtype* (`*` is AC for `Number`,
@@ -189,6 +265,33 @@ channel available for commutative symbolic functions and is exercised by tests.
 (This is the analogue of MatchPy's per-`Operation` `associative`/`commutative`/
 `one_identity` flags `[R1, R3]`; the metadata channel replaces MatchPy's
 `CommutativeOperation` subclasses.)
+
+**Design-for-extensibility, fast-path-internally.** The trait functions are
+the extensible interface; the *engine never calls them directly*. Internal
+wrappers enumerate the common cases with `===`/literal checks and only fall
+back to the traits for the general case — dynamic dispatch on `(Any, DataType)`
+is otherwise paid on every call node of every match:
+
+```julia
+@inline _is_ac_head(op, ::Type{ST}) where {ST} =
+    if op === (+) || op === (*)
+        _is_number_st(ST) && return true     # enumerated common symtypes
+    elseif op isa Function || op isa Type    # etc — cheap negative fast paths
+        false
+    end;
+    is_associative(op, ST) && is_commutative(op, ST)
+
+@inline _is_number_st(::Type{T}) where {T} =
+    T === Number || T === Real || T === Integer || T === Int ||
+    T === Float64 || T === Float32 || T === Rational{Int} ||
+    T === Bool  || T <: Number
+```
+
+(Schematic — the real wrappers enumerate the combos that dominate, ending in
+the general `<:`/trait fallback.) The same pattern recurs for `symtype <:`
+checks (§5.5b) and is stated once as a rule in §9: **subtype checks are not
+free — they call into the compiler runtime — so hot paths enumerate common
+concrete cases and memoize the rest.**
 
 **Decision:** traits take the result symtype, not the argument symtypes.
 Rationale: it is a lookup, not a computation; the common distinctions
@@ -211,29 +314,34 @@ internal.
    happens only when a `Substitution` is produced.
 
 3. **Slots** match exactly one term, subject to: symtype constraint
-   (`symtype(candidate) <: symtype(slot)` — always checked, it is free static
-   information), shape constraint (concrete `ShapeVecT` must equal the
-   candidate's shape; `Unknown` is unconstrained), then `predicate`.
+   (`symtype(candidate) <: symtype(inner_sym)`), shape constraint (concrete
+   `ShapeVecT` must equal the candidate's shape; `Unknown` is unconstrained),
+   then the occurrence's `predicate` (the FunctionWrapper'd check, skipped
+   entirely when none is declared). `<:` calls into the compiler runtime —
+   it is **not** free — so the check goes through the fast-path wrapper +
+   per-variable memo described in §5.5b.
 
-4. **Non-linear patterns.** A repeated slot sym is the same node in the
-   pattern IR (hashconsed). Second and later occurrences check `isequal`
-   against the bound value (`===` fast path first — subject subterms are
-   interned, so structural equality usually resolves in O(1)).
+4. **Non-linear patterns.** Every occurrence of a variable is a distinct
+   pattern node (or the same node visited twice via shared parents); the first
+   binds, later occurrences check `isequal` against the bound value (`===`
+   fast path first — subject subterms are interned, so structural equality
+   usually resolves in O(1)). Occurrence predicates are re-evaluated at each
+   occurrence — `slot(x, f)` … `slot(x, g)` requires `f(v) && g(v)` on the
+   bound value `v`.
 
 5. **Segments** under a free or associative head capture a *contiguous run*;
-   under a commutative or AC head they capture a *sub-multiset* materialized in
-   the subject's canonical argument order. `min`/`max` bounds apply; element
-   `predicate` applies to each captured element, `sequence_predicate` to the
-   whole capture. Compile-time error: a segment as a non-final-or-final arg of
-   a commutative-but-not-associative head is rejected only if the head's arity
-   is provably fixed — since generic `f` is variadic in this system, C-only +
-   segment is allowed and means "unordered subset capture"; this is
-   deterministic because captures are reported in canonical order.
+   under a commutative or AC head they capture a *sub-multiset* materialized
+   in `sorted_arguments` order (canonical for `AddMul`; for other ops the
+   term's own argument order — deterministic per subject). `min`/`max` bounds
+   apply; `predicate` applies to each captured element, `sequence_predicate`
+   to the whole capture (a `Vector{BasicSymbolic{SymReal}}`). C-only +
+   segment is allowed and means "unordered subset capture" — deterministic
+   for the same reason.
 
 6. **Identity coercion.** If the pattern node is an `f(...)` AC/A call and the
    subject is *not* an `f`-call, the subject is treated as a singleton argument
    multiset `[subject]` iff `identity_element(f, ST) !== nothing`. Example:
-   `slot(:a) + segment(:rest)` matches subject `x` as `a ↦ x, rest ↦ ()`. This
+   `slot(a) + segment(rest)` matches subject `x` as `a ↦ x, rest ↦ ()`. This
    is Mathematica's `Flat`+`OneIdentity` behavior, adapted from MatchPy
    (`matchpy/matching/one_to_one.py::_match_one_identity` and
    `matchpy/matching/_common.py::check_one_identity` `[R5]`), and is what makes
@@ -245,32 +353,41 @@ internal.
    `Optional`/`Wildcard.optional` semantics and its use in
    `one_to_one.py::_fixed_var_iter_factory` `[R5]`.
 
-8. **Enumeration order.** Fully deterministic: subject arguments are consumed
-   in `arguments()` order (already canonical for `AddMul`); AC assignments
-   enumerate right-side candidates in increasing subject index; segment splits
-   enumerate by increasing captured length, left segment first. The *set* of
-   results is what tests assert; order stability is a secondary guarantee we
-   keep because it makes tests and debugging sane.
+8. **Enumeration order.** Deterministic *and* canonical where it counts:
+   AC/A subject arguments are iterated in `sorted_arguments` order (`<ₑ` —
+   deterministic across processes, `@cache`d), so the AC phases never touch
+   `AddMul`'s hash-ordered `arguments`. AC assignments enumerate right-side
+   candidates in increasing subject index; segment splits enumerate by
+   increasing captured length, left segment first. *Order-dependent:* the
+   argument order of any reconstructed `f(captured…)` segment binding follows
+   the canonical constructor's own order (dict order for `AddMul` — marked
+   order-dependent, §1.2). The *set* of results is what tests assert.
 
 9. **Constraints.** `match(p, s; constraints = [Constraint(...)])` where
-   `Constraint{F}` pairs a callable `f(bound_values...)::Bool` with the tuple
-   of pattern variables it reads. A constraint is evaluated as soon as all its
-   variables are bound (early pruning), not just at yield — non-negotiable for
-   AC performance and cheap to implement via a per-variable "remaining
-   dependents" counter. (MatchPy's `CustomConstraint`/`Constraint` machinery:
+   `Constraint(fn, vars)` pairs a `ConstrT`-wrapped callable with the
+   `Vector` of variable syms it reads; the engine calls
+   `fn(vals::Vector{BasicSymbolic{SymReal}})::Bool` — a **collection**, not
+   splatted args, so no per-signature specialization is forced and the
+   signature stays `FunctionWrapper`-stable. The argument vector is an engine
+   buffer refilled per evaluation. A constraint fires as soon as all its
+   variables are bound (early pruning via a per-variable "remaining
+   dependents" counter — non-negotiable for AC performance). (MatchPy's
+   `CustomConstraint`/`Constraint` machinery:
    `matchpy/expressions/constraints.py`, enforced in
    `one_to_one.py::_check_constraints` `[R5]`.)
 
-10. **Literal heads.** A pattern whose head is a slot sym (`f_ = slot(:f)`;
-    `f_(x)`) matches the *operation* position: subject head must satisfy the
-    slot constraints and binds it. This is Mathematica's `f_[x_]` and falls
-    out of treating the operation as another pattern position — but only when
-    `is_associative`/`is_commutative` on a slot resolves via the bound head
-    sym's metadata. Supported, flag explicitly in tests.
+10. **Literal heads.** A pattern whose head position is a marker term
+    (`slot(f)(x)`) matches the *operation* position: the subject head must
+    satisfy the slot constraints and binds `f`. This is Mathematica's
+    `f_[x_]` and falls out of treating the operation as another pattern
+    position — with `is_associative`/`is_commutative` on a bound head sym
+    resolved via its `OperationTraitsCtx` metadata (§3.5). Supported, flag
+    explicitly in tests.
 
-11. **Metadata on subject nodes** is ignored by matching (except operation-trait
-    lookup on symbolic heads). Pattern vars embedded in a *subject* are treated
-    as ordinary syms (they are `isequal` to untagged syms anyway).
+11. **Marker terms embedded in a *subject*** are ordinary terms: they can
+    only be captured by variables or matched by an identical literal
+    `slot(x)` node. Subject-node metadata is otherwise ignored (except the
+    operation-trait lookup on symbolic heads, §3.5).
 
 ---
 
@@ -282,40 +399,48 @@ internal.
 pattern:BasicSymbolic{SymReal}
    │  compile_pattern ────────────────────────────────────┐
    ▼                                                      ▼
-CompiledPattern{T}   +   subject → IRStructure{T}   →   MatchEngine
+Matcher{T}           +   subject → IRStructure{T}   →   MatchEngine
    (pattern IR,                 (subject DAG)             (iterative
     per-node plans,                                       frame machine)
-    slot table, ground flags)                                  │
+    VarSpec table, ground flags)                               │
                                                                ▼
                                               eachmatch / matches / match
                                                                │
                                                                ▼
-                                          Substitution{BasicSymbolic→Any}
+                        Substitution <: AbstractDict{BasicSymbolic,
+                                                     BasicSymbolic}
 ```
 
-### 5.2 `CompiledPattern{T}`
+### 5.2 `Matcher{T}` (the compiled pattern)
 
-Built once per pattern; shareable across subjects (the many-to-one hook).
+Built once per `(pattern, varspecs)` pair; shareable across subjects (the
+many-to-one hook). `compile_pattern(expr; vars = Dict())` → `Matcher`.
 
 ```julia
-struct CompiledPattern{T}
-    ir::IRStructure{T}                       # pattern DAG
-    root::Int32                              # node index of whole pattern
-    plans::Vector{NodePlan}                  # indexed by node idx — see ADT below
-    slot_syms::Vector{BasicSymbolic{T}}      # slot_id -> the tagged Sym
-    slot_of::Dict{BasicSymbolic{T}, Int32}   # sym -> slot_id (isequal-consistent)
-    is_ground::BitVector                     # subtree contains no pattern vars
-    nslots::Int                              # number of distinct variables
+struct Matcher{T}
+    ir::IRStructure{T}                        # pattern DAG
+    root::Int32                               # node index of whole pattern
+    plans::Vector{NodePlan}                   # indexed by node idx — ADT below
+    var_syms::Vector{BasicSymbolic{T}}        # var_id -> inner Sym
+    var_specs::Vector{VarSpec}                # var_id -> merged spec (§3.1)
+    var_of::IdDict{BasicSymbolic{T}, Int32}   # inner sym -> var_id (=== identity)
+    is_ground::BitVector                      # subtree contains no variables
+    nvars::Int                                # number of distinct variables
 end
 ```
+
+`var_of` is an `IdDict`: the same variable is the same interned `Sym` object
+(hashconsed), so `===` identity is both correct and cheaper than an
+`isequal`-keyed `Dict`. Marker terms themselves never become keys — plans map
+each marker node to `var_of[unwrap_varspec(node)]`.
 
 `NodePlan` is a `@data` ADT (the BSImpl idiom), one variant per node kind:
 
 ```julia
 @data NodePlan begin
-    Literal()                       # match iff isequal (consts, plain syms)
-    Slot(slot_id::Int32)
-    Segment(slot_id::Int32)         # only legal inside arg lists; validated
+    Literal()                          # match iff isequal (consts, plain syms)
+    Slot(var_id::Int32, occ_pred::Union{Nothing, PredT}, optional::Bool)
+    Segment(var_id::Int32, occ_pred::Union{Nothing, PredT})
     Call(op, children::SmallV{Int32}, order)   # free head: positional children
     ACCall(op, fixed::SmallV{Int32}, varslots, segments, optionals, ...)
     ...
@@ -329,22 +454,27 @@ comparison. This is the single most valuable compile-time fact (real patterns
 are mostly ground).
 
 Compile-time validations (loud errors, not silent mismatches):
-- segment directly under a non-variadic-illegal position (see §4.5);
-- pattern variable used where a node isn't a `Sym` (e.g. tagged `Term` — rejected);
+- kind conflicts across occurrences of one variable (slot vs segment);
+- `min`/`max`/`default` conflicts across occurrences;
+- segment under a position where capture is undefined (see §4.5);
+- marker terms in head position (`slot(x)(y)` — undefined, rejected);
 - `min > arity bound` where provable.
 
 ### 5.3 Bindings and trail
 
 ```julia
 struct Bindings{T}
-    node::Vector{Int32}            # slot_id -> subject node (0 = unbound)
-    seq::Vector{SmallV{Int32}}     # slot_id -> captured subject nodes (segments)
+    node::Vector{Int32}            # var_id -> subject node (0 = unbound)
+    seq::Vector{SmallV{Int32}}     # var_id -> captured subject nodes (segments)
+    seg_op::Vector{Any}            # var_id -> the head under which it captured
 end
 ```
 
-One concrete struct; no unions in the store. A `trail::Vector{Int32}` records
-which slot ids were bound, in order; backtracking pops a mark and clears.
-Rebinding (non-linear check) never touches the trail.
+One concrete struct; `seg_op` is `Any` because ops are heterogeneous callables
+— read once per materialization, never in the hot loop. It is needed to
+rebuild `f(captured…)` for the external `Substitution` (§5.6). A
+`trail::Vector{Int32}` records which var ids were bound, in order; backtracking
+pops a mark and clears. Rebinding (non-linear check) never touches the trail.
 
 ### 5.4 The engine
 
@@ -375,16 +505,19 @@ Engine state:
 
 ```julia
 mutable struct MatchEngine{T}
-    pat::CompiledPattern{T}
-    subj::IRStructure{T}
+    const pat::Matcher{T}
+    const subj::IRStructure{T}
     frames::Vector{MatchFrame}     # stack; top = deepest obligation
     binds::Bindings{T}
     trail::Vector{Int32}
-    constraints::Vector{Constraint}
+    const constraints::Vector{Constraint}
     pending::BitVector             # constraint-ready bookkeeping
     steps::Int                     # work meter; compare against budget
 end
 ```
+
+`const` on every field that is never rebound after construction (`pat`,
+`subj`, `constraints`) — buffers and counters stay mutable.
 
 `advance!` protocol — every frame kind implements:
 
@@ -418,8 +551,13 @@ we keep `matches` as a plain `iterate` wrapper over `next_match!`.
 **(a) Literal / ground subtree** — `isequal(p_subtree, s_node)`; interned DAG
 makes this near-O(1). Never pushes a frame.
 
-**(b) Slot** — bound → `isequal` recheck; unbound → symtype+shape+predicate,
-bind, trail-record, then run ready constraints.
+**(b) Slot** — bound → `isequal` recheck (+ occurrence predicate re-eval);
+unbound → symtype+shape+occurrence/var predicates, bind, trail-record, then
+run ready constraints. The `symtype <: ` check goes through a fast-path
+wrapper (`cand === want`, `want === Any`, enumerated concrete combos) ending
+in a per-variable memo `Dict{Tuple{DataType,DataType},Bool}` — subtype checks
+are pure over the symtype lattice, so results cache safely for the life of
+the engine (§9 rule).
 
 **(c) `Seq` (free head)** — `operation` must agree (`===`/`isequal` for
 function heads, `isequal`/slot-match for symbolic heads); fixed arity; children
@@ -445,7 +583,8 @@ positional `Seq` obligations. (The segment-splitting machinery is adapted from
 pattern args partition into FIXED (ground and non-var subpatterns),
                          SLOTS (incl. already-bound slots, treated as fixed-
                                 by-lookup), OPTIONALS, SEGMENTS.
-subject args = arguments(subject) (or [subject] via identity coercion).
+subject args = sorted_arguments(subject) (or [subject] via identity coercion)
+             — canonical <ₑ order, never the hash-ordered raw arguments().
 
 Phase 1 — candidates: for each fixed pattern arg, compute the set of subject
    indices it can match (each submatch is itself a nested frame obligation).
@@ -475,9 +614,21 @@ innermost non-exhausted enumerator.
 
 Complexity honesty (documented in user docs): general AC matching is
 NP-complete `[R9]`; with *linear* patterns it is polynomial (O(|p|·|s|³)
-`[R9]`). We do not special-case linearity in v1 — the enumeration order
-and pruning get most of the win in practice; a dedicated linear fast path is a
-recorded optimization (§9).
+`[R9]`).
+
+**Is a dedicated linear fast path in scope?** Not in v1, and deliberately so:
+the machinery is already ~80% shared. `is_linear` is computed free at compile
+time (var occurrence counts). For a *linear* pattern with no segments, the
+Phase-2 assignment needs no non-linear recheck, and a *first*-match query can
+stop at the Hopcroft–Karp seed matching without running Uno enumeration —
+a cheap add-on later, reusing the bipartite graph wholesale. Two cheaper
+variants worth recording now: (a) the linearize-then-check prefilter of
+Bachmair et al.'s experiments `[R10]` — replace repeated var occurrences by
+fresh vars, match linearly, then consistency-check — which bolts onto our
+engine as a candidate-ordering/pruning layer; (b) ordering fixed parts by
+candidate count already approximates the practical win. The full BKN cubic
+algorithm is a different decomposition (not an extension of bipartite
+enumeration) and is out of scope unless a profiling case demands it.
 
 **(g) Optional** — at an AC/A node: two-branch choice (consume | default).
 Outside such a node: compile-time error (a lone optional has no "absence" to
@@ -485,35 +636,63 @@ fall back on).
 
 ### 5.6 Substitution & instantiation
 
-`Substitution{T}` materializes per yielded match:
+**`Substitution` is a concrete `AbstractDict` wrapper** — value type
+`BasicSymbolic{SymReal}` uniformly, no `Any`, no union:
 
 ```julia
-Dict{BasicSymbolic{T}, Any}   # slot sym -> BasicSymbolic{T};
-                              # segment sym -> Vector{BasicSymbolic{T}}
+struct Substitution <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
+    dict::Dict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}  # inner sym -> expr
+end
 ```
 
-Keyed by the *tagged* slot sym; `isequal`-lookup means `d[plain_x]` works and
-`substitute(expr, d)` does the right thing.
+- **Slots** bind to the captured `BasicSymbolic{SymReal}`.
+- **Segments** bind to the *reconstructed* `f(captured…)` — the parent op
+  `f` (recorded per-binding in `seg_op`) applied to the captured args via the
+  canonical constructor. This single choice removes the value union entirely:
+  every binding is a `BasicSymbolic`. Consequences:
+  - Empty capture under an identity-having op materializes as
+    `Const{T}(identity)` (`0` for `+`, `1` for `*`) — Mathematica-consistent
+    (`Plus[] === 0`); under a generic head it is `f()` (a zero-arg `Term`).
+  - `instantiate` splices by reading `arguments(bound)` when
+    `operation(bound) === f`; a `Const` binding must equal `identity_element`
+    (else a hard internal error). `f()` splices to zero args.
+  - Reconstructed `AddMul` argument order is dict/hash order — marked
+    *order-dependent*.
+  - The bound value is a first-class expression users can keep manipulating.
+- **Key normalization** (`unwrap_varspec` on lookup): `d[x]`, `d[slot(x)]`,
+  `d[slot(x, f)]`, `d[segment(x)]`, `d[optional(x, 0)]` all resolve to the same
+  variable — implemented on `getindex`/`get`/`haskey`/`setindex!`/`iterate`.
+  Keys are stored as inner syms only; because `isequal` ignores nothing here,
+  `d[plain_sym]` also hits (wanted: substitute works on the plain variable).
 
-`instantiate(template, subst)` rebuilds an expression splicing segment
-sequences under their parent op — needed because `substitute` alone can't
-splice sequences. This is also what a future rule layer needs to build RHS.
+`SubstitutionView` — a read-only `AbstractDict` view over *live* engine state
+(`binds`, `var_syms`, `seg_op`, subject IR): `keys`/`iterate`/`getindex`
+resolve lazily without materializing the output dict. **Contract:** valid only
+until the next `eachmatch`/`iterate` step mutates the bindings; `materialize(v)`
+produces a persistent `Substitution`. A debug flag (`Ref{Bool}`, off by
+default) stamps each view with the engine's step counter and throws on stale
+access — cheap insurance against the classic view-dangling bug.
+
+`instantiate(template, subst)` rebuilds an expression over the pattern's
+marker terms: marker nodes resolve via `unwrap_varspec`; `slot`/`optional`
+vars substitute their bound expr; `segment` vars splice `arguments(bound)`
+into the parent call's arg list. `substitute(expr, subst)` also works for
+slot-only substitutions (segment bindings would be inserted wholesale —
+documented; `instantiate` is the correct entry point).
 
 Public API (stable surface):
 
 ```julia
-compile_pattern(p)          -> CompiledPattern{SymReal}
-match(pat_or_cp, s; constraints=()) -> Union{Substitution, Nothing}
-matches(pat_or_cp, s; constraints=())  # iterator (lazy, resumable)
+compile_pattern(expr; vars::AbstractDict = Dict()) -> Matcher{SymReal}
+match(m_or_expr, s; constraints = ()) -> Union{Substitution, Nothing}
+matches(m_or_expr, s; constraints = ())       # lazy resumable iterator
 matchall(...) = collect(matches(...))
-eachmatch(f, pat_or_cp, s)  # f(::SubstitutionView)::Bool; false = stop early
+eachmatch(f, m_or_expr, s)                    # f(::SubstitutionView)::Bool; false = stop
 instantiate(template, subst)
+materialize(view) -> Substitution
 ```
 
-`SubstitutionView` is a read-only view over live engine state — documented
-contract: valid only until the next `eachmatch`/`iterate` step; `materialize`
-for a persistent `Substitution`. `eachmatch` is the zero-allocation hot path
-rewriters should use.
+`eachmatch` is the zero-allocation hot path rewriters should use.
 
 ---
 
@@ -523,13 +702,14 @@ rewriters should use.
 MatchMaker.jl/
   DESIGN.md                 # this document
   DEVELOPING.md             # codebase navigation + implicit contracts (phase 0)
-  README.md                 # includes the §14 reference list (phase 0)
+  README.md                 # includes the §13 reference list (phase 0)
   Project.toml
   src/
     MatchMaker.jl           # module, includes, exports
-    patternvars.jl          # §3.1–3.2: metadata schema, constructors, macros
-    traits.jl               # §3.3: operation traits
-    compile.jl              # §5.2: CompiledPattern, NodePlan ADT, validation
+    patternvars.jl          # §3.1–3.3: marker terms, VarSpec, unwrap_varspec,
+                            #   constructors, macros, FunctionWrapper aliases
+    traits.jl               # §3.5: operation traits + fast-path wrappers
+    compile.jl              # §5.2: Matcher, NodePlan ADT, spec merge, validation
     bindings.jl             # §5.3, §5.6: Bindings, trail, Substitution(+View)
     engine.jl               # §5.4: MatchEngine, advance loop, iterate
     matchers/
@@ -541,7 +721,14 @@ MatchMaker.jl/
     instantiate.jl          # §5.6: instantiate
     api.jl                  # §5.6: public entry points
   test/
-    runtests.jl  unit/...  oracle.jl  fuzz.jl  golden/...
+    runtests.jl
+    unit/...                # per-source-file unit suites
+    oracle.jl               # the naive reference matcher (self-contained)
+    fuzz.jl                 # seeded randomized cross-validation vs oracle
+    matchpy/                # tests translated from MatchPy's test suite;
+                            #   each file cites the original file::test `[R5]`
+    literature/             # cases taken from the matching literature
+                            #   (Eker, BKN, MatchPy papers…) with citations
   benchmark/benchmarks.jl
 ```
 
@@ -553,18 +740,23 @@ Every feature branch ships its tests in the same merge.
   compile plans, each frame kind's enumeration semantics (e.g. `Assoc` split
   enumeration on a free `f`, AC distribution counts).
 - **Oracle cross-validation** (`test/oracle.jl`): a deliberately naive,
-  obviously-correct matcher (~150 lines, recursion + `permutations`/
-  `combinations`, no IR, no sharing, correctness over speed). Property:
+  obviously-correct matcher (~200 lines, recursion + hand-rolled
+  permutations/compositions helpers — no Combinatorics dep, no IR, no
+  sharing, correctness over speed). Property:
   `sort(materialize.(collect(matches(p,s)))) == sort(oracle_all(p,s))` on
   generated (pattern, subject) pairs. The oracle defines the semantics; the
   engine must equal it on *sets* of substitutions.
 - **Fuzz** (`test/fuzz.jl`): seeded random pattern/subject generator over
   `+`,`*`,`^`,`/`,`sin`,`cos`,`f` with slots/segments/optionals at controlled
   rates; bounded subject size; fixed seed committed so failures reproduce.
-- **Golden** (`test/golden/`): examples transcribed from MatchPy's test suite
-  (`matchpy` repo `tests/` `[R5]`) and the literature (`sin²+cos²`, `∫xⁿ`-style,
-  distributivity, sequence captures) + the *negative* corpus: patterns that
-  must NOT match (arity, symtype, non-linear inequality).
+- **`test/matchpy/`** — all relevant MatchPy tests translated to our API;
+  each file/function cites the original (`tests/test_matching.py::test_…`
+  `[R5]`) so coverage of MatchPy semantics can be audited side-by-side.
+- **`test/literature/`** — reference cases taken from the matching literature
+  (Eker's worked examples, BKN's pathological instances, MatchPy paper
+  figures), each annotated with its source.
+- **Negative corpus** — patterns that must NOT match (arity, symtype,
+  non-linear inequality, malformed specs).
 - **Type stability**: `@inferred` on `compile_pattern`, `next_match!`,
   `instantiate`; a `test/qa` env with JET for the hot paths; Cthulhu
   spot-checks documented in DEVELOPING.md.
@@ -574,14 +766,14 @@ Every feature branch ships its tests in the same merge.
 
 ## 8. Many-to-one outlook (deferred, but designed-for)
 
-After the one-to-one engine stabilizes: compile *sets* of `CompiledPattern`s
+After the one-to-one engine stabilizes: compile *sets* of `Matcher`s
 into a discrimination-net-style shared automaton — the AC discrimination-net
 lineage `[R10]` generalized by Krebber to sequence variables and non-linear
 patterns `[R3]`, as realized in `matchpy/matching/many_to_one.py::ManyToOneMatcher`
 (with the purely syntactic variant in `matchpy/matching/syntactic.py::
 DiscriminationNet`) `[R5]`. Integration points already in the design:
 
-- `CompiledPattern` plans are indexed instructions — a net state is just a
+- `Matcher` plans are indexed instructions — a net state is just a
   *set of* `(pattern, node)` pairs sharing one subject cursor.
 - `IRStructure` on the subject amortizes across all patterns.
 - AC nodes map to MatchPy's `CommutativeMatcher` net states (states whose
@@ -598,18 +790,26 @@ this section exists only to keep today's choices compatible.
 
 - All engine fields concrete; `MatchFrame` is the only union (ADT), dispatched
   by `@match` — the same union-splitting model as `BSImpl`.
-- Predicates are inherently dynamic (user callables): extracted from metadata
-  once at compile time into the `NodePlan`, called through a single
-  `call_predicate(::Any, x)::Bool` typeasserted helper; `Returns(true)` is
-  elided statically at compile so unconstrained slots never pay for it.
-- No `Vector{Any}` in the search state; bindings store `Int32` node ids.
+- Stored callables are `FunctionWrapper`s with declared signatures (§3.2) —
+  inference works, no overspecialization, no `Any` call; a `nothing` check
+  skips the call entirely when unconstrained.
+- **Subtype checks are not free** (they enter the compiler runtime). Hot
+  checks — `symtype(candidate) <: T`, op-trait lookups — go through wrappers
+  that enumerate common concrete cases (`===`, literal tables) and memoize
+  the rest (`Dict{Tuple{DataType,DataType},Bool}` per variable, lifetime =
+  engine). Stated once as a rule: *design for extensibility; internally
+  fast-path common cases.*
+- No `Vector{Any}` in the search state; bindings store `Int32` node ids;
+  `seg_op` is the sole `Any` field and is cold (materialization only).
 - Buffers reused across matches of one engine; `Substitution` materialization
   is the only per-match allocation (and `eachmatch` avoids it).
 - `maxsteps` budget parameter guards pathological AC searches (the
   `COMM_BACKTRACK_BUDGET` analogue), counted in `eng.steps`.
+- `sorted_arguments` on `AddMul` nodes is `@cache`d — canonical order is
+  amortized-free per node.
 - Deferred optimizations (recorded, not scheduled): `(p_idx, s_idx)`-keyed
   submatch memoization once bindings-versioning is designed; linear-pattern
-  fast path (BKN's polynomial case); direct `AddMul`-dict matching to skip
+  fast path (§5.5f analysis); direct `AddMul`-dict matching to skip
   `Mul`-wrapper materialization.
 - Verification: `@code_typed`/`@descend` on `next_match!`, each `step!`,
   `compile_pattern`, `instantiate`; JET in CI-adjacent testset.
@@ -638,7 +838,7 @@ this section exists only to keep today's choices compatible.
   contract, enumeration order), how to run the fuzz oracle and Cthulhu checks.
 - **Citation policy:** algorithms, data structures, and semantics adapted from
   MatchPy or the matching literature are credited in three places — the paper
-  in `README.md`'s reference list (§14), the `[Rx]` tag in this document, and a
+  in `README.md`'s reference list (§13), the `[Rx]` tag in this document, and a
   source comment naming the MatchPy file::function or paper section adjacent
   to the adapted code (e.g. `# Adapted from matchpy/matching/bipartite.py::
   enum_maximum_matchings_iter (Uno 1997)`).
@@ -646,9 +846,11 @@ this section exists only to keep today's choices compatible.
   semantics, or architecture update this file in the same PR; reviewed code
   changes that diverge are doc bugs until fixed.
 - Dependencies: `SymbolicUtils` (dev'd to the local checkout),
-  `DocStringExtensions`, `Moshi`, `Graphs` (IR access), `ReadOnlyArrays`.
-  Test: `Test`, `SafeTestsets`, `Aqua`, `JET`, `BenchmarkTools`,
-  `Combinatorics` (oracle).
+  `DocStringExtensions`, `Moshi`, `Graphs` (IR access), `ReadOnlyArrays`,
+  `FunctionWrappers` (§3.2). Test extras: `Test`, `SafeTestsets`, `Aqua`,
+  `JET`, `BenchmarkTools`. The oracle is deliberately self-contained (own
+  enumeration helpers), so no `Combinatorics` dep.
+- Licensing: all adopted references/deps are MIT or BSD-2-Clause — see §14.
 
 ## 12. Implementation milestones (branches in order)
 
@@ -656,13 +858,18 @@ Each `feat/*` merges to `master` with unit + oracle + (where cheap) fuzz
 coverage before the next starts.
 
 0. `chore/repo-bootstrap` — Project, module stub, test harness, DEVELOPING.md,
-   .gitignore, Aqua suite. *Tests: package loads, QA green.*
-1. `feat/pattern-variables` — §3.1–3.2. *Tests: tagged sym equality/hashcons
-   behavior, constructor validation, macro expansion.*
-2. `feat/op-traits` — §3.3. *Tests: +/* AC for Number, A-not-C for matrices,
-   symbolic-head metadata fallback, user extension.*
-3. `feat/pattern-compiler` — §5.2. *Tests: plan shape per node kind, ground
-   flags, slot table, validation errors.*
+   README.md (with §13 refs + §14 licenses), .gitignore, Aqua suite.
+   *Tests: package loads, QA green.*
+1. `feat/pattern-vars` — §3.1–3.3: marker singletons, `unwrap_varspec`,
+   `VarSpec`, constructors, macros, `Substitution` dict wrapper.
+   *Tests: marker-term identity/equality, var identity & name-collision
+   caveat, constructor validation, macro expansion, dict key normalization.*
+2. `feat/op-traits` — §3.5 incl. fast-path wrappers. *Tests: +/* AC for
+   Number, A-not-C for matrices, symbolic-head metadata fallback, user
+   extension, fast-path equivalence vs trait fallback.*
+3. `feat/pattern-compiler` — §5.2: `Matcher`, `NodePlan`, spec merge,
+   validation. *Tests: plan shape per node kind, ground flags, varspec
+   merge/conflict errors.*
 4. `feat/match-core` — engine + literal/slot/`Seq`; `match`, `matches`,
    `eachmatch`, `Substitution`(+View). *Tests: unit per leaf logic; oracle on
    linear patterns; fuzz (free-heads only).*
@@ -673,9 +880,9 @@ coverage before the next starts.
    associative, contiguous splits, singleton subjects; oracle.*
 8. `feat/ac` — sub-branches `ac/candidates+assignment` then `ac/segments`.
    *Tests: unit on candidate matrix & distribution; oracle fuzz incl.
-   non-linear; MatchPy golden cases; singleton coercion.*
+   non-linear; `test/matchpy/` suite; singleton coercion.*
 9. `feat/optional-slots` — §4.7/§5.5g. *Tests: defaults under +,*; both
-   enumeration branches; compile error outside AC/A.*
+   enumeration branches; compile error outside AC/A; `optional` marker sugar.*
 10. `feat/constraints` — §4.9. *Tests: early-prune call-count instrumentation,
     correctness vs post-hoc filtering.*
 11. `feat/instantiate` — §5.6 remainder. *Tests: splice correctness, end-to-end
@@ -685,7 +892,7 @@ coverage before the next starts.
 13. `docs/user-guide` — pattern syntax & semantics incl. the normalization
     caveat and complexity notes.
 
-## 14. References
+## 13. References
 
 Adapted algorithms and their sources. In the source code, `[Rx]` tags are
 expanded to these entries; MatchPy code is referenced by path within
@@ -738,3 +945,30 @@ expanded to these entries; MatchPy code is referenced by path within
   SIAM J. Comput. 24(6):1207–1234, 1995.
   <https://doi.org/10.1137/S0097539793246252> — traversal-order synthesis for
   pattern-set automata; relevant when §8 becomes a real design.
+
+## 14. Licenses
+
+| Dependency / reference | License |
+|---|---|
+| MatchPy (`HPAC/matchpy`) | MIT (© 2016 Manuel Krebber) |
+| SymbolicUtils.jl | MIT |
+| Moshi.jl | MIT |
+| FunctionWrappers.jl | MIT |
+| DocStringExtensions.jl | MIT |
+| OrderedCollections.jl | MIT |
+| ReadOnlyArrays.jl | MIT |
+| Graphs.jl | **BSD-2-Clause** |
+| Aqua.jl, JET.jl, BenchmarkTools.jl, SafeTestsets.jl (test-only) | MIT |
+
+Compliance notes:
+
+- **MatchPy is MIT.** We port *algorithms*, not source lines (different
+  language), and every adapted component carries a file::function citation
+  per §11 — MIT attribution obligations are satisfied by the README license
+  notice + reference list and the inline source comments.
+- **Papers** are cited, not reproduced; algorithm descriptions reimplemented
+  from the literature carry no license constraint.
+- **Graphs.jl is BSD-2-Clause** — compatible with an MIT package; its license
+  is carried transitively as a dependency (we vendor nothing).
+- **MatchMaker.jl itself will be MIT** (declared in README + LICENSE file in
+  the repo-bootstrap commit), consistent with the whole chain.
