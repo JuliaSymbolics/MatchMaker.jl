@@ -4,6 +4,10 @@ using SafeTestsets
     include("qa.jl")
 end
 
+@safetestset "pattern variables" begin
+    include("unit/patternvars.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
