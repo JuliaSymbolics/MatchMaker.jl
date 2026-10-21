@@ -175,6 +175,19 @@ struct VarSpec{T}                    # concrete fields; T = vartype
 end
 ```
 
+`kind` is a deliberate denormalization, not a second source of truth: node
+dispatch reads the `NodePlan` variants, never `VarSpec.kind`, and marker terms
+are the sole declarer of kind. Its two jobs: (a) the *merge-validation
+record* — which `vars`-map fields are legal depends on kind (`min`/`max`/
+`sequence_predicate` on a slot → compile error; `default` on a segment →
+compile error), and `VarSpec` is where the merged spec lands; (b) the
+*interpretation key* making the flat record self-describing for
+introspection. Runtime disambiguation of "unbound slot" vs "segment bound to
+empty" is covered by `seg_op` instead. Alternative, rejected: a type-tagged
+`Union{SlotSpec{T}, SegmentSpec{T}}` — eliminates the flag and the dead
+fields, but pays a 2-way union split on every spec read (incl. the warm-path
+predicate check) for a one-enum saving.
+
 ### 3.2 Stored callables: `FunctionWrappers`
 
 Predicates and constraint functions are user callables with *known signatures
