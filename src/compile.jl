@@ -22,11 +22,9 @@ and never re-derives node kind:
 - `ACCall(op, head, fixed, slots, optionals, segments)` — AC head:
   children partitioned by kind.
 
-`op` is `operation(node)` (needed for head-equality, identity coercion, and
-segment binding reconstruction); `head` is the node index of a symbolic-head
+`op` is `operation(node)`. `head` is the node index of a symbolic-head
 obligation — nonzero when the operation is itself symbolic (`f(x)` with
-symbolic `f`, including head-slots like `slot(f)(x)` per §4.10) and `0`
-otherwise.
+symbolic `f`, including head-slots like `slot(f)(x)` per §4.10).
 """
 @data NodePlan begin
     struct Literal end
@@ -65,6 +63,9 @@ otherwise.
     end
 end
 
+# The `@data` ADT type (the module is `NodePlan`; its variants live inside).
+const NodePlanT = NodePlan.Type
+
 ###
 ### Matcher (§5.2)
 ###
@@ -74,19 +75,25 @@ end
 
 A compiled pattern: pattern `IRStructure` + per-node [`NodePlan`](@ref)s +
 variable table. Built once by [`compile_pattern`](@ref); shareable across
-subjects (the many-to-one hook, §5.2). `var_of` is an `IdDict` — the same
-variable is the same interned `Sym` (hashconsing), so `===` identity is both
-correct and cheaper than an `isequal`-keyed map.
+subjects (the many-to-one hook, §5.2).
 """
 struct Matcher{T}
-    ir::IRStructure{T}                        # pattern DAG
-    root::Int32                               # node index of whole pattern
-    plans::Vector{NodePlan.Type}                   # indexed by node idx
-    var_syms::Vector{BasicSymbolic{T}}        # var_id -> inner Sym
-    var_specs::Vector{VarSpec.Type}                # var_id -> spec
-    var_of::IdDict{BasicSymbolic{T}, Int32}   # inner sym -> var_id (=== identity)
-    is_ground::BitVector                      # subtree contains no variables
-    nvars::Int                                # number of distinct variables
+    "Pattern DAG."
+    ir::IRStructure{T}
+    "Node index of the whole pattern."
+    root::Int32
+    "Per-node plans, indexed by pattern node index."
+    plans::Vector{NodePlanT}
+    "var_id -> inner `Sym`."
+    var_syms::Vector{BasicSymbolic{T}}
+    "var_id -> spec."
+    var_specs::Vector{VarSpecT}
+    "Inner `Sym` -> var_id (=== identity, hashconsed)."
+    var_of::IdDict{BasicSymbolic{T}, Int32}
+    "Subtree contains no variables."
+    is_ground::BitVector
+    "Number of distinct variables."
+    nvars::Int
 end
 
 ###
@@ -94,33 +101,23 @@ end
 ###
 
 """
-    compile_pattern(expr::BasicSymbolic{SymReal};
-                    vars::AbstractDict{BasicSymbolic{SymReal}, VarSpec.Type} =
-                        Dict{BasicSymbolic{SymReal}, VarSpec.Type}())
-        -> Matcher{SymReal}
+    $TYPEDSIGNATURES
 
 Compile `expr` into a [`Matcher`](@ref) (DESIGN.md §5.2). `vars` maps pattern
 variables (inner `Sym`s or marker terms) to `VarSpec` variants
-([`slotspec`](@ref)/[`segmentspec`](@ref)); unlisted variables get the
+([`slotspec`](@ref)/[`segmentspec`](@ref)). Unlisted variables get the
 unconstrained spec for their kind.
-
-Loud errors, not silent mismatches (§5.2 validation list): bare occurrences
-of marked syms, marker-kind conflicts, `vars`-map variant/kind mismatches,
-`optional` occurrences outside AC/A nodes or without a `default`, `segment`/
-`optional` markers in head position or at the root, `vars` keys that are not
-pattern variables, and segment `min` bounds that provably exceed a
-fixed-arity parent's argument count.
 """
 function compile_pattern(
         expr::BasicSymbolic{SymReal};
-        vars::AbstractDict{BasicSymbolic{SymReal}, VarSpec.Type} =
-            Dict{BasicSymbolic{SymReal}, VarSpec.Type}()
+        vars::AbstractDict{BasicSymbolic{SymReal}, VarSpecT} =
+            Dict{BasicSymbolic{SymReal}, VarSpecT}()
     )
     ir = IRStructure{SymReal}()
     root = populate_ir!(ir, expr)
     g = ir.dependency_graph
     n = length(ir)
-    plans = Vector{NodePlan.Type}(undef, n)
+    plans = Vector{NodePlanT}(undef, n)
     is_ground = trues(n)
     var_syms = BasicSymbolic{SymReal}[]
     var_of = IdDict{BasicSymbolic{SymReal}, Int32}()
@@ -136,21 +133,26 @@ function compile_pattern(
             inner = _marker_inner(ex)
             is_seg = _is_segment_term(ex)
             is_opt = _is_optional_term(ex)
-            vid = get!(var_of, inner) do
-                push!(var_syms, inner)
-                push!(var_is_seg, is_seg)
-                push!(var_has_opt, false)
-                return Int32(length(var_syms))
+            vid = let
+                new_var = () -> begin
+                    push!(var_syms, inner)
+                    push!(var_is_seg, is_seg)
+                    push!(var_has_opt, false)
+                    return Int32(length(var_syms))
+                end
+                get!(new_var, var_of, inner)
             end
             var_is_seg[vid] == is_seg || throw(
                 ArgumentError(
                     lazy"pattern variable $inner occurs as both slot/optional and segment"
                 )
             )
-            if is_opt
-                var_has_opt[vid] = true
+            var_has_opt[vid] |= is_opt
+            plans[i] = if is_seg
+                NodePlan.Segment(vid)
+            else
+                NodePlan.Slot(vid, is_opt)
             end
-            plans[i] = is_seg ? NodePlan.Segment(vid) : NodePlan.Slot(vid, is_opt)
             is_ground[i] = false
         elseif iscall(ex)
             plans[i] = _plan_call!(plans, is_ground, ir, g, ex, i, var_of)
@@ -195,7 +197,7 @@ function _marker_inner(ex::BasicSymbolic{SymReal})
 end
 
 function _plan_call!(
-        plans::Vector{NodePlan.Type}, is_ground::BitVector,
+        plans::Vector{NodePlanT}, is_ground::BitVector,
         ir::IRStructure{SymReal}, g::SymbolicUtils.OrderedDiGraph{Int32},
         ex::BasicSymbolic{SymReal}, i::Int32,
         var_of::IdDict{BasicSymbolic{SymReal}, Int32}
@@ -254,8 +256,11 @@ function _plan_call!(
             is_ground[i] &= is_ground[c]
         end
         is_ground[i] &= (iszero(head) || is_ground[head])
-        return ac ? NodePlan.ACCall(op, head, fixed, slots, optionals, segments) :
+        return if ac
+            NodePlan.ACCall(op, head, fixed, slots, optionals, segments)
+        else
             NodePlan.CommCall(op, head, fixed, slots, optionals, segments)
+        end
     else
         children = SmallV{Int32}()
         for k in start:length(nbs)
@@ -274,8 +279,11 @@ function _plan_call!(
             is_ground[i] &= is_ground[c]
         end
         is_ground[i] &= (iszero(head) || is_ground[head])
-        return assoc ? NodePlan.AssocCall(op, head, children) :
+        return if assoc
+            NodePlan.AssocCall(op, head, children)
+        else
             NodePlan.Call(op, head, children)
+        end
     end
 end
 
@@ -293,13 +301,13 @@ end
 
 # Merge the `vars` map into a per-var_id VarSpec vector (§3.1, §5.2).
 function _merge_specs(
-        vars::AbstractDict{BasicSymbolic{SymReal}, VarSpec.Type},
+        vars::AbstractDict{BasicSymbolic{SymReal}, VarSpecT},
         var_of::IdDict{BasicSymbolic{SymReal}, Int32},
         var_syms::Vector{BasicSymbolic{SymReal}},
         var_is_seg::BitVector, var_has_opt::BitVector
     )
     nvars = length(var_syms)
-    specs = Vector{VarSpec.Type}(undef, nvars)
+    specs = Vector{VarSpecT}(undef, nvars)
     seen = falses(nvars)
     for (k, v) in vars
         ks = unwrap_varspec(k)
@@ -344,9 +352,9 @@ end
 # non-segment child count cannot exceed the parent's argument count (§5.2,
 # "where provable").
 function _check_fixed_arity!(
-        plans::Vector{NodePlan.Type}, ir::IRStructure{SymReal},
+        plans::Vector{NodePlanT}, ir::IRStructure{SymReal},
         var_of::IdDict{BasicSymbolic{SymReal}, Int32},
-        specs::Vector{VarSpec.Type}
+        specs::Vector{VarSpecT}
     )
     for i in Int32(1):Int32(length(plans))
         @match plans[i] begin

@@ -1,7 +1,7 @@
 """
     MatchMaker
 
-MatchPy-style symbolic pattern matching on top of SymbolicUtils.jl.
+Symbolic pattern matching on top of SymbolicUtils.jl.
 
 The governing design document is `DESIGN.md` (section references throughout
 source comments point at it); `DEVELOPING.md` documents codebase navigation
