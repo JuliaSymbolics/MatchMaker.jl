@@ -459,15 +459,15 @@ Built once per `(pattern, varspecs)` pair; shareable across subjects (the
 many-to-one hook). `compile_pattern(expr; vars = Dict())` → `Matcher`.
 
 ```julia
-struct Matcher{T}
-    ir::IRStructure{T}                        # pattern DAG
-    root::Int32                               # node index of whole pattern
-    plans::Vector{NodePlan}                   # indexed by node idx — ADT below
-    var_syms::Vector{BasicSymbolic{T}}        # var_id -> inner Sym
-    var_specs::Vector{VarSpec}                # var_id -> spec (§3.1)
-    var_of::IdDict{BasicSymbolic{T}, Int32}   # inner sym -> var_id (=== identity)
-    is_ground::BitVector                      # subtree contains no variables
-    nvars::Int                                # number of distinct variables
+struct Matcher
+    ir::IRStructure{SymReal}                       # pattern DAG
+    root::Int32                                    # node index of whole pattern
+    plans::Vector{NodePlanT}                       # indexed by node idx — ADT below
+    var_syms::Vector{BasicSymbolic{SymReal}}       # var_id -> inner Sym
+    var_specs::Vector{VarSpecT}                    # var_id -> spec (§3.1)
+    var_of::IdDict{BasicSymbolic{SymReal}, Int32}  # inner sym -> var_id (=== identity)
+    is_ground::BitVector                           # subtree contains no variables
+    nvars::Int                                     # number of distinct variables
 end
 ```
 
