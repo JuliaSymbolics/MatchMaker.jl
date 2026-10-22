@@ -459,15 +459,15 @@ Built once per `(pattern, varspecs)` pair; shareable across subjects (the
 many-to-one hook). `compile_pattern(expr; vars = Dict())` → `Matcher`.
 
 ```julia
-struct Matcher{T}
-    ir::IRStructure{T}                        # pattern DAG
-    root::Int32                               # node index of whole pattern
-    plans::Vector{NodePlan}                   # indexed by node idx — ADT below
-    var_syms::Vector{BasicSymbolic{T}}        # var_id -> inner Sym
-    var_specs::Vector{VarSpec}                # var_id -> spec (§3.1)
-    var_of::IdDict{BasicSymbolic{T}, Int32}   # inner sym -> var_id (=== identity)
-    is_ground::BitVector                      # subtree contains no variables
-    nvars::Int                                # number of distinct variables
+struct Matcher
+    ir::IRStructure{SymReal}                       # pattern DAG
+    root::Int32                                    # node index of whole pattern
+    plans::Vector{NodePlanT}                       # indexed by node idx — ADT below
+    var_syms::Vector{BasicSymbolic{SymReal}}       # var_id -> inner Sym
+    var_specs::Vector{VarSpecT}                    # var_id -> spec (§3.1)
+    var_of::IdDict{BasicSymbolic{SymReal}, Int32}  # inner sym -> var_id (=== identity)
+    is_ground::BitVector                           # subtree contains no variables
+    nvars::Int                                     # number of distinct variables
 end
 ```
 
@@ -483,11 +483,21 @@ each marker node to `var_of[unwrap_varspec(node)]`.
     Literal()                          # match iff isequal (consts, plain syms)
     Slot(var_id::Int32, optional::Bool)
     Segment(var_id::Int32)
-    Call(op, children::SmallV{Int32}, order)   # free head: positional children
-    ACCall(op, fixed::SmallV{Int32}, varslots, segments, optionals, ...)
-    ...
+    Call(op, head, children::SmallV{Int32})        # free head: positional
+    AssocCall(op, head, children::SmallV{Int32})   # A-not-C: ordered
+    CommCall(op, head, fixed, slots, optionals, segments)  # C-not-A
+    ACCall(op, head, fixed, slots, optionals, segments)    # AC
 end
 ```
+
+`op` is `operation(node)` — needed for head equality, identity coercion, and
+segment binding reconstruction. `head` is the node index of a symbolic-head
+obligation (`0` when the operation is not symbolic): `IRStructure` prefixes
+a symbolic operation to `outneighbors`, so the head is just another child
+obligation — this is how head-slots (`slot(f)(x)`, §4.10) fall out. Comm/AC
+plans partition children at compile time into `fixed`/`slots`/`optionals`/
+`segments`; `Call` and `AssocCall` keep ordered children (associative
+matching is position-sensitive).
 
 `is_ground` precomputed bottom-up: `is_ground[n] = no var in descendants`.
 A ground pattern node matches a subject node iff `isequal` — the engine checks
@@ -501,9 +511,12 @@ Compile-time validations (loud errors, not silent mismatches):
 - `vars`-map `VarSpec` variant mismatches the marker kind;
 - `optional` occurrence of a var without `default` in its spec;
 - `vars` map entries keyed on syms that are not pattern variables;
-- segment under a position where capture is undefined (see §4.5);
-- marker terms in head position (`slot(x)(y)` — undefined, rejected);
-- `min > arity bound` where provable.
+- segment under a position where capture is undefined (see §4.5), including
+  `segment`/`optional` at the pattern root (no enclosing argument list);
+- `segment`/`optional` markers in head position (`slot` heads are *allowed*
+  — §4.10);
+- `optional` outside an AC/A node (§4.7);
+- `min > arity bound` where provable (fixed-arity parents).
 
 ### 5.3 Bindings and trail
 

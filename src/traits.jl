@@ -4,28 +4,30 @@
 ### OperationTraitsCtx — the metadata channel for symbolic heads
 ###
 
+# The analogue of MatchPy's per-`Operation` assoc/comm flags.
 """
     OperationTraitsCtx
 
 Metadata context key (a `DataType`, per the SymbolicUtils metadata
 convention) under which an [`OperationTraits`](@ref) value is stored on a
 symbolic head `Sym`. This is the only channel that can mark a *symbolic*
-function as associative/commutative — the analogue of MatchPy's per-
-`Operation` flags (DESIGN.md §3.5).
+function as associative/commutative (DESIGN.md §3.5).
 """
 struct OperationTraitsCtx end
 
 """
-    OperationTraits(; associative = false, commutative = false,
-                    identity = nothing)
+    $TYPEDSIGNATURES
 
 Value stored under [`OperationTraitsCtx`](@ref) on a symbolic head:
 associativity/commutativity flags and an optional `identity` element used for
 singleton-subject coercion (DESIGN.md §4.6).
 """
 struct OperationTraits
+    "Whether the operation is associative."
     associative::Bool
+    "Whether the operation is commutative."
     commutative::Bool
+    "Identity element for singleton-subject coercion, or `nothing`."
     identity::Any
 end
 OperationTraits(;
@@ -35,8 +37,7 @@ OperationTraits(;
     OperationTraits(associative, commutative, identity)
 
 """
-    set_operation_traits(f::BasicSymbolic{SymReal}; associative = false,
-                         commutative = false, identity = nothing)
+    $TYPEDSIGNATURES
 
 Attach an [`OperationTraits`](@ref) entry to the symbolic head `f` (must be a
 function symbolic — `FnType` symtype) and return it. The returned `Sym` is
@@ -64,17 +65,17 @@ end
 ###
 
 """
-    is_associative(f, ::Type{ST}) -> Bool
+    $TYPEDSIGNATURES
 
 Whether `f(x, f(y, z)) ≡ f(f(x, y), z)` for calls whose result symtype is
 `ST`. Extension point: add methods for your own functions. For *symbolic*
 heads, traits come from [`OperationTraitsCtx`](@ref) metadata on the head
-`Sym` (MatchPy per-`Operation` `associative` flag, [R1, R3]).
+`Sym` (DESIGN.md §3.5).
 """
 is_associative(@nospecialize(f), ::SymbolicUtils.TypeT) = false
 
 """
-    is_commutative(f, ::Type{ST}) -> Bool
+    $TYPEDSIGNATURES
 
 Whether `f(x, y) ≡ f(y, x)` for calls whose result symtype is `ST`.
 See [`is_associative`](@ref).
@@ -82,7 +83,7 @@ See [`is_associative`](@ref).
 is_commutative(@nospecialize(f), ::SymbolicUtils.TypeT) = false
 
 """
-    identity_element(f, ::Type{ST}) -> Union{Any, Nothing}
+    $TYPEDSIGNATURES
 
 An `e` such that `f(e, x) ≡ x` for result symtype `ST`, or `nothing` if none
 is declared. Used for singleton-subject coercion (DESIGN.md §4.6).
@@ -122,7 +123,7 @@ end
 # must reach the trait fallback.
 
 """
-    _is_number_st(T::SymbolicUtils.TypeT) -> Bool
+    $TYPEDSIGNATURES
 
 Common numeric symtypes checked by `===` first; the general `<: Number`
 check is the cold fallback (subtype checks are not free — §9).
@@ -133,7 +134,7 @@ _is_number_st(@nospecialize(T::SymbolicUtils.TypeT)) =
     T === Bool || T <: Number
 
 """
-    _is_ac_head(op, ST::SymbolicUtils.TypeT) -> Bool
+    $TYPEDSIGNATURES
 
 Whether `op` is associative *and* commutative for result symtype `ST` —
 `+`/`*` on numeric symtypes take the fast path; everything else falls through
@@ -147,7 +148,7 @@ function _is_ac_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils.TypeT))
 end
 
 """
-    _is_associative_head(op, ST::SymbolicUtils.TypeT) -> Bool
+    $TYPEDSIGNATURES
 
 See [`_is_ac_head`](@ref). Fast path for `+`/`*` on numeric symtypes.
 """
@@ -157,7 +158,7 @@ function _is_associative_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils
 end
 
 """
-    _is_commutative_head(op, ST::SymbolicUtils.TypeT) -> Bool
+    $TYPEDSIGNATURES
 
 See [`_is_ac_head`](@ref). Fast path for `+`/`*` on numeric symtypes.
 """
@@ -167,7 +168,7 @@ function _is_commutative_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils
 end
 
 """
-    _identity_el(op, ST::SymbolicUtils.TypeT)
+    $TYPEDSIGNATURES
 
 The declared identity element for `op` at result symtype `ST`, or `nothing`.
 Fast path: `+`/`0`, `*`/`1` on numeric symtypes.
