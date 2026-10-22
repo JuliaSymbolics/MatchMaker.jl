@@ -18,7 +18,7 @@ gfn = set_operation_traits(
 
 @testset "plan shapes" begin
     m = compile_pattern(slot(x) + 2)
-    @test m isa Matcher{SymReal}
+    @test m isa Matcher
     @test m.nvars == 1
     @test m.var_syms[1] === x
     @match m.plans[m.root] begin

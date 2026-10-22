@@ -71,25 +71,25 @@ const NodePlanT = NodePlan.Type
 ###
 
 """
-    Matcher{T}
+    Matcher
 
 A compiled pattern: pattern `IRStructure` + per-node [`NodePlan`](@ref)s +
 variable table. Built once by [`compile_pattern`](@ref); shareable across
 subjects (the many-to-one hook, §5.2).
 """
-struct Matcher{T}
+struct Matcher
     "Pattern DAG."
-    ir::IRStructure{T}
+    ir::IRStructure{SymReal}
     "Node index of the whole pattern."
     root::Int32
     "Per-node plans, indexed by pattern node index."
     plans::Vector{NodePlanT}
     "var_id -> inner `Sym`."
-    var_syms::Vector{BasicSymbolic{T}}
+    var_syms::Vector{BasicSymbolic{SymReal}}
     "var_id -> spec."
     var_specs::Vector{VarSpecT}
     "Inner `Sym` -> var_id (=== identity, hashconsed)."
-    var_of::IdDict{BasicSymbolic{T}, Int32}
+    var_of::IdDict{BasicSymbolic{SymReal}, Int32}
     "Subtree contains no variables."
     is_ground::BitVector
     "Number of distinct variables."
@@ -180,7 +180,7 @@ function compile_pattern(
     var_specs = _merge_specs(vars, var_of, var_syms, var_is_seg, var_has_opt)
     _check_fixed_arity!(plans, ir, var_of, var_specs)
 
-    return Matcher{SymReal}(
+    return Matcher(
         ir, root, plans, var_syms, var_specs, var_of, is_ground, length(var_syms)
     )
 end
