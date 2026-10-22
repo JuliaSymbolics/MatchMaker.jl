@@ -101,7 +101,7 @@ that drive every design decision below:
 |---|---|
 | *pattern* | a `BasicSymbolic{SymReal}` containing zero or more pattern variables |
 | *subject* | a `BasicSymbolic{SymReal}` matched against a pattern |
-| *marker term* | a `Term` whose operation is the singleton `slot`, `segment`, or `optional` — declares a pattern variable |
+| *marker term* | a `Term` whose operation is the marker function `slot`, `segment`, or `optional` — declares a pattern variable |
 | *variable* | the inner `Sym` of a marker term; all its occurrences in the pattern refer to the same variable |
 | *slot* | a variable matching exactly one argument/term (`~x` analogue; MatchPy `Wildcard.dot`/`Wildcard.symbol`) |
 | *optional slot* | a slot occurrence that may instead bind a declared default (`~!x` analogue; MatchPy `Optional`/`Wildcard.optional`) |
@@ -120,7 +120,7 @@ that drive every design decision below:
 
 ### 3.1 Marker terms
 
-Pattern variables are ordinary `Term`s headed by singleton marker constants:
+Pattern variables are ordinary `Term`s headed by marker functions:
 
 - `slot(x)` — matches exactly one term/argument.
 - `segment(x)` — matches a contiguous run (free/associative heads) or a
@@ -129,9 +129,12 @@ Pattern variables are ordinary `Term`s headed by singleton marker constants:
   declared `default` (per-occurrence marker; the default *value* lives in the
   `VarSpec`, not in the tree).
 
-`slot`, `segment`, `optional` are constants of distinct singleton types; each
-is callable and produces a `Term` whose `operation` is the marker itself.
-They take **exactly one argument — the inner `Sym`** — and nothing else:
+`slot`, `segment`, `optional` are bare generic functions (`function slot
+end`): a marker call produces a `Term` whose `operation` is the function
+itself. `promote_symtype`/`promote_shape` on the marker functions return the
+inner arg's type/shape, so marker terms carry the inner `Sym`'s symtype and
+shape for free (`term(m, x)` needs no kwargs). They take **exactly one
+argument — the inner `Sym`** — and nothing else:
 
 ```julia
 slot(x) isa BasicSymbolic{SymReal}        # a Term
@@ -222,23 +225,30 @@ slot(x)              # marker term wrapping Sym x
 segment(x)
 optional(x)
 unwrap_varspec(x) -> BasicSymbolic             # strip marker term to inner sym
-is_pattern_var(x) -> Bool
+is_marker_term(x) -> Bool                      # is x a marker term?
+is_marker_op(op) -> Bool
 varsym(x) -> Sym                               # inner sym of a marker term
-slotspec(; predicate = nothing, default = nothing) -> VarSpec.Slot{SymReal}
+slotspec(; predicate = nothing, default = nothing) -> VarSpec.Slot
 segmentspec(; predicate = nothing, sequence_predicate = nothing,
-             min = 0, max = typemax(Int)) -> VarSpec.Segment{SymReal}
+             min = 0, max = typemax(Int)) -> VarSpec.Segment
 ```
 
 `x` may be a `Symbol` (a fresh `Sym` is created; `slot(:x; type, shape)`
 keywords apply) or an existing `Sym`. Validation at construction: the argument
-must be a `Sym` (`slot(f(x))`, `slot(slot(x))` → error).
+must be a `Sym` (`slot(f(x))`, `slot(slot(x))` → error). Wrapping an existing
+`Sym` needs no macro — it is just `slot(x)`.
 
-Macros bind *marker terms* — `@slot x` produces the expression `slot(x)` for
-an existing symbolic `x`; the plural forms create syms and wrap them:
+`is_marker_term`/`unwrap_varspec`/`varsym` `@match` the `Term` variant
+directly (not `iscall`/`operation`, which dispatch over every symbolic
+variant — the marker check only ever lives on a `Term`).
+
+Macros create syms and wrap them — sharing `SymbolicUtils.@syms` parsing
+(`parse_variable` + `sym_from_parse_result`), so `name`, `name::Type`,
+`name[shape]`, and `f(args)` function-form arguments all work:
 
 ```julia
-@slot x               # → slot(x); x must already be a Sym
 @slots x y::Real      # x = slot(Sym(:x)); y = slot(Sym(:y; type = Real))
+@slots f(y)           # f = slot(FnType sym) — a head-slot variable
 @segments xs ys::Real # xs = segment(Sym(:xs)); ys = segment(Sym(:ys; type=Real))
 ```
 
