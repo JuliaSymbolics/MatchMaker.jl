@@ -2,72 +2,76 @@
 # FunctionWrapper aliases.
 
 ###
-### Marker singletons (§3.1)
+### Marker functions (§3.1)
 ###
 
-"""
-    SlotMarker
-
-Singleton type of the `slot` pattern-variable marker (MatchPy
-`Wildcard.dot`). The marker object itself is the `operation` of the marker
-term, so detection is the O(1) identity check `operation(ex) === slot`.
-"""
-struct SlotMarker end
-
-"""
-    SegmentMarker
-
-Singleton type of the `segment` pattern-variable marker (MatchPy
-`Wildcard.star`/`plus`). See [`SlotMarker`](@ref).
-"""
-struct SegmentMarker end
-
-"""
-    OptionalMarker
-
-Singleton type of the `optional` pattern-variable marker (MatchPy
-`Optional`). An `optional(x)` occurrence is a slot that may instead bind the
-variable's `VarSpec.Slot.default`. See [`SlotMarker`](@ref).
-"""
-struct OptionalMarker end
+# The markers are bare generic functions — not singleton structs — so a
+# marker term is a `Term` whose `operation` is the function itself. Detection
+# is the O(1) identity check `operation(ex) === slot`; printing, hashing, and
+# `isequal` all handle generic-function heads natively.
 
 """
     slot(x)
 
-Create a *slot* marker term wrapping the symbolic variable `x`: a
-`BasicSymbolic{SymReal}` `Term` whose `operation` is the `slot` singleton.
-`x` may be a `Sym` (wrapped as-is) or a `Symbol` (a fresh `Sym` is created;
-`type`/`shape` keywords apply). The inner `Sym`'s `symtype` is the type
-constraint — see DESIGN.md §3.1.
+Create a *slot* marker term wrapping the symbolic variable `x` (MatchPy
+`Wildcard.dot`): a `BasicSymbolic{SymReal}` `Term` whose `operation` is the
+`slot` function. `x` may be a `Sym` (wrapped as-is) or a `Symbol` (a fresh
+`Sym` is created; `type`/`shape` keywords apply). The inner `Sym`'s
+`symtype` is the type constraint — see DESIGN.md §3.1.
 """
-const slot = SlotMarker()
+function slot end
 
 """
     segment(x)
 
-Create a *segment* marker term wrapping `x`: matches a contiguous run
-(free/associative heads) or a sub-multiset (commutative/AC heads) of an
-argument list. See [`slot`](@ref).
+Create a *segment* marker term wrapping `x` (MatchPy `Wildcard.star`/`plus`):
+matches a contiguous run (free/associative heads) or a sub-multiset
+(commutative/AC heads) of an argument list. See [`slot`](@ref).
 """
-const segment = SegmentMarker()
+function segment end
 
 """
     optional(x)
 
-Create an *optional* marker term wrapping `x`: a slot occurrence that may
-instead bind the variable's `VarSpec.Slot.default` (the default lives in the
-spec, not in the tree). See [`slot`](@ref).
+Create an *optional* marker term wrapping `x` (MatchPy `Optional`): a slot
+occurrence that may instead bind the variable's `VarSpec.Slot.default` (the
+default lives in the spec, not in the tree). See [`slot`](@ref).
 """
-const optional = OptionalMarker()
+function optional end
 
-Base.show(io::IO, ::SlotMarker) = print(io, "slot")
-Base.show(io::IO, ::SegmentMarker) = print(io, "segment")
-Base.show(io::IO, ::OptionalMarker) = print(io, "optional")
+"""
+    _Marker
+
+Union of the three marker-function types — the common signature for their
+call methods and for `promote_symtype`/`promote_shape` extensions.
+"""
+const _Marker = Union{typeof(slot), typeof(segment), typeof(optional)}
+
+# A marker term stands in for a value of the inner sym's type/shape at its
+# position, so `term(m, x)` and `maketerm`-driven rebuilds inherit it. The
+# `TypeT`/`ShapeT` annotations keep these strictly more specific than
+# SymbolicUtils' varargs fallbacks (no ambiguity).
+SymbolicUtils.promote_symtype(::_Marker, t::SymbolicUtils.TypeT) = t
+SymbolicUtils.promote_shape(::_Marker, s::SymbolicUtils.ShapeT) = s
+
+function (m::_Marker)(x::BasicSymbolic{SymReal})
+    issym(x) || throw(ArgumentError(lazy"$m expects a Sym, got: $x"))
+    return term(m, x)
+end
+
+function (m::_Marker)(x::Symbol; type = Number, shape = nothing)
+    s = shape === nothing ? Sym{SymReal}(x; type) : Sym{SymReal}(x; type, shape)
+    return term(m, s)
+end
+
+###
+### Marker predicates and accessors
+###
 
 """
     is_marker_op(op) -> Bool
 
-Whether `op` is one of the pattern-variable marker objects (`slot`,
+Whether `op` is one of the pattern-variable marker functions (`slot`,
 `segment`, `optional`). Identity comparison only — never allocates.
 """
 is_marker_op(@nospecialize(op)) = op === slot || op === segment || op === optional
@@ -87,80 +91,45 @@ Whether `op` declares a *segment-kind* variable.
 is_segment_marker(@nospecialize(op)) = op === segment
 
 """
-    is_marker_term(x) -> Bool
+    is_marker_term(x::BasicSymbolic) -> Bool
 
-Whether `x` is a marker term — a call headed by `slot`, `segment`, or
-`optional`.
+Whether `x` is a marker term — a `Term` headed by `slot`, `segment`, or
+`optional`. Matches the `Term` variant directly (rather than
+`iscall`/`operation`, which `@match` over every symbolic variant).
 """
-is_marker_term(@nospecialize(x)) = iscall(x) && is_marker_op(operation(x))
-
-"""
-    is_pattern_var(x) -> Bool
-
-Alias of [`is_marker_term`](@ref): whether `x` is a pattern-variable
-declaration (`slot(x)`, `segment(x)`, `optional(x)`). A bare `Sym` always
-returns `false` — variable-ness is only known relative to a pattern (see
-DESIGN.md §3.1).
-"""
-is_pattern_var(@nospecialize(x)) = is_marker_term(x)
+is_marker_term(x::BasicSymbolic) = @match x begin
+    BSImpl.Term(; f) => is_marker_op(f)
+    _ => false
+end
 
 """
-    unwrap_varspec(x)
+    unwrap_varspec(x::BasicSymbolic) -> BasicSymbolic
 
-If `x` is a marker term, return its inner `Sym`; otherwise return `x`
-unchanged. Used for variable identity (DESIGN.md §3.1) and for key
-normalization in `Substitution` (§5.6).
+If `x` is a marker term, return its inner `Sym`; otherwise return `x`.
+Used for key normalization in `Substitution` (DESIGN.md §5.6). Variable
+*identity* does not need this — equal marker terms hashcons to the same
+node, so `===`/`isequal` on the terms themselves suffices (§3.1).
 """
-unwrap_varspec(x::BasicSymbolic) = is_marker_term(x) ? arguments(x)[1] : x
-unwrap_varspec(@nospecialize(x)) = x
+function unwrap_varspec(x::BasicSymbolic)
+    return @match x begin
+        BSImpl.Term(; f, args) => is_marker_op(f) ? args[1] : x
+        _ => x
+    end
+end
 
 """
-    varsym(x) -> Sym
+    varsym(x::BasicSymbolic) -> Sym
 
 The inner `Sym` of a marker term. Throws `ArgumentError` if `x` is not a
 marker term.
 """
-function varsym(@nospecialize(x))
-    is_marker_term(x) || throw(ArgumentError("not a pattern variable marker term: $x"))
-    return arguments(x)[1]
-end
-
-###
-### Marker term construction
-###
-
-"""
-    _marker_term(m, x::BasicSymbolic{SymReal}) -> BasicSymbolic{SymReal}
-
-Build the marker term `m(x)` — a `Term` whose operation is `m` and whose
-symtype/shape mirror the inner `Sym` (the marker stands in for a value of
-that type at its position). `x` must be a `Sym`; terms and other nodes are
-rejected.
-"""
-function _marker_term(m, x::BasicSymbolic{SymReal})
-    issym(x) || throw(ArgumentError(
-        "pattern variable argument must be a Sym, got: $x"))
-    return term(m, x; type = symtype(x), shape = shape(x))
-end
-_marker_term(m, @nospecialize(x)) = throw(ArgumentError(
-    "pattern variable argument must be a Sym or a Symbol name, got: $x"))
-
-function _make_varsym(name::Symbol, type, shape)
-    if shape === nothing
-        Sym{SymReal}(name; type)
-    else
-        Sym{SymReal}(name; type, shape)
+function varsym(x::BasicSymbolic)
+    return @match x begin
+        BSImpl.Term(; f, args) => is_marker_op(f) ? args[1] :
+            throw(ArgumentError(lazy"not a pattern variable marker term: $x"))
+        _ => throw(ArgumentError(lazy"not a pattern variable marker term: $x"))
     end
 end
-
-(::SlotMarker)(x::BasicSymbolic{SymReal}) = _marker_term(slot, x)
-(::SegmentMarker)(x::BasicSymbolic{SymReal}) = _marker_term(segment, x)
-(::OptionalMarker)(x::BasicSymbolic{SymReal}) = _marker_term(optional, x)
-(m::Union{SlotMarker, SegmentMarker, OptionalMarker})(x::Symbol;
-        type = Number, shape = nothing) =
-    _marker_term(m, _make_varsym(x, type, shape))
-(m::Union{SlotMarker, SegmentMarker, OptionalMarker})(@nospecialize x) =
-    _marker_term(m, x)
 
 ###
 ### FunctionWrapper aliases (§3.2)
@@ -257,8 +226,8 @@ whole capture. `0 <= min <= max` is enforced.
 """
 function segmentspec(; predicate = nothing, sequence_predicate = nothing,
                      min::Integer = 0, max::Integer = typemax(Int))
-    min >= 0 || throw(ArgumentError("segment min must be >= 0, got: $min"))
-    max >= min || throw(ArgumentError("segment max must be >= min, got: $max < $min"))
+    min >= 0 || throw(ArgumentError(lazy"segment min must be >= 0, got: $min"))
+    max >= min || throw(ArgumentError(lazy"segment max must be >= min, got: $max < $min"))
     return VarSpec.Segment(
         _to_pred(predicate), _to_seqpred(sequence_predicate), Int(min), Int(max))
 end
@@ -268,43 +237,15 @@ end
 ###
 
 """
-    @slot x
+    @slots x y::Real f(a) ...
 
-Produce the expression `slot(x)` for an existing symbolic `x`.
-"""
-macro slot(ex)
-    ex isa Symbol || error("@slot expects a variable name, got: $ex")
-    return Expr(:call, GlobalRef(@__MODULE__, :slot), esc(ex))
-end
-
-function _vars_macro(marker::GlobalRef, xs)
-    isempty(xs) && return Expr(:tuple)
-    assigns = Expr[]
-    names = Symbol[]
-    for x in xs
-        if Meta.isexpr(x, :(::), 2)
-            name, T = x.args
-            name isa Symbol ||
-                error("@slots/@segments expect `name` or `name::Type`, got: $x")
-            push!(assigns, :($(esc(name)) =
-                ($marker)($(QuoteNode(name)); type = $(esc(T)))))
-            push!(names, name)
-        elseif x isa Symbol
-            push!(assigns, :($(esc(x)) = ($marker)($(QuoteNode(x)))))
-            push!(names, x)
-        else
-            error("@slots/@segments expect `name` or `name::Type`, got: $x")
-        end
-    end
-    return Expr(:block, assigns..., Expr(:tuple, esc.(names)...))
-end
-
-"""
-    @slots x y::Real ...
-
-Create slot variables: `x = slot(Sym(:x))`, `y = slot(Sym(:y; type = Real))`.
-Minimal grammar — `name` and `name::Type` only; richer specs go through the
-`vars` map of `compile_pattern` (DESIGN.md §3.3).
+Create slot variables: `x = slot(Sym(:x))`, `y = slot(Sym(:y; type = Real))`,
+`f = slot(Sym(:f; type = FnType{Tuple{...},...}))` for function-like heads.
+Parsing is shared with `SymbolicUtils.@syms` (`parse_variable` +
+`sym_from_parse_result`), so the grammar is the `@syms` one — `name`,
+`name::Type`, `[shape]` suffixes, and `f(args)` function forms all work.
+Predicates/bounds/defaults go through the `vars` map of `compile_pattern`,
+not the macro (DESIGN.md §3.3).
 """
 macro slots(xs...)
     _vars_macro(GlobalRef(@__MODULE__, :slot), xs)
@@ -317,4 +258,21 @@ Create segment variables. See [`@slots`](@ref).
 """
 macro segments(xs...)
     _vars_macro(GlobalRef(@__MODULE__, :segment), xs)
+end
+
+# Shared expansion for `@slots`/`@segments`: each argument is parsed with
+# `SymbolicUtils.parse_variable`, built via `sym_from_parse_result` (the same
+# code path `@syms` uses), and wrapped in the marker call.
+function _vars_macro(marker::GlobalRef, xs)
+    isempty(xs) && return Expr(:tuple)
+    assigns = Expr[]
+    names = Any[]
+    for x in xs
+        nts = SymbolicUtils.parse_variable(x)
+        create = SymbolicUtils.sym_from_parse_result(nts, SymReal)
+        vname = (nts[:isruntime]::Bool) ? Symbol(nts[:name]) : esc(nts[:name])
+        push!(assigns, :($vname = $marker($create)))
+        push!(names, vname)
+    end
+    return Expr(:block, assigns..., Expr(:tuple, names...))
 end

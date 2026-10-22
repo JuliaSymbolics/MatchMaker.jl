@@ -11,10 +11,8 @@ dependencies and wires includes together; the file layout is DESIGN.md §6.
 module MatchMaker
 
 using SymbolicUtils
-# @public SymbolicUtils names used across the package (not bare-`using`
-# exported): the variant type, term constructors, and node predicates.
 using SymbolicUtils: BasicSymbolic, Sym, Term, Const, SymReal,
-                    issym, isconst, symtype, shape
+                    issym, isconst, symtype, shape, BSImpl
 using Moshi.Data: @data
 import Moshi.Data as MData
 using Moshi.Match: @match
