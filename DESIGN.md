@@ -352,7 +352,7 @@ internal.
 2. **Bindings.** A substitution maps each pattern variable to the subject
    node(s) it captured. Internally bindings are *subject IR node indices*
    (`Int32` for slots, `SmallV{Int32}` for segments); expr materialization
-   happens only when a `Substitution` is produced.
+   happens only when a `MarkersMap` is produced.
 
 3. **Slots** match exactly one term, subject to: symtype constraint
    (`symtype(candidate) <: symtype(inner_sym)`), shape constraint (concrete
@@ -449,7 +449,7 @@ Matcher{T}           +   subject → IRStructure{T}   →   MatchEngine
                                               eachmatch / matches / match
                                                                │
                                                                ▼
-                        Substitution <: AbstractDict{BasicSymbolic,
+                        MarkersMap <: AbstractDict{BasicSymbolic,
                                                      BasicSymbolic}
 ```
 
@@ -517,7 +517,7 @@ end
 
 One concrete struct; `seg_op` is `Any` because ops are heterogeneous callables
 — read once per materialization, never in the hot loop. It is needed to
-rebuild `f(captured…)` for the external `Substitution` (§5.6). A
+rebuild `f(captured…)` for the external `MarkersMap` (§5.6). A
 `trail::Vector{Int32}` records which var ids were bound, in order; backtracking
 pops a mark and clears. Rebinding (non-linear check) never touches the trail.
 
@@ -578,7 +578,7 @@ step!(eng::MatchEngine{T}, f::<FrameKind>)::FrameStatus
 The engine loop pops `:matched`, retries `:failed` parents, and yields when the
 stack empties — a complete match is *the stack reaching empty*. `next_match!`
 runs the loop to the next yield; `Base.iterate(engine)` wraps it, copying out a
-`Substitution`. Because all state is explicit and heap-resident, iteration is
+`MarkersMap`. Because all state is explicit and heap-resident, iteration is
 resumable for free and nothing ever recurses — this is the property that lets
 the engine scale to huge subjects, and the reason `IRStructure` is load-bearing
 rather than cosmetic.
@@ -684,13 +684,13 @@ enumeration) and is out of scope unless a profiling case demands it.
 Outside such a node: compile-time error (a lone optional has no "absence" to
 fall back on).
 
-### 5.6 Substitution & instantiation
+### 5.6 MarkersMap & instantiation
 
-**`Substitution` is a concrete `AbstractDict` wrapper** — value type
+**`MarkersMap` is a concrete `AbstractDict` wrapper** — value type
 `BasicSymbolic{SymReal}` uniformly, no `Any`, no union:
 
 ```julia
-struct Substitution <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
+struct MarkersMap <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
     dict::Dict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}  # inner sym -> expr
 end
 ```
@@ -719,7 +719,7 @@ end
 (`binds`, `var_syms`, `seg_op`, subject IR): `keys`/`iterate`/`getindex`
 resolve lazily without materializing the output dict. **Contract:** valid only
 until the next `eachmatch`/`iterate` step mutates the bindings; `materialize(v)`
-produces a persistent `Substitution`. A debug flag (`Ref{Bool}`, off by
+produces a persistent `MarkersMap`. A debug flag (`Ref{Bool}`, off by
 default) stamps each view with the engine's step counter and throws on stale
 access — cheap insurance against the classic view-dangling bug.
 
@@ -734,12 +734,12 @@ Public API (stable surface):
 
 ```julia
 compile_pattern(expr; vars::AbstractDict = Dict()) -> Matcher{SymReal}
-match(m_or_expr, s; constraints = ()) -> Union{Substitution, Nothing}
+match(m_or_expr, s; constraints = ()) -> Union{MarkersMap, Nothing}
 matches(m_or_expr, s; constraints = ())       # lazy resumable iterator
 matchall(...) = collect(matches(...))
 eachmatch(f, m_or_expr, s)                    # f(::SubstitutionView)::Bool; false = stop
 instantiate(template, subst)
-materialize(view) -> Substitution
+materialize(view) -> MarkersMap
 ```
 
 `eachmatch` is the zero-allocation hot path rewriters should use.
@@ -783,7 +783,7 @@ MatchMaker.jl/
                             #   constructors, macros, FunctionWrapper aliases
     traits.jl               # §3.5: operation traits + fast-path wrappers
     compile.jl              # §5.2: Matcher, NodePlan ADT, spec merge, validation
-    bindings.jl             # §5.3, §5.6: Bindings, trail, Substitution(+View)
+    bindings.jl             # §5.3, §5.6: Bindings, trail, MarkersMap + SubstitutionView
     engine.jl               # §5.4: MatchEngine, advance loop, iterate
     matchers/
       primitives.jl         # literal/ground/slot leaf logic (no frames)
@@ -876,7 +876,7 @@ this section exists only to keep today's choices compatible.
   for extensibility; internally fast-path common cases.*
 - No `Vector{Any}` in the search state; bindings store `Int32` node ids;
   `seg_op` is the sole `Any` field and is cold (materialization only).
-- Buffers reused across matches of one engine; `Substitution` materialization
+- Buffers reused across matches of one engine; `MarkersMap` materialization
   is the only per-match allocation (and `eachmatch` avoids it).
 - `maxsteps` budget parameter guards pathological AC searches (the
   `COMM_BACKTRACK_BUDGET` analogue), counted in `eng.steps`.
@@ -936,7 +936,7 @@ coverage before the next starts.
    README.md (with §13 refs + §14 licenses), .gitignore, Aqua suite.
    *Tests: package loads, QA green.*
 1. `feat/pattern-vars` — §3.1–3.3: marker singletons, `unwrap_varspec`,
-   `VarSpec`, constructors, macros, `Substitution` dict wrapper.
+   `VarSpec`, constructors, macros, `MarkersMap` dict wrapper.
    *Tests: marker-term identity/equality, constructor validation, macro
    expansion, dict key normalization.*
 2. `feat/op-traits` — §3.5 incl. fast-path wrappers. *Tests: +/* AC for
@@ -947,7 +947,7 @@ coverage before the next starts.
    flags, bare-occurrence error, marker-kind conflict, variant-mismatch
    error, spec-key errors.*
 4. `feat/match-core` — engine + literal/slot/`Seq`; `match`, `matches`,
-   `eachmatch`, `Substitution`(+View). *Tests: unit per leaf logic; oracle on
+   `eachmatch`, `MarkersMap`(+View). *Tests: unit per leaf logic; oracle on
    linear patterns; fuzz (free-heads only).*
 5. `feat/segments-free` — `Assoc` frame restricted to free heads + segments.
    *Tests: split enumeration, min/max, predicates; oracle.*

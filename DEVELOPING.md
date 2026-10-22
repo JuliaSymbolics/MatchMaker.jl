@@ -11,7 +11,7 @@ comments reference its sections as `DESIGN.md §x.y`; this file covers the
 | `src/patternvars.jl` | Marker singletons (`slot`/`segment`/`optional`), `unwrap_varspec`, `is_pattern_var`, `varsym`, the `VarSpec` ADT, `slotspec`/`segmentspec`, `@slot`/`@slots`/`@segments` |
 | `src/traits.jl` | `is_associative`/`is_commutative`/`identity_element` + `@nospecialize`d fast-path wrappers |
 | `src/compile.jl` | `compile_pattern`, `Matcher`, `NodePlan` ADT, `vars`-map merge, all compile-time validation |
-| `src/bindings.jl` | `Bindings`, trail ops, `Substitution`, `SubstitutionView`, `materialize` |
+| `src/bindings.jl` | `Bindings`, trail ops, `MarkersMap`, `SubstitutionView`, `materialize` |
 | `src/engine.jl` | `MatchEngine`, `MatchFrame` ADT, the advance loop, `iterate`/`next_match!` |
 | `src/matchers/primitives.jl` | Leaf logic: literal/ground compare, slot bind/recheck — *no frames* |
 | `src/matchers/seq.jl` | `Seq` frame (free heads, positional children) |
@@ -53,7 +53,7 @@ produces silent misbehavior, not a compile error:
    the pattern that is a marked var anywhere must be marker-wrapped
    everywhere (compile error otherwise).
 4. **Bindings are indices** (§4.2): `Int32` subject-node ids / `SmallV{Int32}`
-   captures. Expressions are materialized only at `Substitution` time.
+   captures. Expressions are materialized only at `MarkersMap` time.
    Never store `BasicSymbolic`s in engine state.
 5. **Enumeration order** (§4.8): AC/A subject args in `sorted_arguments`
    order; AC candidates by ascending count; splits shortest-first; optional
