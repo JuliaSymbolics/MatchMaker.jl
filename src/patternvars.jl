@@ -274,21 +274,17 @@ end
 # code path `@syms` uses), and wrapped in the marker call.
 function _vars_macro(marker::GlobalRef, xs)
     isempty(xs) && return Expr(:tuple)
-    assigns = Any[]
-    names = Any[]
+    blk = Expr(:block)
+    tup = Expr(:tuple)
     for x in xs
         nts = SymbolicUtils.parse_variable(x)
         create = SymbolicUtils.sym_from_parse_result(nts, SymReal)
         vname = (nts[:isruntime]::Bool) ? Symbol(nts[:name]) : esc(nts[:name])
         call = Expr(:call)
         append!(call.args, (marker, create))
-        push!(assigns, Expr(:(=), vname, call))
-        push!(names, vname)
+        push!(blk.args, Expr(:(=), vname, call))
+        push!(tup.args, vname)
     end
-    blk = Expr(:block)
-    append!(blk.args, assigns)
-    tup = Expr(:tuple)
-    append!(tup.args, names)
     push!(blk.args, tup)
     return blk
 end
