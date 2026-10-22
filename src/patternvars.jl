@@ -52,14 +52,18 @@ SymbolicUtils.promote_shape(::_Marker, @nospecialize(s::SymbolicUtils.ShapeT)) =
 
 function (m::_Marker)(x::BasicSymbolic{SymReal})
     issym(x) || throw(ArgumentError(lazy"$m expects a Sym, got: $x"))
-    return BSImpl.Term{SymReal}(m, ArgsT{SymReal}((x,));
-                                type = symtype(x), shape = shape(x))
+    return BSImpl.Term{SymReal}(
+        m, ArgsT{SymReal}((x,));
+        type = symtype(x), shape = shape(x)
+    )
 end
 
 function (m::_Marker)(x::Symbol; type = Number, shape = nothing)
     s = shape === nothing ? Sym{SymReal}(x; type) : Sym{SymReal}(x; type, shape)
-    return BSImpl.Term{SymReal}(m, ArgsT{SymReal}((s,));
-                                type = symtype(s), shape = SymbolicUtils.shape(s))
+    return BSImpl.Term{SymReal}(
+        m, ArgsT{SymReal}((s,));
+        type = symtype(s), shape = SymbolicUtils.shape(s)
+    )
 end
 
 ###
@@ -224,13 +228,16 @@ Build a segment `VarSpec` for the `vars` map of `compile_pattern`.
 `predicate` applies to each captured element, `sequence_predicate` to the
 whole capture. `0 <= min <= max` is enforced.
 """
-function segmentspec(predicate = nothing, sequence_predicate = nothing;
-                     min::Integer = 0, max::Integer = typemax(Int))
+function segmentspec(
+        predicate = nothing, sequence_predicate = nothing;
+        min::Integer = 0, max::Integer = typemax(Int)
+    )
     @nospecialize predicate sequence_predicate
     min >= 0 || throw(ArgumentError(lazy"segment min must be >= 0, got: $min"))
     max >= min || throw(ArgumentError(lazy"segment max must be >= min, got: $max < $min"))
     return VarSpec.Segment(
-        _to_pred(predicate), _to_seqpred(sequence_predicate), Int(min), Int(max))
+        _to_pred(predicate), _to_seqpred(sequence_predicate), Int(min), Int(max)
+    )
 end
 
 ###
@@ -249,7 +256,7 @@ Predicates/bounds/defaults go through the `vars` map of `compile_pattern`,
 not the macro (DESIGN.md §3.3).
 """
 macro slots(xs...)
-    _vars_macro(GlobalRef(@__MODULE__, :slot), xs)
+    return _vars_macro(GlobalRef(@__MODULE__, :slot), xs)
 end
 
 """
@@ -258,7 +265,7 @@ end
 Create segment variables. See [`@slots`](@ref).
 """
 macro segments(xs...)
-    _vars_macro(GlobalRef(@__MODULE__, :segment), xs)
+    return _vars_macro(GlobalRef(@__MODULE__, :segment), xs)
 end
 
 # Shared expansion for `@slots`/`@segments`: each argument is parsed with
