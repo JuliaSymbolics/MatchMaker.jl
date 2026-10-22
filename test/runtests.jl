@@ -8,6 +8,10 @@ end
     include("unit/patternvars.jl")
 end
 
+@safetestset "operation traits" begin
+    include("unit/traits.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
