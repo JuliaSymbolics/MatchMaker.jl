@@ -1,8 +1,2 @@
-# DESIGN.md §5.6: public entry points.
-
-export slot, segment, optional,
-       is_marker_term, is_marker_op,
-       is_slot_marker, is_segment_marker, unwrap_varspec, varsym,
-       VarSpec, slotspec, segmentspec,
-       Substitution,
-       @slots, @segments
+# DESIGN.md §5.6: public entry points (match/matches/matchall/eachmatch,
+# compile_pattern). Exports live in MatchMaker.jl.

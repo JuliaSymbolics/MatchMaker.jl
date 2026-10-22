@@ -54,14 +54,20 @@ const _Marker = Union{typeof(slot), typeof(segment), typeof(optional)}
 SymbolicUtils.promote_symtype(::_Marker, t::SymbolicUtils.TypeT) = t
 SymbolicUtils.promote_shape(::_Marker, s::SymbolicUtils.ShapeT) = s
 
+# Built directly on BSImpl.Term with an explicit ArgsT/type/shape — skips
+# `term`'s promote_symtype/promote_shape calls (we already know both are the
+# inner sym's). The promote_* methods above still matter for maketerm-driven
+# rebuilds.
 function (m::_Marker)(x::BasicSymbolic{SymReal})
     issym(x) || throw(ArgumentError(lazy"$m expects a Sym, got: $x"))
-    return term(m, x)
+    return BSImpl.Term{SymReal}(m, ArgsT{SymReal}([x]);
+                                type = symtype(x), shape = shape(x))
 end
 
 function (m::_Marker)(x::Symbol; type = Number, shape = nothing)
     s = shape === nothing ? Sym{SymReal}(x; type) : Sym{SymReal}(x; type, shape)
-    return term(m, s)
+    return BSImpl.Term{SymReal}(m, ArgsT{SymReal}([s]);
+                                type = symtype(s), shape = SymbolicUtils.shape(s))
 end
 
 ###
@@ -265,14 +271,21 @@ end
 # code path `@syms` uses), and wrapped in the marker call.
 function _vars_macro(marker::GlobalRef, xs)
     isempty(xs) && return Expr(:tuple)
-    assigns = Expr[]
+    assigns = Any[]
     names = Any[]
     for x in xs
         nts = SymbolicUtils.parse_variable(x)
         create = SymbolicUtils.sym_from_parse_result(nts, SymReal)
         vname = (nts[:isruntime]::Bool) ? Symbol(nts[:name]) : esc(nts[:name])
-        push!(assigns, :($vname = $marker($create)))
+        call = Expr(:call)
+        append!(call.args, (marker, create))
+        push!(assigns, Expr(:(=), vname, call))
         push!(names, vname)
     end
-    return Expr(:block, assigns..., Expr(:tuple, names...))
+    blk = Expr(:block)
+    append!(blk.args, assigns)
+    tup = Expr(:tuple)
+    append!(tup.args, names)
+    push!(blk.args, tup)
+    return blk
 end

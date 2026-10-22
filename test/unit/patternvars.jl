@@ -122,8 +122,8 @@ end
     @test is_marker_term(t) && unwrap_varspec(t) === x
 end
 
-@testset "Substitution" begin
-    d = Substitution(x => y)
+@testset "MarkersMap" begin
+    d = MarkersMap(x => y)
     @test d[x] === y
     @test d[slot(x)] === y
     @test d[segment(x)] === y
@@ -132,7 +132,7 @@ end
     @test haskey(d, x)
     @test get(d, z, nothing) === nothing
 
-    d2 = Substitution()
+    d2 = MarkersMap()
     d2[slot(y)] = z
     @test d2[y] === z
     @test haskey(d2, y)

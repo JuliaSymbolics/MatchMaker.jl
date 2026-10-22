@@ -12,7 +12,7 @@ module MatchMaker
 
 using SymbolicUtils
 using SymbolicUtils: BasicSymbolic, Sym, Term, Const, SymReal,
-                    issym, isconst, symtype, shape, BSImpl
+                    issym, isconst, symtype, shape, BSImpl, ArgsT
 using Moshi.Data: @data
 import Moshi.Data as MData
 using Moshi.Match: @match
@@ -33,5 +33,12 @@ include("matchers/associative.jl")
 include("matchers/ac.jl")
 include("instantiate.jl")
 include("api.jl")
+
+export slot, segment, optional,
+       is_marker_term, is_marker_op,
+       is_slot_marker, is_segment_marker, unwrap_varspec, varsym,
+       VarSpec, slotspec, segmentspec,
+       MarkersMap,
+       @slots, @segments
 
 end # module MatchMaker

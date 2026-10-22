@@ -10,7 +10,7 @@ using Test
 @syms x
 
 const _BS = BasicSymbolic{SymReal}
-d = Substitution(x => x)
+d = MarkersMap(x => x)
 
 @testset "JET" begin
     for (f, tt) in (
@@ -23,8 +23,8 @@ d = Substitution(x => x)
             (varsym, Tuple{_BS}),
             (slotspec, Tuple{}),
             (segmentspec, Tuple{}),
-            (Base.getindex, Tuple{Substitution, _BS}),
-            (Base.haskey, Tuple{Substitution, _BS}),
+            (Base.getindex, Tuple{MarkersMap, _BS}),
+            (Base.haskey, Tuple{MarkersMap, _BS}),
         )
         reports = JET.get_reports(JET.report_call(f, tt; target_modules = (MatchMaker,)))
         @test isempty(reports)
