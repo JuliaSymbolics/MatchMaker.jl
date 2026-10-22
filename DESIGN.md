@@ -228,9 +228,9 @@ unwrap_varspec(x) -> BasicSymbolic             # strip marker term to inner sym
 is_marker_term(x) -> Bool                      # is x a marker term?
 is_marker_op(op) -> Bool
 varsym(x) -> Sym                               # inner sym of a marker term
-slotspec(; predicate = nothing, default = nothing) -> VarSpec.Slot
-segmentspec(; predicate = nothing, sequence_predicate = nothing,
-             min = 0, max = typemax(Int)) -> VarSpec.Segment
+slotspec(predicate = nothing; default = nothing) -> VarSpec.Slot
+segmentspec(predicate = nothing, sequence_predicate = nothing;
+            min = 0, max = typemax(Int)) -> VarSpec.Segment
 ```
 
 `x` may be a `Symbol` (a fresh `Sym` is created; `slot(:x; type, shape)`
