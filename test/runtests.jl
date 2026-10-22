@@ -12,6 +12,10 @@ end
     include("unit/traits.jl")
 end
 
+@safetestset "pattern compiler" begin
+    include("unit/compile.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
