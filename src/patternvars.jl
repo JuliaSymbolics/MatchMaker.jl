@@ -205,13 +205,13 @@ Destructure with `@match`; do not tag-check with `isa` (DEVELOPING.md §8).
 end
 
 """
-    slotspec(; predicate = nothing, default = nothing) -> VarSpec.Slot
+    slotspec(predicate = nothing; default = nothing) -> VarSpec.Slot
 
 Build a slot `VarSpec` for the `vars` map of `compile_pattern`. `predicate`
 is wrapped as a [`PredT`](@ref) `FunctionWrapper`; a non-symbolic `default`
 is wrapped in `Const{SymReal}`.
 """
-function slotspec(; predicate = nothing, default = nothing)
+function slotspec(predicate = nothing; default = nothing)
     # callables are stored in FunctionWrapper — no point specializing on them
     @nospecialize predicate
     d = if default === nothing
@@ -225,14 +225,14 @@ function slotspec(; predicate = nothing, default = nothing)
 end
 
 """
-    segmentspec(; predicate = nothing, sequence_predicate = nothing,
+    segmentspec(predicate = nothing, sequence_predicate = nothing;
                 min = 0, max = typemax(Int)) -> VarSpec.Segment
 
 Build a segment `VarSpec` for the `vars` map of `compile_pattern`.
 `predicate` applies to each captured element, `sequence_predicate` to the
 whole capture. `0 <= min <= max` is enforced.
 """
-function segmentspec(; predicate = nothing, sequence_predicate = nothing,
+function segmentspec(predicate = nothing, sequence_predicate = nothing;
                      min::Integer = 0, max::Integer = typemax(Int))
     @nospecialize predicate sequence_predicate
     min >= 0 || throw(ArgumentError(lazy"segment min must be >= 0, got: $min"))

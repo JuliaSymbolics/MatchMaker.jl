@@ -76,7 +76,7 @@ end
         VarSpec.Slot(p, d) => (@test p === nothing && d === nothing)
         _ => @test false
     end
-    sp = slotspec(predicate = x -> issym(x), default = 0)
+    sp = slotspec(x -> issym(x); default = 0)
     @match sp begin
         VarSpec.Slot(p, d) => begin
             @test p isa PredT
@@ -87,8 +87,7 @@ end
         end
         _ => @test false
     end
-    sg = segmentspec(predicate = x -> issym(x),
-                     sequence_predicate = v -> length(v) > 0, min = 1, max = 3)
+    sg = segmentspec(x -> issym(x), v -> length(v) > 0; min = 1, max = 3)
     @match sg begin
         VarSpec.Segment(p, sq, mn, mx) => begin
             @test p isa PredT && sq isa SeqPredT
