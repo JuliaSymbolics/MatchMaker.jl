@@ -12,7 +12,8 @@ module MatchMaker
 
 using SymbolicUtils
 using SymbolicUtils: BasicSymbolic, Sym, Term, Const, SymReal,
-    issym, isconst, symtype, shape, BSImpl, ArgsT
+    issym, isconst, symtype, shape, BSImpl, ArgsT,
+    hasmetadata, getmetadata, setmetadata
 using Moshi.Data: @data
 import Moshi.Data as MData
 using Moshi.Match: @match
@@ -39,6 +40,8 @@ export slot, segment, optional,
     is_slot_marker, is_segment_marker, unwrap_varspec, varsym,
     VarSpec, slotspec, segmentspec,
     MarkersMap,
+    is_associative, is_commutative, identity_element,
+    OperationTraitsCtx, OperationTraits, set_operation_traits,
     @slots, @segments
 
 end # module MatchMaker
