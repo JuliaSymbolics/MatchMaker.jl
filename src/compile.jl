@@ -133,15 +133,16 @@ function compile_pattern(
             inner = _marker_inner(ex)
             is_seg = _is_segment_term(ex)
             is_opt = _is_optional_term(ex)
-            vid = let
-                new_var = () -> begin
+            new_var = let var_syms = var_syms, var_is_seg = var_is_seg,
+                    var_has_opt = var_has_opt, inner = inner, is_seg = is_seg
+                function __new_var()
                     push!(var_syms, inner)
                     push!(var_is_seg, is_seg)
                     push!(var_has_opt, false)
                     return Int32(length(var_syms))
                 end
-                get!(new_var, var_of, inner)
             end
+            vid = get!(new_var, var_of, inner)
             var_is_seg[vid] == is_seg || throw(
                 ArgumentError(
                     lazy"pattern variable $inner occurs as both slot/optional and segment"
