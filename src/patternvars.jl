@@ -47,17 +47,9 @@ call methods and for `promote_symtype`/`promote_shape` extensions.
 """
 const _Marker = Union{typeof(slot), typeof(segment), typeof(optional)}
 
-# A marker term stands in for a value of the inner sym's type/shape at its
-# position, so `term(m, x)` and `maketerm`-driven rebuilds inherit it. The
-# `TypeT`/`ShapeT` annotations keep these strictly more specific than
-# SymbolicUtils' varargs fallbacks (no ambiguity).
 SymbolicUtils.promote_symtype(::_Marker, t::SymbolicUtils.TypeT) = t
-SymbolicUtils.promote_shape(::_Marker, s::SymbolicUtils.ShapeT) = s
+SymbolicUtils.promote_shape(::_Marker, @nospecialize(s::SymbolicUtils.ShapeT)) = s
 
-# Built directly on BSImpl.Term with an explicit ArgsT/type/shape — skips
-# `term`'s promote_symtype/promote_shape calls (we already know both are the
-# inner sym's). The promote_* methods above still matter for maketerm-driven
-# rebuilds.
 function (m::_Marker)(x::BasicSymbolic{SymReal})
     issym(x) || throw(ArgumentError(lazy"$m expects a Sym, got: $x"))
     return BSImpl.Term{SymReal}(m, ArgsT{SymReal}((x,));
