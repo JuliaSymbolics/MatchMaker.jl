@@ -60,13 +60,13 @@ SymbolicUtils.promote_shape(::_Marker, s::SymbolicUtils.ShapeT) = s
 # rebuilds.
 function (m::_Marker)(x::BasicSymbolic{SymReal})
     issym(x) || throw(ArgumentError(lazy"$m expects a Sym, got: $x"))
-    return BSImpl.Term{SymReal}(m, ArgsT{SymReal}([x]);
+    return BSImpl.Term{SymReal}(m, ArgsT{SymReal}((x,));
                                 type = symtype(x), shape = shape(x))
 end
 
 function (m::_Marker)(x::Symbol; type = Number, shape = nothing)
     s = shape === nothing ? Sym{SymReal}(x; type) : Sym{SymReal}(x; type, shape)
-    return BSImpl.Term{SymReal}(m, ArgsT{SymReal}([s]);
+    return BSImpl.Term{SymReal}(m, ArgsT{SymReal}((s,));
                                 type = symtype(s), shape = SymbolicUtils.shape(s))
 end
 
