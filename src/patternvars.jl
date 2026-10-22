@@ -212,6 +212,8 @@ is wrapped as a [`PredT`](@ref) `FunctionWrapper`; a non-symbolic `default`
 is wrapped in `Const{SymReal}`.
 """
 function slotspec(; predicate = nothing, default = nothing)
+    # callables are stored in FunctionWrapper — no point specializing on them
+    @nospecialize predicate
     d = if default === nothing
         nothing
     elseif default isa BasicSymbolic{SymReal}
@@ -232,6 +234,7 @@ whole capture. `0 <= min <= max` is enforced.
 """
 function segmentspec(; predicate = nothing, sequence_predicate = nothing,
                      min::Integer = 0, max::Integer = typemax(Int))
+    @nospecialize predicate sequence_predicate
     min >= 0 || throw(ArgumentError(lazy"segment min must be >= 0, got: $min"))
     max >= min || throw(ArgumentError(lazy"segment max must be >= min, got: $max < $min"))
     return VarSpec.Segment(
