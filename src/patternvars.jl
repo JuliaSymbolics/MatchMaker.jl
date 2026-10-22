@@ -104,6 +104,21 @@ is_marker_term(x::BasicSymbolic) = @match x begin
     _ => false
 end
 
+# Term-level marker-kind predicates — destructure once via @match rather
+# than `is_marker_term(x) && operation(x) === ...` dispatch chains.
+_is_slot_term(x::BasicSymbolic) = @match x begin
+    BSImpl.Term(; f) => f === slot
+    _ => false
+end
+_is_optional_term(x::BasicSymbolic) = @match x begin
+    BSImpl.Term(; f) => f === optional
+    _ => false
+end
+_is_segment_term(x::BasicSymbolic) = @match x begin
+    BSImpl.Term(; f) => f === segment
+    _ => false
+end
+
 """
     unwrap_varspec(x::BasicSymbolic) -> BasicSymbolic
 

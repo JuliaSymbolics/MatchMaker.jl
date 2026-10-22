@@ -94,7 +94,9 @@ end
 ###
 
 """
-    compile_pattern(expr::BasicSymbolic{SymReal}; vars::AbstractDict = Dict())
+    compile_pattern(expr::BasicSymbolic{SymReal};
+                    vars::AbstractDict{BasicSymbolic{SymReal}, VarSpec.Type} =
+                        Dict{BasicSymbolic{SymReal}, VarSpec.Type}())
         -> Matcher{SymReal}
 
 Compile `expr` into a [`Matcher`](@ref) (DESIGN.md §5.2). `vars` maps pattern
@@ -111,7 +113,8 @@ fixed-arity parent's argument count.
 """
 function compile_pattern(
         expr::BasicSymbolic{SymReal};
-        vars::AbstractDict = Dict()
+        vars::AbstractDict{BasicSymbolic{SymReal}, VarSpec.Type} =
+            Dict{BasicSymbolic{SymReal}, VarSpec.Type}()
     )
     ir = IRStructure{SymReal}()
     root = populate_ir!(ir, expr)
@@ -131,8 +134,8 @@ function compile_pattern(
         ex = ir[i]
         if is_marker_term(ex)
             inner = _marker_inner(ex)
-            m = operation(ex)
-            is_seg = m === segment
+            is_seg = _is_segment_term(ex)
+            is_opt = _is_optional_term(ex)
             vid = get!(var_of, inner) do
                 push!(var_syms, inner)
                 push!(var_is_seg, is_seg)
@@ -144,11 +147,10 @@ function compile_pattern(
                     lazy"pattern variable $inner occurs as both slot/optional and segment"
                 )
             )
-            if m === optional
+            if is_opt
                 var_has_opt[vid] = true
             end
-            plans[i] = is_seg ? NodePlan.Segment(vid) :
-                NodePlan.Slot(vid, m === optional)
+            plans[i] = is_seg ? NodePlan.Segment(vid) : NodePlan.Slot(vid, is_opt)
             is_ground[i] = false
         elseif iscall(ex)
             plans[i] = _plan_call!(plans, is_ground, ir, g, ex, i, var_of)
@@ -173,7 +175,7 @@ function compile_pattern(
     end
 
     var_specs = _merge_specs(vars, var_of, var_syms, var_is_seg, var_has_opt)
-    _check_fixed_arity!(plans, ir, g, var_of, var_specs)
+    _check_fixed_arity!(plans, ir, var_of, var_specs)
 
     return Matcher{SymReal}(
         ir, root, plans, var_syms, var_specs, var_of, is_ground, length(var_syms)
@@ -193,8 +195,10 @@ function _marker_inner(ex::BasicSymbolic{SymReal})
 end
 
 function _plan_call!(
-        plans, is_ground, ir, g, ex, i,
-        var_of::IdDict{<:BasicSymbolic{SymReal}, Int32}
+        plans::Vector{NodePlan.Type}, is_ground::BitVector,
+        ir::IRStructure{SymReal}, g::SymbolicUtils.OrderedDiGraph{Int32},
+        ex::BasicSymbolic{SymReal}, i::Int32,
+        var_of::IdDict{BasicSymbolic{SymReal}, Int32}
     )
     op = operation(ex)
     nbs = Graphs.outneighbors(g, i)
@@ -204,7 +208,7 @@ function _plan_call!(
         # symbolic op prefixes outneighbors (IRStructure invariant)
         head = Int32(nbs[1])
         if is_marker_term(op)
-            operation(op) === slot || throw(
+            _is_slot_term(op) || throw(
                 ArgumentError(
                     lazy"only slot markers may appear in head position, got: $op"
                 )
@@ -220,8 +224,8 @@ function _plan_call!(
 
     ST = symtype(ex)
     ac = _is_ac_head(op, ST)
-    assoc = _is_associative_head(op, ST)
-    comm = _is_commutative_head(op, ST)
+    assoc = ac || _is_associative_head(op, ST)
+    comm = ac || _is_commutative_head(op, ST)
 
     start = op isa BasicSymbolic{SymReal} ? 2 : 1
     if ac || comm
@@ -232,27 +236,24 @@ function _plan_call!(
         for k in start:length(nbs)
             c = Int32(nbs[k])
             cex = ir[c]
-            if is_marker_term(cex)
-                m = operation(cex)
-                if m === segment
-                    push!(segments, c)
-                elseif m === optional
-                    ac || throw(
-                        ArgumentError(
-                            lazy"optional occurrence $cex outside an AC/associative node"
-                        )
+            if _is_segment_term(cex)
+                push!(segments, c)
+            elseif _is_optional_term(cex)
+                ac || throw(
+                    ArgumentError(
+                        lazy"optional occurrence $cex outside an AC/associative node"
                     )
-                    push!(optionals, c)
-                else
-                    push!(slots, c)
-                end
+                )
+                push!(optionals, c)
+            elseif _is_slot_term(cex)
+                push!(slots, c)
             else
                 _check_bare!(cex, var_of)
                 push!(fixed, c)
             end
-            is_ground[i] = is_ground[i] && is_ground[c]
+            is_ground[i] &= is_ground[c]
         end
-        is_ground[i] = is_ground[i] && (head == 0 || is_ground[head])
+        is_ground[i] &= (iszero(head) || is_ground[head])
         return ac ? NodePlan.ACCall(op, head, fixed, slots, optionals, segments) :
             NodePlan.CommCall(op, head, fixed, slots, optionals, segments)
     else
@@ -260,7 +261,7 @@ function _plan_call!(
         for k in start:length(nbs)
             c = Int32(nbs[k])
             cex = ir[c]
-            if is_marker_term(cex) && operation(cex) === optional
+            if _is_optional_term(cex)
                 assoc || throw(
                     ArgumentError(
                         lazy"optional occurrence $cex outside an AC/associative node"
@@ -270,9 +271,9 @@ function _plan_call!(
                 _check_bare!(cex, var_of)
             end
             push!(children, c)
-            is_ground[i] = is_ground[i] && is_ground[c]
+            is_ground[i] &= is_ground[c]
         end
-        is_ground[i] = is_ground[i] && (head == 0 || is_ground[head])
+        is_ground[i] &= (iszero(head) || is_ground[head])
         return assoc ? NodePlan.AssocCall(op, head, children) :
             NodePlan.Call(op, head, children)
     end
@@ -280,7 +281,7 @@ end
 
 function _check_bare!(
         cex::BasicSymbolic{SymReal},
-        var_of::IdDict{<:BasicSymbolic{SymReal}, Int32}
+        var_of::IdDict{BasicSymbolic{SymReal}, Int32}
     )
     (issym(cex) && haskey(var_of, cex)) && throw(
         ArgumentError(
@@ -292,26 +293,19 @@ end
 
 # Merge the `vars` map into a per-var_id VarSpec vector (§3.1, §5.2).
 function _merge_specs(
-        vars::AbstractDict,
-        var_of::IdDict{<:BasicSymbolic{SymReal}, Int32},
-        var_syms::Vector{<:BasicSymbolic{SymReal}},
+        vars::AbstractDict{BasicSymbolic{SymReal}, VarSpec.Type},
+        var_of::IdDict{BasicSymbolic{SymReal}, Int32},
+        var_syms::Vector{BasicSymbolic{SymReal}},
         var_is_seg::BitVector, var_has_opt::BitVector
     )
     nvars = length(var_syms)
     specs = Vector{VarSpec.Type}(undef, nvars)
     seen = falses(nvars)
     for (k, v) in vars
-        k isa BasicSymbolic{SymReal} ||
-            throw(ArgumentError(lazy"vars key must be a symbolic variable, got: $k"))
         ks = unwrap_varspec(k)
         (issym(ks) && haskey(var_of, ks)) || throw(
             ArgumentError(
                 lazy"vars key $k is not a pattern variable in this expression"
-            )
-        )
-        v isa VarSpec.Type || throw(
-            ArgumentError(
-                lazy"vars value for $ks must be a VarSpec, got: $v"
             )
         )
         vid = var_of[ks]
@@ -320,10 +314,7 @@ function _merge_specs(
                 lazy"duplicate VarSpec for variable $ks"
             )
         )
-        spec_is_seg = @match v begin
-            VarSpec.Slot(; predicate, default) => false
-            VarSpec.Segment(; predicate, sequence_predicate, min, max) => true
-        end
+        spec_is_seg = MData.isa_variant(v, VarSpec.Segment)
         spec_is_seg == var_is_seg[vid] || throw(
             ArgumentError(
                 lazy"VarSpec variant for $ks does not match its marker kind"
@@ -353,8 +344,8 @@ end
 # non-segment child count cannot exceed the parent's argument count (§5.2,
 # "where provable").
 function _check_fixed_arity!(
-        plans::Vector{NodePlan.Type}, ir::IRStructure,
-        g, var_of::IdDict{<:BasicSymbolic{SymReal}, Int32},
+        plans::Vector{NodePlan.Type}, ir::IRStructure{SymReal},
+        var_of::IdDict{BasicSymbolic{SymReal}, Int32},
         specs::Vector{VarSpec.Type}
     )
     for i in Int32(1):Int32(length(plans))
@@ -363,7 +354,7 @@ function _check_fixed_arity!(
                 min_req = 0
                 for c in children
                     cex = ir[c]
-                    if is_marker_term(cex) && operation(cex) === segment
+                    if _is_segment_term(cex)
                         min_req += @match specs[var_of[varsym(cex)]] begin
                             VarSpec.Segment(; min) => min
                             _ => 0

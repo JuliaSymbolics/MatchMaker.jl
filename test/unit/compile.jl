@@ -128,8 +128,9 @@ end
         segment(x) + y;
         vars = Dict(x => slotspec())
     )
-    @test_throws ArgumentError compile_pattern(slot(x); vars = Dict("a" => slotspec()))
-    @test_throws ArgumentError compile_pattern(slot(x); vars = Dict(x => 5))
+    # non-sym keys / non-VarSpec values fail the kwarg signature itself
+    @test_throws TypeError compile_pattern(slot(x); vars = Dict("a" => slotspec()))
+    @test_throws TypeError compile_pattern(slot(x); vars = Dict(x => 5))
     # optional without default
     @test_throws ArgumentError compile_pattern(optional(x) + y)
     # optional outside AC/A node
