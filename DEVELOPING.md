@@ -88,3 +88,7 @@ Conventions: Conventional Commits, feature branches, DocStringExtensions
 docstrings on public API + non-trivial types, narrow arg annotations,
 concrete or small-union returns. Adapted MatchPy algorithms carry a
 `# Adapted from matchpy/<file>::<function>` comment.
+
+Formatting: all source is formatted with Runic (`runic --inplace src test
+benchmark`) — run it before every commit. DESIGN.md/DEVELOPING.md changes go
+in their own `docs:` commits, never mixed with code.
