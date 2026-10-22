@@ -101,7 +101,7 @@ that drive every design decision below:
 |---|---|
 | *pattern* | a `BasicSymbolic{SymReal}` containing zero or more pattern variables |
 | *subject* | a `BasicSymbolic{SymReal}` matched against a pattern |
-| *marker term* | a `Term` whose operation is the singleton `slot`, `segment`, or `optional` — declares a pattern variable |
+| *marker term* | a `Term` whose operation is the marker function `slot`, `segment`, or `optional` — declares a pattern variable |
 | *variable* | the inner `Sym` of a marker term; all its occurrences in the pattern refer to the same variable |
 | *slot* | a variable matching exactly one argument/term (`~x` analogue; MatchPy `Wildcard.dot`/`Wildcard.symbol`) |
 | *optional slot* | a slot occurrence that may instead bind a declared default (`~!x` analogue; MatchPy `Optional`/`Wildcard.optional`) |
@@ -120,7 +120,7 @@ that drive every design decision below:
 
 ### 3.1 Marker terms
 
-Pattern variables are ordinary `Term`s headed by singleton marker constants:
+Pattern variables are ordinary `Term`s headed by marker functions:
 
 - `slot(x)` — matches exactly one term/argument.
 - `segment(x)` — matches a contiguous run (free/associative heads) or a
@@ -129,9 +129,12 @@ Pattern variables are ordinary `Term`s headed by singleton marker constants:
   declared `default` (per-occurrence marker; the default *value* lives in the
   `VarSpec`, not in the tree).
 
-`slot`, `segment`, `optional` are constants of distinct singleton types; each
-is callable and produces a `Term` whose `operation` is the marker itself.
-They take **exactly one argument — the inner `Sym`** — and nothing else:
+`slot`, `segment`, `optional` are bare generic functions (`function slot
+end`): a marker call produces a `Term` whose `operation` is the function
+itself. `promote_symtype`/`promote_shape` on the marker functions return the
+inner arg's type/shape, so marker terms carry the inner `Sym`'s symtype and
+shape for free (`term(m, x)` needs no kwargs). They take **exactly one
+argument — the inner `Sym`** — and nothing else:
 
 ```julia
 slot(x) isa BasicSymbolic{SymReal}        # a Term
@@ -165,10 +168,10 @@ in the tree (the `optional` marker itself); a var with any `optional`
 occurrence must have `default !== nothing`.
 
 ```julia
-@data VarSpec{T} begin               # Moshi ADT — concrete tagged type
+@data VarSpec begin                  # Moshi ADT — concrete tagged type
     struct Slot
         predicate::Union{Nothing, PredT}
-        default::Union{Nothing, BasicSymbolic{T}}   # nothing = required
+        default::Union{Nothing, BasicSymbolic{SymReal}}  # nothing = required
     end
     struct Segment
         predicate::Union{Nothing, PredT}
@@ -178,6 +181,12 @@ occurrence must have `default !== nothing`.
     end
 end
 ```
+
+`VarSpec` is deliberately non-parametric: `PredT`/`SeqPredT` are already
+`SymReal`-fixed, so a vartype parameter would only decorate `default` — and
+it would be uninferrable at `default === nothing` (caught by Aqua's
+unbound-args check). If `SafeReal`/`TreeReal` support lands, parameterize all
+fields together or none.
 
 Kind is the variant tag — no flag, no dead fields, and legality of each
 spec field is structural (`default` literally cannot exist on a `Segment`).
@@ -216,23 +225,30 @@ slot(x)              # marker term wrapping Sym x
 segment(x)
 optional(x)
 unwrap_varspec(x) -> BasicSymbolic             # strip marker term to inner sym
-is_pattern_var(x) -> Bool
+is_marker_term(x) -> Bool                      # is x a marker term?
+is_marker_op(op) -> Bool
 varsym(x) -> Sym                               # inner sym of a marker term
-slotspec(; predicate = nothing, default = nothing) -> VarSpec.Slot{SymReal}
-segmentspec(; predicate = nothing, sequence_predicate = nothing,
-             min = 0, max = typemax(Int)) -> VarSpec.Segment{SymReal}
+slotspec(predicate = nothing; default = nothing) -> VarSpec.Slot
+segmentspec(predicate = nothing, sequence_predicate = nothing;
+            min = 0, max = typemax(Int)) -> VarSpec.Segment
 ```
 
 `x` may be a `Symbol` (a fresh `Sym` is created; `slot(:x; type, shape)`
 keywords apply) or an existing `Sym`. Validation at construction: the argument
-must be a `Sym` (`slot(f(x))`, `slot(slot(x))` → error).
+must be a `Sym` (`slot(f(x))`, `slot(slot(x))` → error). Wrapping an existing
+`Sym` needs no macro — it is just `slot(x)`.
 
-Macros bind *marker terms* — `@slot x` produces the expression `slot(x)` for
-an existing symbolic `x`; the plural forms create syms and wrap them:
+`is_marker_term`/`unwrap_varspec`/`varsym` `@match` the `Term` variant
+directly (not `iscall`/`operation`, which dispatch over every symbolic
+variant — the marker check only ever lives on a `Term`).
+
+Macros create syms and wrap them — sharing `SymbolicUtils.@syms` parsing
+(`parse_variable` + `sym_from_parse_result`), so `name`, `name::Type`,
+`name[shape]`, and `f(args)` function-form arguments all work:
 
 ```julia
-@slot x               # → slot(x); x must already be a Sym
 @slots x y::Real      # x = slot(Sym(:x)); y = slot(Sym(:y; type = Real))
+@slots f(y)           # f = slot(FnType sym) — a head-slot variable
 @segments xs ys::Real # xs = segment(Sym(:xs)); ys = segment(Sym(:ys; type=Real))
 ```
 
@@ -336,7 +352,7 @@ internal.
 2. **Bindings.** A substitution maps each pattern variable to the subject
    node(s) it captured. Internally bindings are *subject IR node indices*
    (`Int32` for slots, `SmallV{Int32}` for segments); expr materialization
-   happens only when a `Substitution` is produced.
+   happens only when a `MarkersMap` is produced.
 
 3. **Slots** match exactly one term, subject to: symtype constraint
    (`symtype(candidate) <: symtype(inner_sym)`), shape constraint (concrete
@@ -433,7 +449,7 @@ Matcher{T}           +   subject → IRStructure{T}   →   MatchEngine
                                               eachmatch / matches / match
                                                                │
                                                                ▼
-                        Substitution <: AbstractDict{BasicSymbolic,
+                        MarkersMap <: AbstractDict{BasicSymbolic,
                                                      BasicSymbolic}
 ```
 
@@ -448,7 +464,7 @@ struct Matcher{T}
     root::Int32                               # node index of whole pattern
     plans::Vector{NodePlan}                   # indexed by node idx — ADT below
     var_syms::Vector{BasicSymbolic{T}}        # var_id -> inner Sym
-    var_specs::Vector{VarSpec{T}}             # var_id -> spec (§3.1)
+    var_specs::Vector{VarSpec}                # var_id -> spec (§3.1)
     var_of::IdDict{BasicSymbolic{T}, Int32}   # inner sym -> var_id (=== identity)
     is_ground::BitVector                      # subtree contains no variables
     nvars::Int                                # number of distinct variables
@@ -501,7 +517,7 @@ end
 
 One concrete struct; `seg_op` is `Any` because ops are heterogeneous callables
 — read once per materialization, never in the hot loop. It is needed to
-rebuild `f(captured…)` for the external `Substitution` (§5.6). A
+rebuild `f(captured…)` for the external `MarkersMap` (§5.6). A
 `trail::Vector{Int32}` records which var ids were bound, in order; backtracking
 pops a mark and clears. Rebinding (non-linear check) never touches the trail.
 
@@ -562,7 +578,7 @@ step!(eng::MatchEngine{T}, f::<FrameKind>)::FrameStatus
 The engine loop pops `:matched`, retries `:failed` parents, and yields when the
 stack empties — a complete match is *the stack reaching empty*. `next_match!`
 runs the loop to the next yield; `Base.iterate(engine)` wraps it, copying out a
-`Substitution`. Because all state is explicit and heap-resident, iteration is
+`MarkersMap`. Because all state is explicit and heap-resident, iteration is
 resumable for free and nothing ever recurses — this is the property that lets
 the engine scale to huge subjects, and the reason `IRStructure` is load-bearing
 rather than cosmetic.
@@ -668,13 +684,13 @@ enumeration) and is out of scope unless a profiling case demands it.
 Outside such a node: compile-time error (a lone optional has no "absence" to
 fall back on).
 
-### 5.6 Substitution & instantiation
+### 5.6 MarkersMap & instantiation
 
-**`Substitution` is a concrete `AbstractDict` wrapper** — value type
+**`MarkersMap` is a concrete `AbstractDict` wrapper** — value type
 `BasicSymbolic{SymReal}` uniformly, no `Any`, no union:
 
 ```julia
-struct Substitution <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
+struct MarkersMap <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
     dict::Dict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}  # inner sym -> expr
 end
 ```
@@ -703,7 +719,7 @@ end
 (`binds`, `var_syms`, `seg_op`, subject IR): `keys`/`iterate`/`getindex`
 resolve lazily without materializing the output dict. **Contract:** valid only
 until the next `eachmatch`/`iterate` step mutates the bindings; `materialize(v)`
-produces a persistent `Substitution`. A debug flag (`Ref{Bool}`, off by
+produces a persistent `MarkersMap`. A debug flag (`Ref{Bool}`, off by
 default) stamps each view with the engine's step counter and throws on stale
 access — cheap insurance against the classic view-dangling bug.
 
@@ -718,12 +734,12 @@ Public API (stable surface):
 
 ```julia
 compile_pattern(expr; vars::AbstractDict = Dict()) -> Matcher{SymReal}
-match(m_or_expr, s; constraints = ()) -> Union{Substitution, Nothing}
+match(m_or_expr, s; constraints = ()) -> Union{MarkersMap, Nothing}
 matches(m_or_expr, s; constraints = ())       # lazy resumable iterator
 matchall(...) = collect(matches(...))
 eachmatch(f, m_or_expr, s)                    # f(::SubstitutionView)::Bool; false = stop
 instantiate(template, subst)
-materialize(view) -> Substitution
+materialize(view) -> MarkersMap
 ```
 
 `eachmatch` is the zero-allocation hot path rewriters should use.
@@ -767,7 +783,7 @@ MatchMaker.jl/
                             #   constructors, macros, FunctionWrapper aliases
     traits.jl               # §3.5: operation traits + fast-path wrappers
     compile.jl              # §5.2: Matcher, NodePlan ADT, spec merge, validation
-    bindings.jl             # §5.3, §5.6: Bindings, trail, Substitution(+View)
+    bindings.jl             # §5.3, §5.6: Bindings, trail, MarkersMap + SubstitutionView
     engine.jl               # §5.4: MatchEngine, advance loop, iterate
     matchers/
       primitives.jl         # literal/ground/slot leaf logic (no frames)
@@ -860,7 +876,7 @@ this section exists only to keep today's choices compatible.
   for extensibility; internally fast-path common cases.*
 - No `Vector{Any}` in the search state; bindings store `Int32` node ids;
   `seg_op` is the sole `Any` field and is cold (materialization only).
-- Buffers reused across matches of one engine; `Substitution` materialization
+- Buffers reused across matches of one engine; `MarkersMap` materialization
   is the only per-match allocation (and `eachmatch` avoids it).
 - `maxsteps` budget parameter guards pathological AC searches (the
   `COMM_BACKTRACK_BUDGET` analogue), counted in `eng.steps`.
@@ -920,7 +936,7 @@ coverage before the next starts.
    README.md (with §13 refs + §14 licenses), .gitignore, Aqua suite.
    *Tests: package loads, QA green.*
 1. `feat/pattern-vars` — §3.1–3.3: marker singletons, `unwrap_varspec`,
-   `VarSpec`, constructors, macros, `Substitution` dict wrapper.
+   `VarSpec`, constructors, macros, `MarkersMap` dict wrapper.
    *Tests: marker-term identity/equality, constructor validation, macro
    expansion, dict key normalization.*
 2. `feat/op-traits` — §3.5 incl. fast-path wrappers. *Tests: +/* AC for
@@ -931,7 +947,7 @@ coverage before the next starts.
    flags, bare-occurrence error, marker-kind conflict, variant-mismatch
    error, spec-key errors.*
 4. `feat/match-core` — engine + literal/slot/`Seq`; `match`, `matches`,
-   `eachmatch`, `Substitution`(+View). *Tests: unit per leaf logic; oracle on
+   `eachmatch`, `MarkersMap`(+View). *Tests: unit per leaf logic; oracle on
    linear patterns; fuzz (free-heads only).*
 5. `feat/segments-free` — `Assoc` frame restricted to free heads + segments.
    *Tests: split enumeration, min/max, predicates; oracle.*

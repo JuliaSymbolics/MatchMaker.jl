@@ -11,9 +11,13 @@ dependencies and wires includes together; the file layout is DESIGN.md §6.
 module MatchMaker
 
 using SymbolicUtils
-using Moshi
+using SymbolicUtils: BasicSymbolic, Sym, Term, Const, SymReal,
+                    issym, isconst, symtype, shape, BSImpl, ArgsT
+using Moshi.Data: @data
+import Moshi.Data as MData
+using Moshi.Match: @match
 using DocStringExtensions
-using FunctionWrappers
+using FunctionWrappers: FunctionWrapper
 using Graphs
 using ReadOnlyArrays
 
@@ -29,5 +33,12 @@ include("matchers/associative.jl")
 include("matchers/ac.jl")
 include("instantiate.jl")
 include("api.jl")
+
+export slot, segment, optional,
+       is_marker_term, is_marker_op,
+       is_slot_marker, is_segment_marker, unwrap_varspec, varsym,
+       VarSpec, slotspec, segmentspec,
+       MarkersMap,
+       @slots, @segments
 
 end # module MatchMaker
