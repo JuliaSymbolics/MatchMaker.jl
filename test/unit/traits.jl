@@ -43,6 +43,10 @@ end
 
     @test_throws ArgumentError set_operation_traits(sin(x))
     @test_throws ArgumentError set_operation_traits(x + 1)
+    @test_throws ArgumentError set_operation_traits(x)  # plain Sym, not FnType
+
+    # all-default flags → returned unchanged, no metadata attached
+    @test set_operation_traits(g) === g
 end
 
 @testset "fast-path wrappers" begin
@@ -69,4 +73,16 @@ end
     @test _identity_el(+, Number) === 0
     @test _identity_el(*, Int) === 1
     @test _identity_el(-, Number) === nothing
+end
+
+@testset "wrapper inference" begin
+    # Bool-returning wrappers must be fully inferred despite the
+    # trait-call dynamic dispatch (the ::Bool asserts do the work)
+    @test_nowarn @inferred _is_ac_head(+, Number)
+    @test_nowarn @inferred _is_ac_head(sin, Number)
+    @test_nowarn @inferred _is_associative_head(*, Real)
+    @test_nowarn @inferred _is_commutative_head(-, Number)
+    @test_nowarn @inferred _is_number_st(Real)
+    @test_nowarn @inferred _is_number_st(Matrix{Float64})
+    # _identity_el excluded: the trait fallback returns Any
 end

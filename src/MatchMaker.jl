@@ -13,7 +13,7 @@ module MatchMaker
 using SymbolicUtils
 using SymbolicUtils: BasicSymbolic, Sym, Term, Const, SymReal,
     issym, isconst, symtype, shape, BSImpl, ArgsT,
-    hasmetadata, getmetadata, setmetadata
+    hasmetadata, getmetadata, setmetadata, is_function_symbolic
 using Moshi.Data: @data
 import Moshi.Data as MData
 using Moshi.Match: @match

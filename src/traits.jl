@@ -39,18 +39,20 @@ OperationTraits(;
                          commutative = false, identity = nothing)
 
 Attach an [`OperationTraits`](@ref) entry to the symbolic head `f` (must be a
-`Sym`, typically with `FnType` symtype) and return it. The returned `Sym` is
+function symbolic — `FnType` symtype) and return it. The returned `Sym` is
 used as the operation in patterns/subjects; trait lookups read its metadata.
+With all-default flags `f` is returned unchanged.
 """
 function set_operation_traits(
         f::BasicSymbolic{SymReal}; associative::Bool = false,
         commutative::Bool = false, identity = nothing
     )
-    issym(f) || throw(
+    is_function_symbolic(f) || throw(
         ArgumentError(
-            lazy"operation traits attach to a Sym head, got: $f"
+            lazy"operation traits attach to a function symbolic, got: $f"
         )
     )
+    associative || commutative || identity !== nothing || return f
     return setmetadata(
         f, OperationTraitsCtx,
         OperationTraits(associative, commutative, identity)
@@ -69,7 +71,7 @@ Whether `f(x, f(y, z)) ≡ f(f(x, y), z)` for calls whose result symtype is
 heads, traits come from [`OperationTraitsCtx`](@ref) metadata on the head
 `Sym` (MatchPy per-`Operation` `associative` flag, [R1, R3]).
 """
-is_associative(@nospecialize(f), ::Type) = false
+is_associative(@nospecialize(f), ::SymbolicUtils.TypeT) = false
 
 """
     is_commutative(f, ::Type{ST}) -> Bool
@@ -77,7 +79,7 @@ is_associative(@nospecialize(f), ::Type) = false
 Whether `f(x, y) ≡ f(y, x)` for calls whose result symtype is `ST`.
 See [`is_associative`](@ref).
 """
-is_commutative(@nospecialize(f), ::Type) = false
+is_commutative(@nospecialize(f), ::SymbolicUtils.TypeT) = false
 
 """
     identity_element(f, ::Type{ST}) -> Union{Any, Nothing}
@@ -85,7 +87,7 @@ is_commutative(@nospecialize(f), ::Type) = false
 An `e` such that `f(e, x) ≡ x` for result symtype `ST`, or `nothing` if none
 is declared. Used for singleton-subject coercion (DESIGN.md §4.6).
 """
-identity_element(@nospecialize(f), ::Type) = nothing
+identity_element(@nospecialize(f), ::SymbolicUtils.TypeT) = nothing
 
 # `+`/`*` are AC with identity 0/1 for numeric result types (§3.5).
 is_associative(::Union{typeof(+), typeof(*)}, ::Type{<:Number}) = true
@@ -95,15 +97,15 @@ identity_element(::typeof(*), ::Type{<:Number}) = 1
 
 # Symbolic heads read traits from OperationTraitsCtx metadata on the head
 # `Sym` — the only channel available for commutative symbolic functions.
-function is_associative(f::BasicSymbolic{SymReal}, ::Type{ST}) where {ST}
+function is_associative(f::BasicSymbolic{SymReal}, ::SymbolicUtils.TypeT)
     issym(f) && hasmetadata(f, OperationTraitsCtx) || return false
     return (getmetadata(f, OperationTraitsCtx)::OperationTraits).associative
 end
-function is_commutative(f::BasicSymbolic{SymReal}, ::Type{ST}) where {ST}
+function is_commutative(f::BasicSymbolic{SymReal}, ::SymbolicUtils.TypeT)
     issym(f) && hasmetadata(f, OperationTraitsCtx) || return false
     return (getmetadata(f, OperationTraitsCtx)::OperationTraits).commutative
 end
-function identity_element(f::BasicSymbolic{SymReal}, ::Type{ST}) where {ST}
+function identity_element(f::BasicSymbolic{SymReal}, ::SymbolicUtils.TypeT)
     issym(f) && hasmetadata(f, OperationTraitsCtx) || return nothing
     return getmetadata(f, OperationTraitsCtx).identity
 end
@@ -141,7 +143,7 @@ function _is_ac_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils.TypeT))
     if op === (+) || op === (*)
         _is_number_st(ST) && return true
     end
-    return is_associative(op, ST) && is_commutative(op, ST)
+    return is_associative(op, ST)::Bool && is_commutative(op, ST)::Bool
 end
 
 """
@@ -151,7 +153,7 @@ See [`_is_ac_head`](@ref). Fast path for `+`/`*` on numeric symtypes.
 """
 function _is_associative_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils.TypeT))
     (op === (+) || op === (*)) && _is_number_st(ST) && return true
-    return is_associative(op, ST)
+    return is_associative(op, ST)::Bool
 end
 
 """
@@ -161,7 +163,7 @@ See [`_is_ac_head`](@ref). Fast path for `+`/`*` on numeric symtypes.
 """
 function _is_commutative_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils.TypeT))
     (op === (+) || op === (*)) && _is_number_st(ST) && return true
-    return is_commutative(op, ST)
+    return is_commutative(op, ST)::Bool
 end
 
 """
