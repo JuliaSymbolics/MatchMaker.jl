@@ -9,16 +9,16 @@
 
 Result of one [`step!`](@ref) call on a [`MatchFrame`](@ref) (DESIGN.md §5.4).
 
-- `produced` — the frame finished one complete alternative for its subtree:
+- `Produced` — the frame finished one complete alternative for its subtree:
   that alternative's bindings are on `eng.trail`, and the frame stays live —
   the next `step!` resumes the search for further alternatives.
-- `matched` — the frame's obligation is fully satisfied and it produced no
+- `Matched` — the frame's obligation is fully satisfied and it produced no
   resumable alternatives; the engine pops it. (Reserved for single-shot
   frames; `Call` frames never return it.)
-- `failed` — the frame is exhausted: no more alternatives exist. Its
+- `Failed` — the frame is exhausted: no more alternatives exist. Its
   bindings were already unwound to its trail mark; the engine pops it.
 """
-@enumx FrameStatus produced matched failed
+@enumx FrameStatus Produced Matched Failed
 const FrameStatusT = FrameStatus.T
 
 ###
@@ -33,7 +33,7 @@ Julia has no cheap coroutines, so instead of a generator that yields each
 alternative, a frame *is* the suspended enumeration: it remembers where the
 search left off, and [`step!`](@ref) advances it to the next alternative.
 Each call frame owns per-position child frames, so a parent's state survives
-backtracking — `eng.frames` therefore only ever holds the root.
+backtracking — `eng.root` therefore only ever holds the root.
 
 `Call(pat_node, subj_node, child_pos, trail_mark, kids)` — the frame for a
 `NodePlan.Call` (free head, positional children): `child_pos` is the
@@ -84,10 +84,10 @@ end
 """
     MatchEngine
 
-A defunctionalized backtracking machine (DESIGN.md §5.4). `frames` is the
-live frame stack (root at bottom); `binds`/`trail` hold index-only binding
-state; `argbuf` is a reusable argument buffer for constraint evaluation.
-`steps` meters work.
+A defunctionalized backtracking machine (DESIGN.md §5.4). `root` is the
+live root frame (`nothing` for leaf roots, which `next_match!` applies
+inline); `binds`/`trail` hold index-only binding state; `argbuf` is a
+reusable argument buffer for constraint evaluation. `steps` meters work.
 """
 mutable struct MatchEngine
     "Compiled pattern."
@@ -96,8 +96,8 @@ mutable struct MatchEngine
     const subj::IRStructure{SymReal}
     "Node index of the subject root."
     const sroot::Int32
-    "Live frame stack; top = deepest obligation."
-    const frames::Vector{MatchFrameT}
+    "Live root frame; `nothing` for leaf-root patterns."
+    root::Union{Nothing, MatchFrameT}
     "Index-only binding state."
     const binds::Bindings
     "Var ids bound, in order — backtracking unwinds to a mark."
@@ -129,7 +129,6 @@ function MatchEngine(
     )
     subj = IRStructure{SymReal}()
     sroot = populate_ir!(subj, s)
-    frames = MatchFrameT[]
     binds = Bindings(pat.nvars)
     trail = Int32[]
     argbuf = BasicSymbolic{SymReal}[]
@@ -154,7 +153,7 @@ function MatchEngine(
     end
 
     eng = MatchEngine(
-        pat, subj, sroot, frames, binds, trail, econstrs,
+        pat, subj, sroot, nothing, binds, trail, econstrs,
         falses(length(econstrs)), var_constrs, argbuf, false, 0
     )
 
@@ -164,7 +163,7 @@ function MatchEngine(
     isleaf = MData.isa_variant(root_plan, NodePlan.Literal) ||
         MData.isa_variant(root_plan, NodePlan.Slot)
     if !isleaf
-        push!(frames, _root_frame(root_plan, pat.root, sroot))
+        eng.root = _root_frame(root_plan, pat.root, sroot)
     end
     return eng
 end
@@ -240,16 +239,24 @@ end
 function _seg_value(eng::MatchEngine, vid::Int32)
     b = eng.binds
     f = b.seg_op[vid]
-    args = BasicSymbolic{SymReal}[eng.subj[i] for i in b.seq[vid]]
-    if isempty(args)
+    args = ArgsT{SymReal}()
+    sizehint!(args, length(b.seq[vid]))
+    for i in b.seq[vid]
+        push!(args, eng.subj[i])
+    end
+    if f === (+)
+        return SymbolicUtils.add_worker(SymReal, args)
+    elseif f === (*)
+        return SymbolicUtils.mul_worker(SymReal, args)
+    elseif isempty(args)
         e = _identity_el(f, symtype(eng.subj[eng.sroot]))
         e !== nothing && return Const{SymReal}(e)
-        return BSImpl.Term{SymReal}(f, ArgsT{SymReal}(()); type = Any)
+        return BSImpl.Term{SymReal}(f, args; type = Any)
+    else
+        return BSImpl.Term{SymReal}(
+            f, args; type = promote_symtype(f, map(symtype, args)...)
+        )
     end
-    return BSImpl.Term{SymReal}(
-        f, ArgsT{SymReal}(args);
-        type = promote_symtype(f, map(symtype, args)...)
-    )
 end
 
 ###
@@ -393,7 +400,7 @@ function _step_call!(
 
     while true
         if child_pos[] > n
-            return FrameStatus.produced
+            return FrameStatus.Produced
         end
         if backtrack
             # find the deepest live child and resume its enumerator
@@ -403,7 +410,7 @@ function _step_call!(
                     child_pos[] -= 1
                     continue
                 end
-                if step!(eng, kf) === FrameStatus.produced
+                if step!(eng, kf) === FrameStatus.Produced
                     child_pos[] += 1
                     break
                 else
@@ -432,7 +439,7 @@ function _step_call!(
                 kf = _new_frame(cplan, cp, cs, _nchildren(cplan))
                 kids[child_pos[]] = kf
             end
-            if step!(eng, kf) === FrameStatus.produced
+            if step!(eng, kf) === FrameStatus.Produced
                 child_pos[] += 1
             else
                 kids[child_pos[]] = nothing
@@ -445,7 +452,7 @@ end
 
 function _call_fail!(eng::MatchEngine, mark::Base.RefValue{Int})
     _unwind!(eng, mark[])
-    return FrameStatus.failed
+    return FrameStatus.Failed
 end
 
 function _nchildren(plan::NodePlanT)
@@ -480,21 +487,20 @@ search space is exhausted. A complete match leaves bindings on the trail;
 the frames stay live so a further call resumes enumeration.
 """
 function next_match!(eng::MatchEngine)
-    if isempty(eng.frames)
+    root = eng.root
+    if root === nothing
         # leaf root: single-shot obligation, applied inline (§5.4)
         eng.root_done && return false
         eng.root_done = true
         return _leaf_obligation!(eng, eng.pat.root, eng.sroot)
     end
-    while !isempty(eng.frames)
-        f = eng.frames[end]
-        st = step!(eng, f)
-        eng.steps += 1
-        if st === FrameStatus.produced
-            return true
-        elseif st === FrameStatus.matched || st === FrameStatus.failed
-            pop!(eng.frames)
-        end
+    st = step!(eng, root)
+    eng.steps += 1
+    if st === FrameStatus.Produced
+        return true
+    else
+        # Matched/Failed: the root frame is done
+        eng.root = nothing
+        return false
     end
-    return false
 end

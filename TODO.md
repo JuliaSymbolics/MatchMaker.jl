@@ -20,10 +20,15 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   bound lets the engine specialize on memory layout and cut allocations.
   Enforce at `compile_pattern` with a clear error.
 
-- **Canonical `Add`/`Mul` reconstruction in `_seg_value`.** Currently builds
-  `BSImpl.Term` even for `+`/`*` heads; when segment binds land (milestone
-  6), empty/unit captures under canonical heads need the `Add`/`Mul`
-  ctors (and `Const` identity handling) instead.
+- **Canonical `Add`/`Mul` reconstruction in `_seg_value`.** `+`/`*` heads
+  go through `add_worker`/`mul_worker`; confirm empty-capture identity
+  handling (`Const` vs workers' own zero-arg behaviour) once segments
+  bind in milestone 5 (`feat/segments-free`).
+
+- **Cache `_seg_value` materialization in `SubstitutionView`.** If segment
+  values were cached, views could serve every lookup without allocating —
+  explore whether `MarkersMap` materialization can then be skipped
+  entirely for repeated `eachmatch`-style consumers.
 
 - **`_identity_el` fallback may allocate / is not inferrable.** It returns
   `Any`; only called on segment materialization (cold).

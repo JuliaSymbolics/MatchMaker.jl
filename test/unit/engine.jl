@@ -67,13 +67,10 @@ end
     @test length(ms) == 1 && isequal(ms[1], MarkersMap(a => x, b => y))
     @test isempty(matchall(h(x, y), h(x, x)))
 
-    cnt = Ref(0)
-    eachmatch(h(slot(a), slot(b)), h(x, y)) do v
-        cnt[] += 1
-        @test v[a] === x && v[b] === y
-        return true
-    end
-    @test cnt[] == 1
+    @test isequal(
+        collect(matches(h(slot(a), slot(b)), h(x, y)))[1],
+        MarkersMap(a => x, b => y)
+    )
 
     # stale-view debug flag
     eng = MatchEngine(

@@ -6,56 +6,72 @@
 Rebuild `template`, replacing marker terms with their bound values from
 `subst` (a `MarkersMap` or any dict keyed on variable syms/marker terms).
 `slot`/`optional` vars substitute their bound expression; `segment` vars
-splice `arguments(bound)` into the parent's argument list — a `Const`
-binding must equal the parent's `identity_element` (DESIGN.md §5.6).
+splice `arguments(bound)` into the parent's argument list; a `Const`
+segment binding (the identity) contributes zero arguments; a head marker
+(`slot(f)(…)`) substitutes the raw bound operation (DESIGN.md §4.10, §5.6).
+
+Iterates the template's `IRStructure` in postorder building `out[i]` — no
+recursion: marker nodes resolve to their bound expression, and call nodes
+rebuild `f(args…)` splicing segment-bound args (canonical exprs of children
+are always available, children before parents).
 """
 function instantiate(template::BasicSymbolic{SymReal}, subst)
-    return _inst(template, subst, nothing)
-end
-
-# `parent_op`/`parent_st` let a segment child verify a `Const` binding is the
-# parent's identity element; `nothing` at the root.
-function _inst(t::BasicSymbolic{SymReal}, subst, @nospecialize(parent_op))
-    if is_marker_term(t)
-        _is_segment_term(t) && error(
-            lazy"segment $t must appear inside an argument list"
-        )
-        return subst[varsym(t)]
-    end
-    iscall(t) || return t
-    op = operation(t)
-    args = arguments(t)
-    newargs = BasicSymbolic{SymReal}[]
-    for a in args
-        if _is_segment_term(a)
-            bound = subst[varsym(a)]
-            _splice_segment!(newargs, bound, op)
+    ir = IRStructure{SymReal}()
+    root = populate_ir!(ir, template)
+    g = ir.dependency_graph
+    n = length(ir.symbols)
+    out = Vector{BasicSymbolic{SymReal}}(undef, n)
+    is_seg = falses(n)
+    for i in 1:n
+        t = ir[i]
+        if is_marker_term(t)
+            is_seg[i] = _is_segment_term(t)
+            out[i] = subst[varsym(t)]
+            continue
+        end
+        if !iscall(t)
+            out[i] = t
+            continue
+        end
+        nbs = Graphs.outneighbors(g, i)
+        op = operation(t)
+        argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
+        newop = op
+        if argstart == 2 && is_marker_term(op)
+            bound = out[nbs[1]]
+            # a head bound via extras materializes as Const(op); unwrap
+            newop = @match bound begin
+                BSImpl.Const(; val) => val
+                _ => bound
+            end
+        end
+        newargs = ArgsT{SymReal}()
+        sizehint!(newargs, length(nbs) - argstart + 1)
+        for j in argstart:length(nbs)
+            cexpr = out[nbs[j]]
+            if is_seg[nbs[j]]
+                if isconst(cexpr)
+                    continue    # identity element: zero args (§5.6)
+                elseif iscall(cexpr) && operation(cexpr) === newop
+                    for ca in arguments(cexpr)
+                        push!(newargs, ca)
+                    end
+                else
+                    push!(newargs, cexpr)
+                end
+            else
+                push!(newargs, cexpr)
+            end
+        end
+        if newop === (+)
+            out[i] = SymbolicUtils.add_worker(SymReal, newargs)
+        elseif newop === (*)
+            out[i] = SymbolicUtils.mul_worker(SymReal, newargs)
         else
-            push!(newargs, _inst(a, subst, op))
+            out[i] = BSImpl.Term{SymReal}(
+                newop, newargs; type = symtype(t), shape = SymbolicUtils.shape(t)
+            )
         end
     end
-    return BSImpl.Term{SymReal}(
-        op, ArgsT{SymReal}(newargs); type = symtype(t), shape = SymbolicUtils.shape(t)
-    )
-end
-
-# Splice a segment binding into `out`: `f(captured)` contributes its
-# arguments; `Const(identity)` contributes nothing (and must equal the
-# identity element); `f()` likewise contributes nothing.
-function _splice_segment!(
-        out::Vector{BasicSymbolic{SymReal}},
-        bound::BasicSymbolic{SymReal}, @nospecialize(parent_op)
-    )
-    if isconst(bound)
-        e = _identity_el(parent_op, symtype(bound))
-        e !== nothing && isequal(bound, Const{SymReal}(e)) ||
-            error(lazy"Const segment binding $bound is not the identity of $parent_op")
-        return nothing
-    end
-    if iscall(bound) && operation(bound) === parent_op
-        append!(out, arguments(bound))
-        return nothing
-    end
-    error(lazy"segment binding $bound is not a $parent_op call")
-    return nothing
+    return out[root]
 end

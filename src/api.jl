@@ -131,26 +131,3 @@ matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; constraints = Cons
 """
 matchall(m, s::BasicSymbolic{SymReal}; constraints = Constraint[]) =
     collect(matches(m, s; constraints))
-
-"""
-    $TYPEDSIGNATURES
-
-Call `f(::SubstitutionView)` on each successive match of `m` against `s`;
-stops when `f` returns `false`. The zero-allocation hot path for rewriters —
-the view is valid only inside `f` (DESIGN.md §5.6).
-"""
-function eachmatch(
-        f::F, m::Matcher, s::BasicSymbolic{SymReal};
-        constraints = Constraint[]
-    ) where {F}
-    eng = MatchEngine(m, s, constraints)
-    while next_match!(eng)
-        f(SubstitutionView(eng, eng.steps)) === false && break
-    end
-    return nothing
-end
-eachmatch(
-    f::F, p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal};
-    constraints = Constraint[]
-) where {F} =
-    eachmatch(f, compile_pattern(p), s; constraints)
