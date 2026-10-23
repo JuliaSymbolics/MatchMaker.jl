@@ -34,7 +34,9 @@ function _inst(t::BasicSymbolic{SymReal}, subst, @nospecialize(parent_op))
             push!(newargs, _inst(a, subst, op))
         end
     end
-    return term(op, newargs...)
+    return BSImpl.Term{SymReal}(
+        op, ArgsT{SymReal}(newargs); type = symtype(t), shape = SymbolicUtils.shape(t)
+    )
 end
 
 # Splice a segment binding into `out`: `f(captured)` contributes its

@@ -32,7 +32,7 @@ end
 function _var_bound(eng::MatchEngine, vid::Int32)
     b = eng.binds
     return is_bound_node(b, vid) || b.seg_op[vid] !== nothing ||
-        haskey(eng.extras, vid)
+        is_bound_extra(eng.binds, vid)
 end
 
 Base.getindex(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
@@ -105,12 +105,12 @@ The first match of pattern `m` (a `Matcher` or a raw expression, compiled
 via [`compile_pattern`](@ref)) against subject `s`, as a [`MarkersMap`](@ref)
 or `nothing`. `constraints` is a collection of [`Constraint`](@ref)s.
 """
-function match(m::Matcher, s::BasicSymbolic{SymReal}; constraints = ())
+function match(m::Matcher, s::BasicSymbolic{SymReal}; constraints = Constraint[])
     eng = MatchEngine(m, s, constraints)
     next_match!(eng) || return nothing
     return materialize(SubstitutionView(eng, eng.steps))
 end
-match(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; constraints = ()) =
+match(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; constraints = Constraint[]) =
     match(compile_pattern(p), s; constraints)
 
 """
@@ -119,9 +119,9 @@ match(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; constraints = ()) =
 Lazy iterator of all matches of `m` against `s`; each item is a
 [`MarkersMap`](@ref).
 """
-matches(m::Matcher, s::BasicSymbolic{SymReal}; constraints = ()) =
+matches(m::Matcher, s::BasicSymbolic{SymReal}; constraints = Constraint[]) =
     MatchIterator(MatchEngine(m, s, constraints))
-matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; constraints = ()) =
+matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; constraints = Constraint[]) =
     matches(compile_pattern(p), s; constraints)
 
 """
@@ -129,7 +129,7 @@ matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; constraints = ()) 
 
 `collect(matches(m, s))` — all matches as a `Vector{MarkersMap}`.
 """
-matchall(m, s::BasicSymbolic{SymReal}; constraints = ()) =
+matchall(m, s::BasicSymbolic{SymReal}; constraints = Constraint[]) =
     collect(matches(m, s; constraints))
 
 """
@@ -141,7 +141,7 @@ the view is valid only inside `f` (DESIGN.md §5.6).
 """
 function eachmatch(
         f::F, m::Matcher, s::BasicSymbolic{SymReal};
-        constraints = ()
+        constraints = Constraint[]
     ) where {F}
     eng = MatchEngine(m, s, constraints)
     while next_match!(eng)
@@ -151,6 +151,6 @@ function eachmatch(
 end
 eachmatch(
     f::F, p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal};
-    constraints = ()
+    constraints = Constraint[]
 ) where {F} =
     eachmatch(f, compile_pattern(p), s; constraints)

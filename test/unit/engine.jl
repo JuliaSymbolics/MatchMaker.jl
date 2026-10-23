@@ -57,7 +57,7 @@ end
         h(slot(a), slot(b)), h(x, y);
         constraints = [Constraint(v -> true, [z])]
     )
-    @test_throws ArgumentError match(
+    @test_throws MethodError match(
         h(slot(a), slot(b)), h(x, y); constraints = [3]
     )
 end
@@ -76,7 +76,9 @@ end
     @test cnt[] == 1
 
     # stale-view debug flag
-    eng = MatchEngine(compile_pattern(h(slot(a), slot(b))), h(x, y), ())
+    eng = MatchEngine(
+        compile_pattern(h(slot(a), slot(b))), h(x, y), Constraint[]
+    )
     next_match!(eng)
     v = SubstitutionView(eng, eng.steps)
     _STRICT_VIEWS[] = true

@@ -21,6 +21,7 @@ using DocStringExtensions
 using FunctionWrappers: FunctionWrapper
 using Graphs
 using ReadOnlyArrays
+using EnumX: @enumx
 import Base: match, eachmatch, materialize
 
 include("patternvars.jl")

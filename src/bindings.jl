@@ -17,15 +17,18 @@ struct Bindings
     seq::Vector{SmallV{Int32}}
     "var_id -> the head a segment var captured under."
     seg_op::Vector{Any}
+    "var_id -> non-node bound value (e.g. a head-slot var bound to a raw op)."
+    extra::Vector{Any}
 end
 
 Bindings(nvars::Integer) = Bindings(
     zeros(Int32, nvars), [SmallV{Int32}() for _ in 1:nvars],
-    fill(nothing, nvars)
+    fill(nothing, nvars), fill(nothing, nvars)
 )
 
 is_bound_node(b::Bindings, vid::Int32) = b.node[vid] != 0
 is_bound_seq(b::Bindings, vid::Int32) = b.seg_op[vid] !== nothing
+is_bound_extra(b::Bindings, vid::Int32) = b.extra[vid] !== nothing
 
 """
     Constraint(fn, vars)
@@ -45,7 +48,7 @@ Constraint(@nospecialize(fn), vars::AbstractVector{<:BasicSymbolic{SymReal}}) =
 )
 
 # Engine-compiled constraint: resolved var ids.
-struct _EConstraint
+struct EngineConstraint
     fn::ConstrT
     var_ids::SmallV{Int32}
 end
