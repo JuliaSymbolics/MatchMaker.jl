@@ -21,6 +21,7 @@ using DocStringExtensions
 using FunctionWrappers: FunctionWrapper
 using Graphs
 using ReadOnlyArrays
+import Base: match, eachmatch, materialize
 
 include("patternvars.jl")
 include("traits.jl")
@@ -43,6 +44,8 @@ export slot, segment, optional,
     is_associative, is_commutative, identity_element,
     OperationTraitsCtx, OperationTraits, set_operation_traits,
     Matcher, NodePlan, compile_pattern,
+    Constraint, MatchEngine, MatchFrame, next_match!,
+    SubstitutionView, MatchIterator, matches, matchall, instantiate,
     @slots, @segments
 
 end # module MatchMaker
