@@ -33,6 +33,14 @@ actionable. Milestone scoping lives in DESIGN.md §12.
 - **`_identity_el` fallback may allocate / is not inferrable.** It returns
   `Any`; only called on segment materialization (cold).
 
+- **Memoize `(pat_node, subj_node) -> outcome`?** Identical pairs recur
+  across sibling positions (shared subject nodes) and across backtracks
+  (fresh frames under new bindings) — with shared pattern nodes this is
+  the worst-case combinatorial blowup for wide subjects. A sound key
+  needs `(p, s)` plus the bound nodes of `p`'s free vars; the fixed
+  `nvars` bound (above) makes a bound-node-vector key cheap. Ground
+  subtrees are already free of this — they're `Literal` plans.
+
 - **`step!` currently nests calls.** `step!(eng, kf)` inside
   `_step_call!` recurses one Julia frame per *pattern* depth — bounded
   by pattern size and independent of subject size/sharing, so not a
