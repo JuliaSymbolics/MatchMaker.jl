@@ -14,6 +14,10 @@ Iterates the template's `IRStructure` in postorder building `out[i]` — no
 recursion: marker nodes resolve to their bound expression, and call nodes
 rebuild `f(args…)` splicing segment-bound args (canonical exprs of children
 are always available, children before parents).
+
+For templates without segment or head markers, `SymbolicUtils.IRSubstituter`
+gives the same result — `instantiate` is required for splicing and head
+substitution, which node→expr rules cannot express.
 """
 function instantiate(template::BasicSymbolic{SymReal}, subst)
     ir = IRStructure{SymReal}()
