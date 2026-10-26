@@ -34,12 +34,29 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   `Any`; only called on segment materialization (cold).
 
 - **Memoize `(pat_node, subj_node) -> outcome`?** Identical pairs recur
-  across sibling positions (shared subject nodes) and across backtracks
-  (fresh frames under new bindings) — with shared pattern nodes this is
-  the worst-case combinatorial blowup for wide subjects. A sound key
-  needs `(p, s)` plus the bound nodes of `p`'s free vars; the fixed
-  `nvars` bound (above) makes a bound-node-vector key cheap. Ground
-  subtrees are already free of this — they're `Literal` plans.
+  in two places: sibling positions (shared *subject* nodes — a shared
+  subexpr is one IR node, so e.g. `h(f(u), f(u))` vs `h(g(v), g(v))`
+  puts `(f(u), g(v))` in both `kids[1]` and `kids[2]`) and across
+  backtracks (a dropped `kids[pos]` is rebuilt fresh under the new
+  binding context). With shared pattern nodes × shared subject nodes ×
+  deep backtracking this is the worst-case combinatorial blowup for
+  wide subjects — identical pairs recomputed exponentially many times.
+
+  A naive `(p, s) -> Bool` cache is *unsafe*: a subtree containing
+  `slot(a)` reads `binds[a]`, so its outcome depends on the live
+  bindings (nonlinear rechecks, predicates, constraints). A sound key
+  is `(p, s, bound-nodes-of-p's-free-vars)` — the set of `p`'s vars is
+  known at compile time (plan traversal), and with the fixed `nvars`
+  bound above, "bound node of each var" is a cheap `UInt128`-bitmasked
+  vector to hash. Ground subtrees (`is_ground`) are already free of
+  this — they're `Literal` plans resolved by one `isequal`.
+
+  Implementation sketch: per-frame `Dict` on the engine keyed by the
+  tuple above, populated on `FrameStatus` returns; check before
+  `_new_frame`/`_leaf_obligation!`. Careful about *what* to cache —
+  a subtree that bound vars must replay the same bindings, so cache
+  either (a) failure only, or (b) full binding deltas (a `SmallV` of
+  `(vid, node)` pairs) — (a) is the cheap sound variant.
 
 - **`step!` currently nests calls.** `step!(eng, kf)` inside
   `_step_call!` recurses one Julia frame per *pattern* depth — bounded
