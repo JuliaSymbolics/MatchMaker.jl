@@ -16,6 +16,10 @@ end
     include("unit/compile.jl")
 end
 
+@safetestset "match engine" begin
+    include("unit/engine.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end

@@ -13,7 +13,8 @@ module MatchMaker
 using SymbolicUtils
 using SymbolicUtils: BasicSymbolic, Sym, Term, Const, SymReal,
     issym, isconst, symtype, shape, BSImpl, ArgsT,
-    hasmetadata, getmetadata, setmetadata, is_function_symbolic, SmallV
+    hasmetadata, getmetadata, setmetadata, is_function_symbolic, SmallV,
+    replace_node!, get_canonical_expr!
 using Moshi.Data: @data
 import Moshi.Data as MData
 using Moshi.Match: @match
@@ -21,6 +22,8 @@ using DocStringExtensions
 using FunctionWrappers: FunctionWrapper
 using Graphs
 using ReadOnlyArrays
+using EnumX: @enumx
+import Base: match, materialize
 
 include("patternvars.jl")
 include("traits.jl")
@@ -43,6 +46,9 @@ export slot, segment, optional,
     is_associative, is_commutative, identity_element,
     OperationTraitsCtx, OperationTraits, set_operation_traits,
     Matcher, NodePlan, compile_pattern,
+    Constraint, MatchEngine, MatchFrame, next_match!,
+    SubstitutionView, MatchIterator, matches, matchall, instantiate,
+    FrameStatus,
     @slots, @segments
 
 end # module MatchMaker
