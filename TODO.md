@@ -33,6 +33,18 @@ actionable. Milestone scoping lives in DESIGN.md §12.
 - **`_identity_el` fallback may allocate / is not inferrable.** It returns
   `Any`; only called on segment materialization (cold).
 
+- **`step!` currently nests calls.** `step!(eng, kf)` inside
+  `_step_call!` recurses one Julia frame per *pattern* depth — bounded
+  by pattern size and independent of subject size/sharing, so not a
+  scaling hazard for wide/shared subjects (the engine only indexes
+  subject nodes). Still, pattern depth is unbounded and future
+  `Assoc`/`AC` frames may want to queue several pending obligations —
+  the alternative is a delegate-push protocol: `step!` returns
+  `Union{MatchFrameT, FrameStatus.T}` (frame = push and step) plus
+  `eng.last_pop` so a resumed parent knows whether its popped child
+  produced or failed. Revisit if pattern depth or AC-phase structure
+  demands it.
+
 ## Tests
 
 - Port MatchPy's one_to_one tests into `test/matchpy/` as oracles.
