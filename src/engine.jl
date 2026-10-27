@@ -42,6 +42,15 @@ argument position currently being enumerated (`0` = uninitialized),
 `kids` the live child frame per position — `nothing` for leaf positions,
 since literal/slot obligations are applied inline by the parent and never
 get frames.
+
+`Assoc(pat_node, subj_node, child_pos, trail_mark, kids, marks, off, cur, suf)`
+— the frame for a `NodePlan.AssocCall` (free or A head, contiguous-run
+segments): `marks[i]` the trail length before position `i`'s first bind
+(the unwind target when position `i` is retried), `off[i]` the subject
+argument offset where position `i` begins, `cur[i]` the current captured
+length for a segment position (`0` = not currently bound), and `suf[i]`
+the minimum subject-arg count positions `i..n` require (computed once at
+init; `suf[n+1]` is the zero sentinel).
 """
 @data mutable MatchFrame begin
     struct Call
@@ -50,6 +59,18 @@ get frames.
         child_pos::Base.RefValue{Int}
         trail_mark::Base.RefValue{Int}
         kids::Vector{Union{Nothing, MatchFrame.Type}}
+    end
+    struct Assoc
+        pat_node::Int32
+        subj_node::Int32
+        child_pos::Base.RefValue{Int}
+        trail_mark::Base.RefValue{Int}
+        kids::Vector{Union{Nothing, MatchFrame.Type}}
+        marks::Vector{Int}
+        off::Vector{Int}
+        cur::Vector{Int}
+        suf::Vector{Int}
+        own::BitVector
     end
 end
 const MatchFrameT = MatchFrame.Type
@@ -70,6 +91,13 @@ function _new_frame(
         NodePlan.Call(; op, head) => MatchFrame.Call(
             pat_node, subj_node, Ref(0), Ref(0),
             fill!(Vector{Union{Nothing, MatchFrameT}}(undef, nchildren), nothing)
+        )
+        NodePlan.AssocCall(; op, head) => MatchFrame.Assoc(
+            pat_node, subj_node, Ref(0), Ref(0),
+            fill!(Vector{Union{Nothing, MatchFrameT}}(undef, nchildren), nothing),
+            zeros(Int, nchildren), zeros(Int, nchildren),
+            zeros(Int, nchildren), zeros(Int, nchildren + 1),
+            falses(nchildren)
         )
         _ => error(
             lazy"pattern node $pat_node has an unsupported plan for this milestone"
@@ -173,6 +201,9 @@ function _root_frame(plan::NodePlanT, pat_node::Int32, subj_node::Int32)
         NodePlan.Call(; children) => _new_frame(
             plan, pat_node, subj_node, length(children)
         )
+        NodePlan.AssocCall(; children) => _new_frame(
+            plan, pat_node, subj_node, length(children)
+        )
         _ => _new_frame(plan, pat_node, subj_node, 0)
     end
 end
@@ -209,7 +240,8 @@ function _ready_constraints!(eng::MatchEngine, vid::Int32)
         c = eng.constraints[ci]
         allbound = true
         for v in c.var_ids
-            allbound = is_bound_node(eng.binds, v) || is_bound_extra(eng.binds, v)
+            allbound = is_bound_node(eng.binds, v) ||
+                is_bound_extra(eng.binds, v) || is_bound_seq(eng.binds, v)
             allbound || break
         end
         allbound || continue
@@ -251,7 +283,7 @@ function _seg_value(eng::MatchEngine, vid::Int32)
     elseif isempty(args)
         e = _identity_el(f, symtype(eng.subj[eng.sroot]))
         e !== nothing && return Const{SymReal}(e)
-        return BSImpl.Term{SymReal}(f, args; type = Any)
+        return BSImpl.Term{SymReal}(f, args; type = promote_symtype(f))
     else
         return BSImpl.Term{SymReal}(
             f, args; type = promote_symtype(f, map(symtype, args)...)
@@ -348,6 +380,14 @@ function step!(eng::MatchEngine, f::MatchFrameT)
     return @match f begin
         MatchFrame.Call(; pat_node, subj_node, child_pos, trail_mark, kids) =>
             _step_call!(eng, pat_node, subj_node, child_pos, trail_mark, kids)
+        MatchFrame.Assoc(;
+            pat_node, subj_node, child_pos, trail_mark, kids, marks, off,
+            cur, suf, own
+        ) =>
+            _step_assoc!(
+            eng, pat_node, subj_node, child_pos, trail_mark, kids,
+            marks, off, cur, suf, own
+        )
     end
 end
 
@@ -459,6 +499,7 @@ end
 function _nchildren(plan::NodePlanT)
     return @match plan begin
         NodePlan.Call(; children) => length(children)
+        NodePlan.AssocCall(; children) => length(children)
         _ => 0
     end
 end
