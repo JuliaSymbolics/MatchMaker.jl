@@ -241,15 +241,13 @@ function _step_assoc!(
         j = child_pos[]
         bind_marks[j] = length(eng.trail)
         arg_start[j] = soff
-        cp = children[j]
-        cplan = eng.pat.plans[cp]
-        cplan_is_seg = MData.isa_variant(cplan, NodePlan.Segment)
-        cplan_is_leaf = !cplan_is_seg && (
-            MData.isa_variant(cplan, NodePlan.Literal) ||
-                MData.isa_variant(cplan, NodePlan.Slot)
-        )
-        if cplan_is_seg
-            vid = @match cplan begin
+        child_pat = children[j]
+        child_plan = eng.pat.plans[child_pat]
+        is_seg_pos = MData.isa_variant(child_plan, NodePlan.Segment)
+        is_leaf_pos = MData.isa_variant(child_plan, NodePlan.Literal) ||
+            MData.isa_variant(child_plan, NodePlan.Slot)
+        if is_seg_pos
+            vid = @match child_plan begin
                 NodePlan.Segment(; var_id) => var_id
             end
             was_bound = eng.binds.seg_op[vid] !== nothing
@@ -264,16 +262,16 @@ function _step_assoc!(
             else
                 backtrack = true
             end
-        elseif cplan_is_leaf
-            if _leaf_obligation!(eng, cp, snbs[soff])
+        elseif is_leaf_pos
+            if _leaf_obligation!(eng, child_pat, snbs[soff])
                 soff += 1
                 child_pos[] += 1
             else
                 backtrack = true
             end
-        elseif eng.pat.is_ground[cp]
+        elseif eng.pat.is_ground[child_pat]
             # a ground subtree needs no frames — one isequal decides it
-            if isequal(eng.pat.ir[cp], eng.subj[snbs[soff]])
+            if isequal(eng.pat.ir[child_pat], eng.subj[snbs[soff]])
                 soff += 1
                 child_pos[] += 1
             else
@@ -282,7 +280,7 @@ function _step_assoc!(
         else
             kf = kids[j]
             if kf === nothing
-                kf = _new_frame(cplan, cp, snbs[soff], _nchildren(cplan))
+                kf = _new_frame(child_plan, child_pat, snbs[soff], _nchildren(child_plan))
                 kids[j] = kf
             end
             if step!(eng, kf) === FrameStatus.Produced
