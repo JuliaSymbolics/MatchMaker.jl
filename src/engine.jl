@@ -468,7 +468,14 @@ function _step_call!(
         cplan = eng.pat.plans[cp]
         isleaf = MData.isa_variant(cplan, NodePlan.Literal) ||
             MData.isa_variant(cplan, NodePlan.Slot)
-        if isleaf
+        # a ground subtree needs no frames — one isequal decides it (§5.2)
+        if eng.pat.is_ground[cp]
+            if isequal(eng.pat.ir[cp], eng.subj[cs])
+                child_pos[] += 1
+            else
+                backtrack = true
+            end
+        elseif isleaf
             if _leaf_obligation!(eng, cp, cs)
                 child_pos[] += 1
             else

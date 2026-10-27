@@ -261,6 +261,14 @@ function _step_assoc!(
             else
                 backtrack = true
             end
+        elseif eng.pat.is_ground[cp]
+            # a ground subtree needs no frames — one isequal decides it
+            if isequal(eng.pat.ir[cp], eng.subj[snbs[soff]])
+                soff += 1
+                child_pos[] += 1
+            else
+                backtrack = true
+            end
         else
             kf = kids[j]
             if kf === nothing
