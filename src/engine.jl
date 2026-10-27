@@ -391,9 +391,10 @@ function _step_call!(
         ok || return _call_fail!(eng, mark)
         child_pos[] = 1
     else
-        # re-entry: resume — unwind this frame's bindings and seek the
-        # deepest live child for its next alternative (never re-forward)
-        _unwind!(eng, mark[])
+        # re-entry: resume — seek the deepest live child for its next
+        # alternative. No unwind here: the resumed child unwinds to its
+        # own mark, preserving earlier siblings' binds; this frame's
+        # own binds unwind only at _call_fail!.
         child_pos[] = n
         backtrack = true
     end
