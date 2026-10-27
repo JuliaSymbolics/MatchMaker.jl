@@ -46,11 +46,19 @@ end
 ### Segment obligations (§4.5)
 ###
 
+# Result of trying a single segment capture length, or of advancing a
+# segment position through its allowed lengths.
+@enumx SegResult begin
+    "Bound (or an identical non-linear recheck passed)."
+    Bound
+    "This length fails but a longer capture may succeed."
+    Longer
+    "Position dead: an element predicate or a non-linear recheck failed."
+    Dead
+end
+
 # Try binding segment var `vid` to `len` subject args starting at index
-# `sidx` of `snbs`. Returns:
-#   :ok    — bound (or an identical non-linear recheck passed)
-#   :next  — this length fails but a longer capture may succeed
-#   :fail  — position dead (per-element predicate or non-linear recheck)
+# `sidx` of `snbs`. See `SegResult` for the return contract.
 function _seg_try!(
         eng::MatchEngine, vid::Int32, @nospecialize(op),
         snbs, sidx::Int, len::Int
@@ -58,23 +66,23 @@ function _seg_try!(
     b = eng.binds
     if b.seg_op[vid] !== nothing
         seq = b.seq[vid]
-        length(seq) == len || return :fail
+        length(seq) == len || return SegResult.Dead
         for i in 1:len
-            seq[i] == snbs[sidx + i - 1] || return :fail
+            seq[i] == snbs[sidx + i - 1] || return SegResult.Dead
         end
-        return :ok
+        return SegResult.Bound
     end
     (pred, seqpred) = _seg_preds(eng, vid)
     if pred !== nothing
         for i in 1:len
-            pred(eng.subj[snbs[sidx + i - 1]])::Bool || return :fail
+            pred(eng.subj[snbs[sidx + i - 1]])::Bool || return SegResult.Dead
         end
     end
     if seqpred !== nothing
         buf = BasicSymbolic{SymReal}[
             eng.subj[snbs[sidx + i - 1]] for i in 1:len
         ]
-        seqpred(buf)::Bool || return :next
+        seqpred(buf)::Bool || return SegResult.Longer
     end
     seq = b.seq[vid]
     empty!(seq)
@@ -85,13 +93,14 @@ function _seg_try!(
     push!(eng.trail, vid)
     if !_ready_constraints!(eng, vid)
         _unwind!(eng, length(eng.trail) - 1)
-        return :next
+        return SegResult.Longer
     end
-    return :ok
+    return SegResult.Bound
 end
 
 # Try lengths `first_len` upward at a segment position; `amax` is
-# `min(spec.max, avail - required_after)`. Returns :ok or :fail.
+# `min(spec.max, avail - required_after)`. Returns `SegResult.Bound` or
+# `SegResult.Dead`.
 # A var bound elsewhere has exactly one viable length — its bound run.
 function _seg_advance!(
         eng::MatchEngine, vid::Int32, @nospecialize(op), snbs,
@@ -101,17 +110,16 @@ function _seg_advance!(
     amax = min(_seg_max(eng, vid), navail - min_tail_next)
     if eng.binds.seg_op[vid] !== nothing
         len = length(eng.binds.seq[vid])
-        len <= amax || return :fail
+        len <= amax || return SegResult.Dead
         return _seg_try!(eng, vid, op, snbs, sidx, len)
     end
     len = first_len
     while len <= amax
         st = _seg_try!(eng, vid, op, snbs, sidx, len)
-        st === :ok && return :ok
-        st === :fail && return :fail
+        st !== SegResult.Longer && return st
         len += 1
     end
-    return :fail
+    return SegResult.Dead
 end
 
 ###
@@ -212,7 +220,7 @@ function _step_assoc!(
                         st = _seg_advance!(
                             eng, vid, op, snbs, sidx, min_tail[j + 1], capture_len[j] + 1
                         )
-                        if st === :ok
+                        if st === SegResult.Bound
                             owns_bind[j] = true
                             capture_len[j] = length(eng.binds.seq[vid])
                             soff = arg_start[j] + capture_len[j]
@@ -246,7 +254,7 @@ function _step_assoc!(
             st = _seg_advance!(
                 eng, vid, op, snbs, soff, min_tail[j + 1], _seg_min(eng, vid)
             )
-            if st === :ok
+            if st === SegResult.Bound
                 owns_bind[j] = !was_bound
                 capture_len[j] = length(eng.binds.seq[vid])
                 soff += capture_len[j]
