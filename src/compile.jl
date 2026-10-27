@@ -280,7 +280,10 @@ function _plan_call!(
             is_ground[i] &= is_ground[c]
         end
         is_ground[i] &= (iszero(head) || is_ground[head])
-        return if assoc
+        # Free-head calls with segment children route to AssocCall: the
+        # Assoc frame implements the contiguous-run capture both cases
+        # share (§4.5). Identity coercion for A-heads is milestone 7.
+        return if assoc || any(_is_segment_term ∘ Base.Fix1(getindex, ir), children)
             NodePlan.AssocCall(op, head, children)
         else
             NodePlan.Call(op, head, children)
@@ -349,37 +352,53 @@ function _merge_specs(
     return specs
 end
 
-# `min` bounds under fixed-arity free heads: the sum of segment mins plus the
-# non-segment child count cannot exceed the parent's argument count (§5.2,
-# "where provable").
+# The argument count a fixed-domain `FnType` head always takes:
+# `FnType{Tuple{...}, ...}` → the Tuple's length; `Vararg` domains and
+# non-symbolic ops are unbounded (→ `nothing`).
+function _domain_arity(@nospecialize(op))
+    op isa BasicSymbolic{SymReal} || return nothing
+    st = symtype(op)
+    st isa DataType && st <: FnType || return nothing
+    dom = st.parameters[1]
+    dom isa DataType && dom <: Tuple || return nothing
+    any(p -> !(p isa Union{DataType, TypeVar}), dom.parameters) && return nothing
+    return length(dom.parameters)
+end
+
+# `min` bounds under fixed-arity heads (§5.2, "where provable"): the sum
+# of segment mins plus the non-segment child count cannot exceed the
+# head's domain arity — such a pattern can never match, so error loudly.
 function _check_fixed_arity!(
         plans::Vector{NodePlanT}, ir::IRStructure{SymReal},
         var_of::IdDict{BasicSymbolic{SymReal}, Int32},
         specs::Vector{VarSpecT}
     )
     for i in Int32(1):Int32(length(plans))
-        @match plans[i] begin
-            NodePlan.Call(; children) => begin
-                min_req = 0
-                for c in children
-                    cex = ir[c]
-                    if _is_segment_term(cex)
-                        min_req += @match specs[var_of[varsym(cex)]] begin
-                            VarSpec.Segment(; min) => min
-                            _ => 0
-                        end
-                    else
-                        min_req += 1
-                    end
-                end
-                min_req > length(children) && throw(
-                    ArgumentError(
-                        lazy"segment min bounds exceed the fixed arity $(length(children)) of node $i"
-                    )
-                )
-            end
-            _ => nothing
+        (op, children) = @match plans[i] begin
+            NodePlan.Call(; op, children) => (op, children)
+            NodePlan.AssocCall(; op, children) => (op, children)
+            _ => (nothing, nothing)
         end
+        children === nothing && continue
+        bound = _domain_arity(op)
+        bound === nothing && continue
+        min_req = 0
+        for c in children
+            cex = ir[c]
+            if _is_segment_term(cex)
+                min_req += @match specs[var_of[varsym(cex)]] begin
+                    VarSpec.Segment(; min) => min
+                    _ => 0
+                end
+            else
+                min_req += 1
+            end
+        end
+        min_req > bound && throw(
+            ArgumentError(
+                lazy"segment min bounds exceed the fixed arity $bound of node $i"
+            )
+        )
     end
     return nothing
 end
