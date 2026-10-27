@@ -43,14 +43,23 @@ argument position currently being enumerated (`0` = uninitialized),
 since literal/slot obligations are applied inline by the parent and never
 get frames.
 
-`Assoc(pat_node, subj_node, child_pos, trail_mark, kids, marks, off, cur, suf)`
-— the frame for a `NodePlan.AssocCall` (free or A head, contiguous-run
-segments): `marks[i]` the trail length before position `i`'s first bind
-(the unwind target when position `i` is retried), `off[i]` the subject
-argument offset where position `i` begins, `cur[i]` the current captured
-length for a segment position (`0` = not currently bound), and `suf[i]`
-the minimum subject-arg count positions `i..n` require (computed once at
-init; `suf[n+1]` is the zero sentinel).
+`Assoc(pat_node, subj_node, child_pos, trail_mark, kids, bind_marks,
+arg_start, capture_len, min_tail, owns_binds_bind)` — the frame for a
+`NodePlan.AssocCall`: an argument list where each position either consumes
+exactly one subject argument or is a `segment` that consumes a contiguous
+run. `child_pos` is the pattern position currently being dispatched;
+`trail_mark` is the trail length when the frame was created — its unwind
+target on failure; `kids` holds live child frames (one per position).
+
+`bind_marks[i]` — the trail length before position `i` bound anything;
+unwinding to it clears position `i`'s bind and every later position's.
+`arg_start[i]` — the subject argument offset position `i` begins at.
+`capture_len[i]` — the length a segment position currently captures
+(`0` = unbound). `min_tail[i]` — the minimum number of subject args
+positions `i..n` still require (`min_tail[n+1]` is the zero sentinel;
+computed once at init). `owns_bind[i]` — whether position `i` *created*
+its segment var's current bind; a var bound elsewhere can only recheck,
+so it has no alternatives of its own.
 """
 @data mutable MatchFrame begin
     struct Call
@@ -66,11 +75,11 @@ init; `suf[n+1]` is the zero sentinel).
         child_pos::Base.RefValue{Int}
         trail_mark::Base.RefValue{Int}
         kids::Vector{Union{Nothing, MatchFrame.Type}}
-        marks::Vector{Int}
-        off::Vector{Int}
-        cur::Vector{Int}
-        suf::Vector{Int}
-        own::BitVector
+        bind_marks::Vector{Int}
+        arg_start::Vector{Int}
+        capture_len::Vector{Int}
+        min_tail::Vector{Int}
+        owns_bind::BitVector
     end
 end
 const MatchFrameT = MatchFrame.Type
@@ -381,12 +390,12 @@ function step!(eng::MatchEngine, f::MatchFrameT)
         MatchFrame.Call(; pat_node, subj_node, child_pos, trail_mark, kids) =>
             _step_call!(eng, pat_node, subj_node, child_pos, trail_mark, kids)
         MatchFrame.Assoc(;
-            pat_node, subj_node, child_pos, trail_mark, kids, marks, off,
-            cur, suf, own
+            pat_node, subj_node, child_pos, trail_mark, kids, bind_marks,
+            arg_start, capture_len, min_tail, owns_bind
         ) =>
             _step_assoc!(
             eng, pat_node, subj_node, child_pos, trail_mark, kids,
-            marks, off, cur, suf, own
+            bind_marks, arg_start, capture_len, min_tail, owns_bind
         )
     end
 end

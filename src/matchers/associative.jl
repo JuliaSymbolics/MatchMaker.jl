@@ -29,17 +29,17 @@ end
 
 # Minimum subject args positions j..n require: suffix sums of 1 per
 # non-segment position and spec.min per segment position.
-function _assoc_suffix_mins!(
-        eng::MatchEngine, children::SmallV{Int32}, suf::Vector{Int}
+function _assoc_min_tail!(
+        eng::MatchEngine, children::SmallV{Int32}, min_tail::Vector{Int}
     )
-    suf[end] = 0
+    min_tail[end] = 0
     for j in length(children):-1:1
-        suf[j] = suf[j + 1] + @match eng.pat.plans[children[j]] begin
+        min_tail[j] = min_tail[j + 1] + @match eng.pat.plans[children[j]] begin
             NodePlan.Segment(; var_id) => _seg_min(eng, var_id)
             _ => 1
         end
     end
-    return suf
+    return min_tail
 end
 
 ###
@@ -95,10 +95,10 @@ end
 # A var bound elsewhere has exactly one viable length — its bound run.
 function _seg_advance!(
         eng::MatchEngine, vid::Int32, @nospecialize(op), snbs,
-        sidx::Int, suf_next::Int, first_len::Int
+        sidx::Int, min_tail_next::Int, first_len::Int
     )
     navail = length(snbs) - sidx + 1
-    amax = min(_seg_max(eng, vid), navail - suf_next)
+    amax = min(_seg_max(eng, vid), navail - min_tail_next)
     if eng.binds.seg_op[vid] !== nothing
         len = length(eng.binds.seq[vid])
         len <= amax || return :fail
@@ -122,8 +122,8 @@ function _step_assoc!(
         eng::MatchEngine, pat_node::Int32, subj_node::Int32,
         child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
         kids::Vector{Union{Nothing, MatchFrameT}},
-        marks::Vector{Int}, off::Vector{Int}, cur::Vector{Int},
-        suf::Vector{Int}, own::BitVector
+        bind_marks::Vector{Int}, arg_start::Vector{Int}, capture_len::Vector{Int},
+        min_tail::Vector{Int}, owns_bind::BitVector
     )
     plan = eng.pat.plans[pat_node]
     (op, head, children) = @match plan begin
@@ -143,8 +143,8 @@ function _step_assoc!(
     if iszero(child_pos[])
         # init: head/arity lower bound; no identity coercion (milestone 7)
         mark[] = length(eng.trail)
-        _assoc_suffix_mins!(eng, children, suf)
-        ok = iscall(sexpr) && m >= suf[1]
+        _assoc_min_tail!(eng, children, min_tail)
+        ok = iscall(sexpr) && m >= min_tail[1]
         if ok
             sop = operation(sexpr)
             ok = if iszero(head)
@@ -167,11 +167,11 @@ function _step_assoc!(
     end
 
     # subject-arg offset for the current dispatch position: everything
-    # before it consumed `cur[p]` (segments) or 1 arg each
+    # before it consumed `capture_len[p]` (segments) or 1 arg each
     soff = sstart
     for p in 1:(child_pos[] - 1)
         soff += MData.isa_variant(eng.pat.plans[children[p]], NodePlan.Segment) ?
-            cur[p] : 1
+            capture_len[p] : 1
     end
 
     while true
@@ -190,7 +190,7 @@ function _step_assoc!(
                 kf = kids[j]
                 if kf !== nothing
                     if step!(eng, kf) === FrameStatus.Produced
-                        soff = off[j] + 1
+                        soff = arg_start[j] + 1
                         child_pos[] += 1
                         break
                     else
@@ -202,25 +202,25 @@ function _step_assoc!(
                     vid = @match eng.pat.plans[children[j]] begin
                         NodePlan.Segment(; var_id) => var_id
                     end
-                    sidx = off[j]
+                    sidx = arg_start[j]
                     navail = length(snbs) - sidx + 1
-                    amax = min(_seg_max(eng, vid), navail - suf[j + 1])
+                    amax = min(_seg_max(eng, vid), navail - min_tail[j + 1])
                     # a bound-elsewhere segment has no alternatives of
                     # its own — skip; resumable only if it owns the bind
-                    if own[j] && cur[j] + 1 <= amax
-                        _unwind!(eng, marks[j])
+                    if owns_bind[j] && capture_len[j] + 1 <= amax
+                        _unwind!(eng, bind_marks[j])
                         st = _seg_advance!(
-                            eng, vid, op, snbs, sidx, suf[j + 1], cur[j] + 1
+                            eng, vid, op, snbs, sidx, min_tail[j + 1], capture_len[j] + 1
                         )
                         if st === :ok
-                            own[j] = true
-                            cur[j] = length(eng.binds.seq[vid])
-                            soff = off[j] + cur[j]
+                            owns_bind[j] = true
+                            capture_len[j] = length(eng.binds.seq[vid])
+                            soff = arg_start[j] + capture_len[j]
                             child_pos[] += 1
                             break
                         end
                     end
-                    cur[j] = 0
+                    capture_len[j] = 0
                 end
                 child_pos[] -= 1
             end
@@ -229,8 +229,8 @@ function _step_assoc!(
             continue
         end
         j = child_pos[]
-        marks[j] = length(eng.trail)
-        off[j] = soff
+        bind_marks[j] = length(eng.trail)
+        arg_start[j] = soff
         cp = children[j]
         cplan = eng.pat.plans[cp]
         cplan_is_seg = MData.isa_variant(cplan, NodePlan.Segment)
@@ -244,12 +244,12 @@ function _step_assoc!(
             end
             was_bound = eng.binds.seg_op[vid] !== nothing
             st = _seg_advance!(
-                eng, vid, op, snbs, soff, suf[j + 1], _seg_min(eng, vid)
+                eng, vid, op, snbs, soff, min_tail[j + 1], _seg_min(eng, vid)
             )
             if st === :ok
-                own[j] = !was_bound
-                cur[j] = length(eng.binds.seq[vid])
-                soff += cur[j]
+                owns_bind[j] = !was_bound
+                capture_len[j] = length(eng.binds.seq[vid])
+                soff += capture_len[j]
                 child_pos[] += 1
             else
                 backtrack = true
