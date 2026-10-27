@@ -147,6 +147,8 @@ mutable struct MatchEngine
     const var_constrs::Vector{SmallV{Int32}}
     "Reusable arg vector for constraint calls."
     const argbuf::Vector{BasicSymbolic{SymReal}}
+    "Reusable arg vector for segment sequence_predicates."
+    const segbuf::Vector{BasicSymbolic{SymReal}}
     "Whether the (leaf) root obligation has already yielded."
     root_done::Bool
     "Work meter; compare against budget."
@@ -169,6 +171,7 @@ function MatchEngine(
     binds = Bindings(pat.nvars)
     trail = Int32[]
     argbuf = BasicSymbolic{SymReal}[]
+    segbuf = BasicSymbolic{SymReal}[]
 
     econstrs = EngineConstraint[]
     var_constrs = [SmallV{Int32}() for _ in 1:pat.nvars]
@@ -191,7 +194,7 @@ function MatchEngine(
 
     eng = MatchEngine(
         pat, subj, sroot, nothing, binds, trail, econstrs,
-        falses(length(econstrs)), var_constrs, argbuf, false, 0
+        falses(length(econstrs)), var_constrs, argbuf, segbuf, false, 0
     )
 
     # Leaf roots (a bare slot/literal pattern) are applied inline by

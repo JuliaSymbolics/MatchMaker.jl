@@ -79,9 +79,11 @@ function _seg_try!(
         end
     end
     if seqpred !== nothing
-        buf = BasicSymbolic{SymReal}[
-            eng.subj[snbs[sidx + i - 1]] for i in 1:len
-        ]
+        buf = eng.segbuf
+        resize!(buf, len)
+        for i in 1:len
+            buf[i] = eng.subj[snbs[sidx + i - 1]]
+        end
         seqpred(buf)::Bool || return SegResult.Longer
     end
     seq = b.seq[vid]
