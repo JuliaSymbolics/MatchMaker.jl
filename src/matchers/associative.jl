@@ -176,13 +176,11 @@ function _step_assoc!(
         error(lazy"Assoc frame re-entered at child_pos $(child_pos[])")
     end
 
-    # subject-arg offset for the current dispatch position: everything
-    # before it consumed `capture_len[p]` (segments) or 1 arg each
+    # index into `snbs` of the next subject arg to consume. Forward
+    # dispatch only ever starts at position 1 (soff = sstart); every
+    # other entry resumes via the backtrack seek, which sets soff
+    # explicitly before breaking out to the forward loop.
     soff = sstart
-    for p in 1:(child_pos[] - 1)
-        soff += MData.isa_variant(eng.pat.plans[children[p]], NodePlan.Segment) ?
-            capture_len[p] : 1
-    end
 
     while true
         if child_pos[] > n
