@@ -65,12 +65,15 @@ function _seg_try!(
     )
     b = eng.binds
     if b.seg_op[vid] !== nothing
-        # non-linear recheck: compare node indices — populate_ir!
-        # interns by isequal, so equal subexprs share an index
+        # non-linear recheck: the captured run must be identical. The IR
+        # interns by === (weak_definitions can hold isequal-different
+        # nodes), so compare exprs, not node indices.
         seq = b.seq[vid]
         length(seq) == len || return SegResult.Dead
         for i in 1:len
-            seq[i] == snbs[sidx + i - 1] || return SegResult.Dead
+            isequal(
+                eng.subj[seq[i]], eng.subj[snbs[sidx + i - 1]]
+            ) || return SegResult.Dead
         end
         return SegResult.Bound
     end
