@@ -24,6 +24,10 @@ end
     include("unit/segments.jl")
 end
 
+@safetestset "commutative" begin
+    include("unit/commutative.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
