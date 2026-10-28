@@ -223,8 +223,18 @@ end
     $TYPEDSIGNATURES
 
 Build a segment `VarSpec` for the `vars` map of `compile_pattern`.
-`predicate` applies to each captured element, `sequence_predicate` to the
-whole capture. `0 <= min <= max` is enforced.
+`0 <= min <= max` is enforced.
+
+Two predicate roles:
+
+- `predicate` — applied to each captured element. A failing element
+  means *no* capture containing it can succeed, so the matcher stops
+  retrying lengths at that position entirely (a hard prune).
+- `sequence_predicate` — applied to the whole captured `Vector`.
+  Failure only invalidates the current length; the matcher retries
+  with a longer capture, since a longer sequence may satisfy it.
+
+Prefer `predicate` for per-element checks — it prunes strictly more.
 """
 function segmentspec(
         predicate = nothing, sequence_predicate = nothing;

@@ -58,6 +58,17 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   either (a) failure only, or (b) full binding deltas (a `SmallV` of
   `(vid, node)` pairs) — (a) is the cheap sound variant.
 
+- **`_step_*` helpers take every frame field as a separate argument.**
+  Getting unwieldy — consider passing the `MatchFrame` as-is and
+  destructuring inside the helper instead.
+
+- **Segment positions as pseudo-frames?** The seek branch in
+  `_assoc_backtrack` re-derives what a `MatchFrame.Segment` would
+  carry — a `_seg_resume!` helper would unify the "resumable
+  position" protocol without a real frame (the segment's state is
+  parent-mediated: `arg_start`/`min_tail`/`navail` depend on sibling
+  consumption, which only the parent tracks).
+
 - **`step!` currently nests calls.** `step!(eng, kf)` inside
   `_step_call!` recurses one Julia frame per *pattern* depth — bounded
   by pattern size and independent of subject size/sharing, so not a

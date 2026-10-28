@@ -39,7 +39,7 @@ gfn = set_operation_traits(
 
     m3 = compile_pattern(hfn(slot(x), y))         # assoc-only symbolic head
     @match m3.plans[m3.root] begin
-        NodePlan.AssocCall(_, head, children) =>
+        NodePlan.SeqCall(_, head, children) =>
             (@test head != 0 && length(children) == 2)
         _ => @test false
     end

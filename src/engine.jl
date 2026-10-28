@@ -42,6 +42,24 @@ argument position currently being enumerated (`0` = uninitialized),
 `kids` the live child frame per position — `nothing` for leaf positions,
 since literal/slot obligations are applied inline by the parent and never
 get frames.
+
+`Seq(pat_node, subj_node, child_pos, trail_mark, kids, bind_marks,
+arg_start, capture_len, min_tail, owns_bind)` — the frame for a
+`NodePlan.SeqCall`: an argument list where each position either consumes
+exactly one subject argument or is a `segment` that consumes a contiguous
+run. `child_pos` is the pattern position currently being dispatched;
+`trail_mark` is the trail length when the frame was created — its unwind
+target on failure; `kids` holds live child frames (one per position).
+
+`bind_marks[i]` — the trail length before position `i` bound anything;
+unwinding to it clears position `i`'s bind and every later position's.
+`arg_start[i]` — the subject argument offset position `i` begins at.
+`capture_len[i]` — the length a segment position currently captures
+(`0` = unbound). `min_tail[i]` — the minimum number of subject args
+positions `i..n` still require (`min_tail[n+1]` is the zero sentinel;
+computed once at init). `owns_bind[i]` — whether position `i` *created*
+its segment var's current bind; a var bound elsewhere can only recheck,
+so it has no alternatives of its own.
 """
 @data mutable MatchFrame begin
     struct Call
@@ -50,6 +68,18 @@ get frames.
         child_pos::Base.RefValue{Int}
         trail_mark::Base.RefValue{Int}
         kids::Vector{Union{Nothing, MatchFrame.Type}}
+    end
+    struct Seq
+        pat_node::Int32
+        subj_node::Int32
+        child_pos::Base.RefValue{Int}
+        trail_mark::Base.RefValue{Int}
+        kids::Vector{Union{Nothing, MatchFrame.Type}}
+        bind_marks::Vector{Int}
+        arg_start::Vector{Int}
+        capture_len::Vector{Int}
+        min_tail::Vector{Int}
+        owns_bind::BitVector
     end
 end
 const MatchFrameT = MatchFrame.Type
@@ -60,7 +90,7 @@ const MatchFrameT = MatchFrame.Type
 Build the frame for the non-leaf plan at `pat_node` against subject node
 `subj_node`. `nchildren` sizes the per-position `kids` storage (children
 count of `plan`'s argument list). Leaf plans never get frames; `CommCall`/
-`AssocCall`/`ACCall` plans land in later milestones.
+`SeqCall`/`ACCall` plans land in later milestones.
 """
 function _new_frame(
         plan::NodePlanT, pat_node::Int32, subj_node::Int32,
@@ -70,6 +100,13 @@ function _new_frame(
         NodePlan.Call(; op, head) => MatchFrame.Call(
             pat_node, subj_node, Ref(0), Ref(0),
             fill!(Vector{Union{Nothing, MatchFrameT}}(undef, nchildren), nothing)
+        )
+        NodePlan.SeqCall(; op, head) => MatchFrame.Seq(
+            pat_node, subj_node, Ref(0), Ref(0),
+            fill!(Vector{Union{Nothing, MatchFrameT}}(undef, nchildren), nothing),
+            zeros(Int, nchildren), zeros(Int, nchildren),
+            zeros(Int, nchildren), zeros(Int, nchildren + 1),
+            falses(nchildren)
         )
         _ => error(
             lazy"pattern node $pat_node has an unsupported plan for this milestone"
@@ -110,6 +147,8 @@ mutable struct MatchEngine
     const var_constrs::Vector{SmallV{Int32}}
     "Reusable arg vector for constraint calls."
     const argbuf::Vector{BasicSymbolic{SymReal}}
+    "Reusable arg vector for segment sequence_predicates."
+    const segbuf::Vector{BasicSymbolic{SymReal}}
     "Whether the (leaf) root obligation has already yielded."
     root_done::Bool
     "Work meter; compare against budget."
@@ -132,6 +171,7 @@ function MatchEngine(
     binds = Bindings(pat.nvars)
     trail = Int32[]
     argbuf = BasicSymbolic{SymReal}[]
+    segbuf = BasicSymbolic{SymReal}[]
 
     econstrs = EngineConstraint[]
     var_constrs = [SmallV{Int32}() for _ in 1:pat.nvars]
@@ -154,7 +194,7 @@ function MatchEngine(
 
     eng = MatchEngine(
         pat, subj, sroot, nothing, binds, trail, econstrs,
-        falses(length(econstrs)), var_constrs, argbuf, false, 0
+        falses(length(econstrs)), var_constrs, argbuf, segbuf, false, 0
     )
 
     # Leaf roots (a bare slot/literal pattern) are applied inline by
@@ -171,6 +211,9 @@ end
 function _root_frame(plan::NodePlanT, pat_node::Int32, subj_node::Int32)
     return @match plan begin
         NodePlan.Call(; children) => _new_frame(
+            plan, pat_node, subj_node, length(children)
+        )
+        NodePlan.SeqCall(; children) => _new_frame(
             plan, pat_node, subj_node, length(children)
         )
         _ => _new_frame(plan, pat_node, subj_node, 0)
@@ -209,7 +252,8 @@ function _ready_constraints!(eng::MatchEngine, vid::Int32)
         c = eng.constraints[ci]
         allbound = true
         for v in c.var_ids
-            allbound = is_bound_node(eng.binds, v) || is_bound_extra(eng.binds, v)
+            allbound = is_bound_node(eng.binds, v) ||
+                is_bound_extra(eng.binds, v) || is_bound_seq(eng.binds, v)
             allbound || break
         end
         allbound || continue
@@ -251,7 +295,7 @@ function _seg_value(eng::MatchEngine, vid::Int32)
     elseif isempty(args)
         e = _identity_el(f, symtype(eng.subj[eng.sroot]))
         e !== nothing && return Const{SymReal}(e)
-        return BSImpl.Term{SymReal}(f, args; type = Any)
+        return BSImpl.Term{SymReal}(f, args; type = promote_symtype(f))
     else
         return BSImpl.Term{SymReal}(
             f, args; type = promote_symtype(f, map(symtype, args)...)
@@ -348,6 +392,14 @@ function step!(eng::MatchEngine, f::MatchFrameT)
     return @match f begin
         MatchFrame.Call(; pat_node, subj_node, child_pos, trail_mark, kids) =>
             _step_call!(eng, pat_node, subj_node, child_pos, trail_mark, kids)
+        MatchFrame.Seq(;
+            pat_node, subj_node, child_pos, trail_mark, kids, bind_marks,
+            arg_start, capture_len, min_tail, owns_bind
+        ) =>
+            _step_seq!(
+            eng, pat_node, subj_node, child_pos, trail_mark, kids,
+            bind_marks, arg_start, capture_len, min_tail, owns_bind
+        )
     end
 end
 
@@ -391,9 +443,10 @@ function _step_call!(
         ok || return _call_fail!(eng, mark)
         child_pos[] = 1
     else
-        # re-entry: resume — unwind this frame's bindings and seek the
-        # deepest live child for its next alternative (never re-forward)
-        _unwind!(eng, mark[])
+        # re-entry: resume — seek the deepest live child for its next
+        # alternative. No unwind here: the resumed child unwinds to its
+        # own mark, preserving earlier siblings' binds; this frame's
+        # own binds unwind only at _call_fail!.
         child_pos[] = n
         backtrack = true
     end
@@ -427,7 +480,14 @@ function _step_call!(
         cplan = eng.pat.plans[cp]
         isleaf = MData.isa_variant(cplan, NodePlan.Literal) ||
             MData.isa_variant(cplan, NodePlan.Slot)
-        if isleaf
+        # a ground subtree needs no frames — one isequal decides it (§5.2)
+        if eng.pat.is_ground[cp]
+            if isequal(eng.pat.ir[cp], eng.subj[cs])
+                child_pos[] += 1
+            else
+                backtrack = true
+            end
+        elseif isleaf
             if _leaf_obligation!(eng, cp, cs)
                 child_pos[] += 1
             else
@@ -458,6 +518,7 @@ end
 function _nchildren(plan::NodePlanT)
     return @match plan begin
         NodePlan.Call(; children) => length(children)
+        NodePlan.SeqCall(; children) => length(children)
         _ => 0
     end
 end

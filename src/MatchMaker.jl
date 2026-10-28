@@ -14,7 +14,7 @@ using SymbolicUtils
 using SymbolicUtils: BasicSymbolic, Sym, Term, Const, SymReal,
     issym, isconst, symtype, shape, BSImpl, ArgsT,
     hasmetadata, getmetadata, setmetadata, is_function_symbolic, SmallV,
-    replace_node!, get_canonical_expr!
+    replace_node!, get_canonical_expr!, promote_symtype, FnType
 using Moshi.Data: @data
 import Moshi.Data as MData
 using Moshi.Match: @match
@@ -33,7 +33,6 @@ include("engine.jl")
 include("matchers/primitives.jl")
 include("matchers/seq.jl")
 include("matchers/commutative.jl")
-include("matchers/associative.jl")
 include("matchers/ac.jl")
 include("instantiate.jl")
 include("api.jl")

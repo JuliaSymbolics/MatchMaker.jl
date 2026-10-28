@@ -20,6 +20,10 @@ end
     include("unit/engine.jl")
 end
 
+@safetestset "segments" begin
+    include("unit/segments.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
