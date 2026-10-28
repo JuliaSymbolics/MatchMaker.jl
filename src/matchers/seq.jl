@@ -105,6 +105,33 @@ function _seg_try!(
     return SegResult.Bound
 end
 
+# Resume the segment at position `j`: unwind to its mark and rebind at
+# the next allowed length. Returns the new bound length, or `nothing`
+# when the position has no alternatives left — either it doesn't own the
+# var's bind (bound elsewhere: rechecks only), it's at `amax`, or the
+# rebind attempt fails.
+function _seq_seg_resume!(
+        eng::MatchEngine, @nospecialize(op), snbs, vid::Int32, j::Int,
+        bind_marks::Vector{Int}, arg_start::Vector{Int},
+        capture_len::Vector{Int}, min_tail::Vector{Int}, owns_bind::BitVector
+    )
+    sidx = arg_start[j]
+    navail = length(snbs) - sidx + 1
+    amax = min(_seg_max(eng, vid), navail - min_tail[j + 1])
+    owns_bind[j] && capture_len[j] + 1 <= amax || return nothing
+    _unwind!(eng, bind_marks[j])
+    st = _seg_advance!(
+        eng, vid, op, snbs, sidx, min_tail[j + 1], capture_len[j] + 1
+    )
+    if st !== SegResult.Bound
+        capture_len[j] = 0
+        return nothing
+    end
+    owns_bind[j] = true
+    capture_len[j] = length(eng.binds.seq[vid])
+    return capture_len[j]
+end
+
 # Try lengths `first_len` upward at a segment position; `amax` is
 # `min(spec.max, avail - required_after)`. Returns `SegResult.Bound` or
 # `SegResult.Dead`.
@@ -235,25 +262,15 @@ function _step_seq!(
                     vid = @match eng.pat.plans[children[j]] begin
                         NodePlan.Segment(; var_id) => var_id
                     end
-                    sidx = arg_start[j]
-                    navail = length(snbs) - sidx + 1
-                    amax = min(_seg_max(eng, vid), navail - min_tail[j + 1])
-                    # a bound-elsewhere segment has no alternatives of
-                    # its own — skip; resumable only if it owns the bind
-                    if owns_bind[j] && capture_len[j] + 1 <= amax
-                        _unwind!(eng, bind_marks[j])
-                        st = _seg_advance!(
-                            eng, vid, op, snbs, sidx, min_tail[j + 1], capture_len[j] + 1
-                        )
-                        if st === SegResult.Bound
-                            owns_bind[j] = true
-                            capture_len[j] = length(eng.binds.seq[vid])
-                            soff = arg_start[j] + capture_len[j]
-                            child_pos[] += 1
-                            break
-                        end
+                    len = _seq_seg_resume!(
+                        eng, op, snbs, vid, j,
+                        bind_marks, arg_start, capture_len, min_tail, owns_bind
+                    )
+                    if len !== nothing
+                        soff = arg_start[j] + len
+                        child_pos[] += 1
+                        break
                     end
-                    capture_len[j] = 0
                 end
                 child_pos[] -= 1
             end
