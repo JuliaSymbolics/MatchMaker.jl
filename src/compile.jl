@@ -15,8 +15,13 @@ and never re-derives node kind:
 - `Slot(var_id, optional)` — a `slot`/`optional` marker occurrence.
 - `Segment(var_id)` — a `segment` marker occurrence.
 - `Call(op, head, children)` — free head: positional children.
-- `AssocCall(op, head, children)` — associative-not-commutative head:
-  ordered children, contiguous splits.
+- `SeqCall(op, head, children)` — ordered-sequence matching: a contiguous
+  run of subject arguments per `segment` child. Used for two equivalent
+  cases: an
+  associative-not-commutative head, or any free head whose children
+  include a `segment` — a node containing a sequence doesn't have to be
+  associative; associativity only adds identity coercion (§4.6,
+  milestone 7).
 - `CommCall(op, head, fixed, slots, optionals, segments)` —
   commutative-not-associative head: children partitioned by kind.
 - `ACCall(op, head, fixed, slots, optionals, segments)` — AC head:
@@ -40,7 +45,7 @@ symbolic `f`, including head-slots like `slot(f)(x)` per §4.10).
         head::Int32
         children::SmallV{Int32}
     end
-    struct AssocCall
+    struct SeqCall
         op::Any
         head::Int32
         children::SmallV{Int32}
@@ -280,11 +285,11 @@ function _plan_call!(
             is_ground[i] &= is_ground[c]
         end
         is_ground[i] &= (iszero(head) || is_ground[head])
-        # Free-head calls with segment children route to AssocCall: the
-        # Assoc frame implements the contiguous-run capture both cases
+        # Free-head calls with segment children route to SeqCall: the
+        # Seq frame implements the contiguous-run capture both cases
         # share (§4.5). Identity coercion for A-heads is milestone 7.
         return if assoc || any(_is_segment_term ∘ Base.Fix1(getindex, ir), children)
-            NodePlan.AssocCall(op, head, children)
+            NodePlan.SeqCall(op, head, children)
         else
             NodePlan.Call(op, head, children)
         end
@@ -378,7 +383,7 @@ function _check_fixed_arity!(
     for i in Int32(1):Int32(length(plans))
         (op, children) = @match plans[i] begin
             NodePlan.Call(; op, children) => (op, children)
-            NodePlan.AssocCall(; op, children) => (op, children)
+            NodePlan.SeqCall(; op, children) => (op, children)
             _ => (nothing, nothing)
         end
         children === nothing && continue

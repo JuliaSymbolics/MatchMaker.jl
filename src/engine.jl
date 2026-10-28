@@ -43,9 +43,9 @@ argument position currently being enumerated (`0` = uninitialized),
 since literal/slot obligations are applied inline by the parent and never
 get frames.
 
-`Assoc(pat_node, subj_node, child_pos, trail_mark, kids, bind_marks,
-arg_start, capture_len, min_tail, owns_binds_bind)` — the frame for a
-`NodePlan.AssocCall`: an argument list where each position either consumes
+`Seq(pat_node, subj_node, child_pos, trail_mark, kids, bind_marks,
+arg_start, capture_len, min_tail, owns_bind)` — the frame for a
+`NodePlan.SeqCall`: an argument list where each position either consumes
 exactly one subject argument or is a `segment` that consumes a contiguous
 run. `child_pos` is the pattern position currently being dispatched;
 `trail_mark` is the trail length when the frame was created — its unwind
@@ -69,7 +69,7 @@ so it has no alternatives of its own.
         trail_mark::Base.RefValue{Int}
         kids::Vector{Union{Nothing, MatchFrame.Type}}
     end
-    struct Assoc
+    struct Seq
         pat_node::Int32
         subj_node::Int32
         child_pos::Base.RefValue{Int}
@@ -90,7 +90,7 @@ const MatchFrameT = MatchFrame.Type
 Build the frame for the non-leaf plan at `pat_node` against subject node
 `subj_node`. `nchildren` sizes the per-position `kids` storage (children
 count of `plan`'s argument list). Leaf plans never get frames; `CommCall`/
-`AssocCall`/`ACCall` plans land in later milestones.
+`SeqCall`/`ACCall` plans land in later milestones.
 """
 function _new_frame(
         plan::NodePlanT, pat_node::Int32, subj_node::Int32,
@@ -101,7 +101,7 @@ function _new_frame(
             pat_node, subj_node, Ref(0), Ref(0),
             fill!(Vector{Union{Nothing, MatchFrameT}}(undef, nchildren), nothing)
         )
-        NodePlan.AssocCall(; op, head) => MatchFrame.Assoc(
+        NodePlan.SeqCall(; op, head) => MatchFrame.Seq(
             pat_node, subj_node, Ref(0), Ref(0),
             fill!(Vector{Union{Nothing, MatchFrameT}}(undef, nchildren), nothing),
             zeros(Int, nchildren), zeros(Int, nchildren),
@@ -213,7 +213,7 @@ function _root_frame(plan::NodePlanT, pat_node::Int32, subj_node::Int32)
         NodePlan.Call(; children) => _new_frame(
             plan, pat_node, subj_node, length(children)
         )
-        NodePlan.AssocCall(; children) => _new_frame(
+        NodePlan.SeqCall(; children) => _new_frame(
             plan, pat_node, subj_node, length(children)
         )
         _ => _new_frame(plan, pat_node, subj_node, 0)
@@ -392,11 +392,11 @@ function step!(eng::MatchEngine, f::MatchFrameT)
     return @match f begin
         MatchFrame.Call(; pat_node, subj_node, child_pos, trail_mark, kids) =>
             _step_call!(eng, pat_node, subj_node, child_pos, trail_mark, kids)
-        MatchFrame.Assoc(;
+        MatchFrame.Seq(;
             pat_node, subj_node, child_pos, trail_mark, kids, bind_marks,
             arg_start, capture_len, min_tail, owns_bind
         ) =>
-            _step_assoc!(
+            _step_seq!(
             eng, pat_node, subj_node, child_pos, trail_mark, kids,
             bind_marks, arg_start, capture_len, min_tail, owns_bind
         )
@@ -518,7 +518,7 @@ end
 function _nchildren(plan::NodePlanT)
     return @match plan begin
         NodePlan.Call(; children) => length(children)
-        NodePlan.AssocCall(; children) => length(children)
+        NodePlan.SeqCall(; children) => length(children)
         _ => 0
     end
 end

@@ -484,7 +484,7 @@ each marker node to `var_of[unwrap_varspec(node)]`.
     Slot(var_id::Int32, optional::Bool)
     Segment(var_id::Int32)
     Call(op, head, children::SmallV{Int32})        # free head: positional
-    AssocCall(op, head, children::SmallV{Int32})   # A-not-C: ordered
+    SeqCall(op, head, children::SmallV{Int32})    # ordered-sequence
     CommCall(op, head, fixed, slots, optionals, segments)  # C-not-A
     ACCall(op, head, fixed, slots, optionals, segments)    # AC
 end
@@ -496,8 +496,12 @@ obligation (`0` when the operation is not symbolic): `IRStructure` prefixes
 a symbolic operation to `outneighbors`, so the head is just another child
 obligation — this is how head-slots (`slot(f)(x)`, §4.10) fall out. Comm/AC
 plans partition children at compile time into `fixed`/`slots`/`optionals`/
-`segments`; `Call` and `AssocCall` keep ordered children (associative
-matching is position-sensitive).
+`segments`; `Call` and `SeqCall` keep ordered children (sequence
+matching is position-sensitive). `SeqCall` is emitted for two
+equivalent cases — an A-not-C head, or any free head whose children
+include a `segment` — because a node containing a sequence doesn't
+have to be associative; associativity only adds identity coercion
+(§4.6).
 
 `is_ground` precomputed bottom-up: `is_ground[n] = no var in descendants`.
 A ground pattern node matches a subject node iff `isequal` — the engine checks
@@ -632,11 +636,12 @@ subject args in index order; each permutation is an inner `Seq`. (As in
 MatchPy's ordered fall-through for commutative operations,
 `one_to_one.py::_non_commutative_match` `[R5]`.)
 
-**(e) `Assoc`** — pattern arg list is a sequence of fixed elements and
-segments; subject is a fixed-size arg list. Segments consume contiguous runs;
+**(e) `Seq`** — the frame for `SeqCall`: pattern arg list is a
+sequence of fixed elements and segments; subject is a fixed-size arg
+list. Segments consume contiguous runs;
 enumerate compositions of the subject length into (fixed=1 | segment=variable)
 parts honoring min/max, shortest-capture-first. Non-segment positions are
-positional `Seq` obligations. (The segment-splitting machinery is adapted from
+positional `Call` obligations. (The segment-splitting machinery is adapted from
 `one_to_one.py::_build_full_partition`/`_count_seq_vars` `[R5]`.)
 
 **(f) `AC`** — the core algorithm, adapted from MatchPy's commutative matcher
