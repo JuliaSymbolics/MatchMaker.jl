@@ -65,6 +65,8 @@ function _seg_try!(
     )
     b = eng.binds
     if b.seg_op[vid] !== nothing
+        # non-linear recheck: compare node indices — populate_ir!
+        # interns by isequal, so equal subexprs share an index
         seq = b.seq[vid]
         length(seq) == len || return SegResult.Dead
         for i in 1:len
@@ -127,6 +129,26 @@ end
 ###
 ### Assoc frame (§5.5e)
 ###
+
+# The frame is a two-state machine over its child positions:
+#
+#   FORWARD — dispatch position child_pos: record bind_marks[j] and
+#     arg_start[j], then apply the position's obligation. A segment
+#     consumes `capture_len[j]` contiguous subject args starting at
+#     spec.min; every other position consumes exactly one. Success
+#     advances child_pos; reaching child_pos = n+1 produces an
+#     alternative *iff* every subject arg was consumed — otherwise it
+#     falls through to BACKTRACK.
+#
+#   BACKTRACK — entered on any dispatch failure or on re-entry after a
+#     Produced: seek the deepest position with remaining alternatives
+#     (a live kid frame, or a segment that owns its bind with one more
+#     allowed length), resume it, and continue FORWARD. Nothing
+#     resumable → unwind to the frame's mark and return Failed.
+#
+# `step!` is called in exactly two states: `child_pos == 0` (init: check
+# head and arity lower bound, then FORWARD) and `child_pos > n`
+# (a previous Produced — seek the next alternative).
 
 function _step_assoc!(
         eng::MatchEngine, pat_node::Int32, subj_node::Int32,

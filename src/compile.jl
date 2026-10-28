@@ -353,8 +353,10 @@ function _merge_specs(
 end
 
 # The argument count a fixed-domain `FnType` head always takes:
-# `FnType{Tuple{...}, ...}` → the Tuple's length; `Vararg` domains and
-# non-symbolic ops are unbounded (→ `nothing`).
+# `FnType{Tuple{...}, ...}` → the Tuple's length. Unbounded cases
+# return `nothing`: non-symbolic ops, non-`FnType` heads, and domain
+# Tuples containing a `Vararg` — a `Vararg` parameter is a `UnionAll`,
+# not a `DataType`/`TypeVar`, so the parameter check rejects it.
 function _domain_arity(@nospecialize(op))
     op isa BasicSymbolic{SymReal} || return nothing
     st = symtype(op)
