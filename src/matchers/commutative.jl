@@ -144,28 +144,8 @@ function _comm_seg_first!(
     for t in 1:lo
         push!(sel, pool[t])
     end
-    (pred, seqpred) = _seg_preds(eng, vid)
     while true
-        if pred !== nothing
-            elok = true
-            for i in sel
-                pred(eng.subj[snbs[sstart + i - 1]])::Bool ||
-                    (elok = false; break)
-            end
-            # a failing element can never be captured — position dead
-            elok || return false
-        end
-        sok = if seqpred === nothing
-            true
-        else
-            buf = eng.segbuf
-            resize!(buf, length(sel))
-            for (t, i) in enumerate(sel)
-                buf[t] = eng.subj[snbs[sstart + i - 1]]
-            end
-            seqpred(buf)::Bool
-        end
-        if sok
+        if _comm_sel_ok(eng, vid, snbs, sstart, sel)
             st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel)
             if st === SegResult.Bound
                 for i in sel
@@ -175,8 +155,9 @@ function _comm_seg_first!(
                 return true
             end
         end
-        # next combination at this size, then grow toward hi
-        while !_next_combo!(sel, pool)
+        # advance to the next combination; at the last combo of a size,
+        # grow to the next size (the grown selection is tried next pass)
+        if !_next_combo!(sel, pool)
             length(sel) == hi && return false
             resize!(sel, length(sel) + 1)
             for t in 1:length(sel)
@@ -185,6 +166,29 @@ function _comm_seg_first!(
         end
     end
     return
+end
+
+# Does the selection `sel` satisfy vid's element and sequence
+# predicates? An element-predicate failure only kills this selection —
+# other combinations may exclude the failing element.
+function _comm_sel_ok(
+        eng::MatchEngine, vid::Int32, snbs, sstart::Int, sel::SmallV{Int32}
+    )
+    (pred, seqpred) = _seg_preds(eng, vid)
+    if pred !== nothing
+        for i in sel
+            pred(eng.subj[snbs[sstart + i - 1]])::Bool || return false
+        end
+    end
+    if seqpred !== nothing
+        buf = eng.segbuf
+        resize!(buf, length(sel))
+        for (t, i) in enumerate(sel)
+            buf[t] = eng.subj[snbs[sstart + i - 1]]
+        end
+        seqpred(buf)::Bool || return false
+    end
+    return true
 end
 
 # Resume a segment position: free its previous capture, then take the
@@ -204,7 +208,6 @@ function _comm_seg_resume!(
         used[i] = false
     end
     hi = min(_seg_max(eng, vid), length(pool) - min_tail[j + 1])
-    (pred, seqpred) = _seg_preds(eng, vid)
     while true
         if !_next_combo!(sel, pool)
             length(sel) == hi && return nothing
@@ -213,26 +216,7 @@ function _comm_seg_resume!(
                 sel[t] = pool[t]
             end
         end
-        if pred !== nothing
-            elok = true
-            for i in sel
-                pred(eng.subj[snbs[sstart + i - 1]])::Bool ||
-                    (elok = false; break)
-            end
-            # a failing element can never be captured — position dead
-            elok || return nothing
-        end
-        sok = if seqpred === nothing
-            true
-        else
-            buf = eng.segbuf
-            resize!(buf, length(sel))
-            for (t, i) in enumerate(sel)
-                buf[t] = eng.subj[snbs[sstart + i - 1]]
-            end
-            seqpred(buf)::Bool
-        end
-        if sok
+        if _comm_sel_ok(eng, vid, snbs, sstart, sel)
             _unwind!(eng, bind_marks[j])
             st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel)
             if st === SegResult.Bound
@@ -336,7 +320,7 @@ function _step_comm!(
                             used, scan, assigned, kids
                         )
                     end
-                    produced && begin
+                    if produced
                         child_pos[] += 1
                         break
                     end
