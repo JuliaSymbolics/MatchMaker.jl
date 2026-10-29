@@ -58,6 +58,21 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   either (a) failure only, or (b) full binding deltas (a `SmallV` of
   `(vid, node)` pairs) — (a) is the cheap sound variant.
 
+- **`_new_frame` allocates per dispatch.** Every call allocates a `kids`
+  vector (plus ~10 vectors for `Comm`) per (pattern-node, subject-node)
+  pairing; dropped `kids[j]` frames get re-created on every re-dispatch.
+  Explore a frame pool (reuse exhausted frames rather than dropping to
+  `nothing`) or resetting frames in place — a pooled frame can't serve
+  two live positions, but kid slots could keep their frame and `reset!`
+  it on re-dispatch instead of allocating fresh.
+
+- **Abstract the FORWARD/BACKTRACK skeleton.** `_step_call!`,
+  `_step_seq!`, `_step_comm!` share the same state machine (init →
+  forward-dispatch → seek-deepest-resumable → fail-at-0). Could be
+  unified behind a per-position interface (`first_alt!`/`resume!`
+  returning a status, position kind dispatch inside the loop) — the
+  seek would just call `resume!` on each position uniformly.
+
 - **`_step_*` helpers take every frame field as a separate argument.**
   Getting unwieldy — consider passing the `MatchFrame` as-is and
   destructuring inside the helper instead.

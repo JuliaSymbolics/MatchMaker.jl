@@ -81,6 +81,31 @@ so it has no alternatives of its own.
         min_tail::Vector{Int}
         owns_bind::BitVector
     end
+    struct Comm
+        pat_node::Int32
+        subj_node::Int32
+        child_pos::Base.RefValue{Int}
+        trail_mark::Base.RefValue{Int}
+        "Pattern children in dispatch order: fixed, slots, optionals, segments."
+        order::Vector{Int32}
+        kids::Vector{Union{Nothing, MatchFrame.Type}}
+        "Trail mark before each position's binds."
+        bind_marks::Vector{Int}
+        "Subject arg index assigned to each non-segment position (0=none)."
+        assigned::Vector{Int32}
+        "Next candidate arg index to try per position."
+        scan::Vector{Int32}
+        "Which subject args are consumed."
+        used::BitVector
+        "Selected arg indices per segment position."
+        seg_sel::Vector{SmallV{Int32}}
+        "Available arg pool recorded per segment position."
+        seg_pool::Vector{Vector{Int32}}
+        "Suffix minimum args required from each position onward."
+        min_tail::Vector{Int}
+        "Whether a segment position created its var's bind."
+        owns_bind::BitVector
+    end
 end
 const MatchFrameT = MatchFrame.Type
 
@@ -108,6 +133,19 @@ function _new_frame(
             zeros(Int, nchildren), zeros(Int, nchildren + 1),
             falses(nchildren)
         )
+        NodePlan.CommCall(; fixed, slots, optionals, segments) => begin
+            order = Int32[]
+            append!(order, fixed, slots, optionals, segments)
+            np = length(order)
+            MatchFrame.Comm(
+                pat_node, subj_node, Ref(0), Ref(0), order,
+                fill!(Vector{Union{Nothing, MatchFrameT}}(undef, np), nothing),
+                zeros(Int, np), zeros(Int32, np), ones(Int32, np),
+                BitVector(), [SmallV{Int32}() for _ in 1:np],
+                Vector{Int32}[Int32[] for _ in 1:np],
+                zeros(Int, np + 1), falses(np)
+            )
+        end
         _ => error(
             lazy"pattern node $pat_node has an unsupported plan for this milestone"
         )
@@ -215,6 +253,10 @@ function _root_frame(plan::NodePlanT, pat_node::Int32, subj_node::Int32)
         )
         NodePlan.SeqCall(; children) => _new_frame(
             plan, pat_node, subj_node, length(children)
+        )
+        NodePlan.CommCall(; fixed, slots, optionals, segments) => _new_frame(
+            plan, pat_node, subj_node,
+            length(fixed) + length(slots) + length(optionals) + length(segments)
         )
         _ => _new_frame(plan, pat_node, subj_node, 0)
     end
@@ -400,6 +442,16 @@ function step!(eng::MatchEngine, f::MatchFrameT)
             eng, pat_node, subj_node, child_pos, trail_mark, kids,
             bind_marks, arg_start, capture_len, min_tail, owns_bind
         )
+        MatchFrame.Comm(;
+            pat_node, subj_node, child_pos, trail_mark, order, kids,
+            bind_marks, assigned, scan, used, seg_sel, seg_pool, min_tail,
+            owns_bind
+        ) =>
+            _step_comm!(
+            eng, pat_node, subj_node, child_pos, trail_mark, order,
+            kids, bind_marks, assigned, scan, used, seg_sel, seg_pool,
+            min_tail, owns_bind
+        )
     end
 end
 
@@ -519,6 +571,8 @@ function _nchildren(plan::NodePlanT)
     return @match plan begin
         NodePlan.Call(; children) => length(children)
         NodePlan.SeqCall(; children) => length(children)
+        NodePlan.CommCall(; fixed, slots, optionals, segments) =>
+            length(fixed) + length(slots) + length(optionals) + length(segments)
         _ => 0
     end
 end
