@@ -29,6 +29,19 @@ end
 
 # Minimum subject args positions j..n require: suffix sums of 1 per
 # non-segment position and spec.min per segment position.
+function _is_opt_pos(eng::MatchEngine, child_pat::Int32)
+    return @match eng.pat.plans[child_pat] begin
+        NodePlan.Slot(; optional) => optional
+        _ => false
+    end
+end
+
+function _slot_vid(eng::MatchEngine, child_pat::Int32)
+    return @match eng.pat.plans[child_pat] begin
+        NodePlan.Slot(; var_id) => var_id
+    end
+end
+
 function _seq_min_tail!(
         eng::MatchEngine, children::SmallV{Int32}, min_tail::Vector{Int}
     )
@@ -36,6 +49,7 @@ function _seq_min_tail!(
     for j in length(children):-1:1
         min_tail[j] = min_tail[j + 1] + @match eng.pat.plans[children[j]] begin
             NodePlan.Segment(; var_id) => _seg_min(eng, var_id)
+            NodePlan.Slot(; optional) => optional ? 0 : 1
             _ => 1
         end
     end
@@ -160,6 +174,103 @@ end
 ### Seq frame (§5.5e)
 ###
 
+# Flatten nested same-op calls for an associative head: `f(a, f(b, c))`
+# under A is `f(a, b, c)`. Returns the flattened node-id vector, or
+# `nothing` when no arg nests `op` (the caller keeps `snbs` — the common
+# case, since canonical `Add`/`Mul` args are flat by construction).
+function _flat_args(
+        eng::MatchEngine, @nospecialize(op), snbs, sstart::Int
+    )
+    flat = true
+    for i in sstart:length(snbs)
+        e = eng.subj[snbs[i]]
+        if iscall(e) && operation(e) === op
+            flat = false
+            break
+        end
+    end
+    flat && return nothing
+    args = Int32[]
+    for i in sstart:length(snbs)
+        _push_flat!(eng, op, snbs[i], args)
+    end
+    return args
+end
+
+function _push_flat!(eng::MatchEngine, @nospecialize(op), node::Int32, args)
+    e = eng.subj[node]
+    if iscall(e) && operation(e) === op
+        nbs = Graphs.outneighbors(eng.subj.dependency_graph, node)
+        ss = @match e begin
+            BSImpl.Term(; f) => f isa BasicSymbolic{SymReal} ? 2 : 1
+            _ => 1
+        end
+        for k in ss:length(nbs)
+            _push_flat!(eng, op, nbs[k], args)
+        end
+    else
+        push!(args, node)
+    end
+    return args
+end
+
+# Bind `vid` to its spec's default (§4.7). A var bound elsewhere checks
+# the bound value against the default; a free var binds `extra` (the
+# default may be a literal — not a subject node).
+function _opt_default!(eng::MatchEngine, vid::Int32, spec::VarSpecT)
+    dflt = @match spec begin
+        VarSpec.Slot(; default) => default
+        _ => nothing
+    end
+    b = eng.binds
+    if is_bound_extra(b, vid)
+        return isequal(b.extra[vid], dflt)
+    end
+    if is_bound_node(b, vid)
+        return isequal(eng.subj[b.node[vid]], dflt)
+    end
+    b.extra[vid] = dflt
+    push!(eng.trail, vid)
+    if !_ready_constraints!(eng, vid)
+        _unwind!(eng, length(eng.trail) - 1)
+        return false
+    end
+    return true
+end
+
+# Compute the subject argument view for this obligation: `(sargs,
+# sstart)`, or `nothing` when the subject can't satisfy the head. Under
+# an A head, nested same-op calls are flattened (§4.5) and a non-f-call
+# subject coerces to `[subject]` when the head declares an identity
+# (§4.6). Applies the head obligation on success.
+function _seq_args(
+        eng::MatchEngine, @nospecialize(op), head::Int32, subj_node::Int32
+    )
+    snbs = Graphs.outneighbors(eng.subj.dependency_graph, subj_node)
+    sexpr = eng.subj[subj_node]
+    sstart = @match sexpr begin
+        BSImpl.Term(; f) => f isa BasicSymbolic{SymReal} ? 2 : 1
+        _ => 1
+    end
+    assoc = _is_associative_head(op, symtype(sexpr))
+    if iscall(sexpr)
+        sop = operation(sexpr)
+        ok = iszero(head) ? (op === sop) :
+            _head_obligation!(eng, head, sop)
+        if ok
+            if assoc
+                flat = _flat_args(eng, op, snbs, sstart)
+                flat === nothing || return (flat, 1)
+            end
+            return (snbs, sstart)
+        end
+    end
+    assoc || return nothing
+    # identity coercion (§4.6): the subject becomes its own only argument
+    _identity_el(op, symtype(sexpr)) === nothing && return nothing
+    return (Int32[subj_node], 1)
+end
+
 # The frame is a two-state machine over its child positions:
 #
 #   FORWARD — dispatch position child_pos: record bind_marks[j] and
@@ -192,30 +303,22 @@ function _step_seq!(
         NodePlan.SeqCall(; op, head, children) => (op, head, children)
         _ => error(lazy"Seq frame got a non-SeqCall plan at node $pat_node")
     end
-    snbs = Graphs.outneighbors(eng.subj.dependency_graph, subj_node)
-    sexpr = eng.subj[subj_node]
-    sstart = @match sexpr begin
-        BSImpl.Term(; f) => f isa BasicSymbolic{SymReal} ? 2 : 1
-        _ => 1
-    end
     n = length(children)
+
+    # subject arg view — recomputed each step: cheap when the subject is
+    # a flat f-call (snbs reused); allocated only for flattened A-subjects
+    # or singleton coercion
+    got = _seq_args(eng, op, head, subj_node)
+    got === nothing && return _call_fail!(eng, mark)
+    (snbs, sstart) = got
     m = length(snbs) - (sstart - 1)   # subject arg count
     backtrack = false
 
     if iszero(child_pos[])
-        # init: head/arity lower bound; no identity coercion (milestone 7)
+        # init: head + arity lower bound; coercion/flattening done above
         mark[] = length(eng.trail)
         _seq_min_tail!(eng, children, min_tail)
-        ok = iscall(sexpr) && m >= min_tail[1]
-        if ok
-            sop = operation(sexpr)
-            ok = if iszero(head)
-                op === sop
-            else
-                _head_obligation!(eng, head, sop)
-            end
-        end
-        ok || return _call_fail!(eng, mark)
+        m >= min_tail[1] || return _call_fail!(eng, mark)
         child_pos[] = 1
     elseif child_pos[] > n
         # re-pushed for the next alternative: seek back — each resumed
@@ -271,6 +374,19 @@ function _step_seq!(
                         child_pos[] += 1
                         break
                     end
+                elseif _is_opt_pos(eng, children[j])
+                    # consume-alternative already used — try the default
+                    if capture_len[j] == 1
+                        vid = _slot_vid(eng, children[j])
+                        _unwind!(eng, bind_marks[j])
+                        if _opt_default!(eng, vid, eng.pat.var_specs[vid])
+                            capture_len[j] = 0
+                            soff = arg_start[j]
+                            child_pos[] += 1
+                            break
+                        end
+                    end
+                    capture_len[j] = 0
                 end
                 child_pos[] -= 1
             end
@@ -284,6 +400,8 @@ function _step_seq!(
         child_pat = children[j]
         child_plan = eng.pat.plans[child_pat]
         is_seg_pos = MData.isa_variant(child_plan, NodePlan.Segment)
+        is_opt_pos = MData.isa_variant(child_plan, NodePlan.Slot) &&
+            _is_opt_pos(eng, child_pat)
         is_leaf_pos = MData.isa_variant(child_plan, NodePlan.Literal) ||
             MData.isa_variant(child_plan, NodePlan.Slot)
         if is_seg_pos
@@ -298,6 +416,20 @@ function _step_seq!(
                 owns_bind[j] = !was_bound
                 capture_len[j] = length(eng.binds.seq[vid])
                 soff += capture_len[j]
+                child_pos[] += 1
+            else
+                backtrack = true
+            end
+        elseif is_opt_pos
+            # §4.7: consume one arg first, then the default alternative
+            vid = _slot_vid(eng, child_pat)
+            if soff <= sstart + m - 1 &&
+                    _leaf_obligation!(eng, child_pat, snbs[soff])
+                capture_len[j] = 1
+                soff += 1
+                child_pos[] += 1
+            elseif _opt_default!(eng, vid, eng.pat.var_specs[vid])
+                capture_len[j] = 0
                 child_pos[] += 1
             else
                 backtrack = true
