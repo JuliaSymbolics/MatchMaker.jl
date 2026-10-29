@@ -57,5 +57,15 @@ let
         # two same-var segments need equal multisets left over
         @test length(matchall(g(segment(s), segment(s)), g(x, y, x, y))) == 2
         @test isempty(matchall(g(segment(s), segment(s)), g(x, y, x, z)))
+        # grown selections aren't skipped: every sub-size fails the
+        # sequence predicate, so the only viable capture needs growth
+        m_len2 = compile_pattern(
+            g(segment(s));
+            vars = Dict(s => segmentspec(nothing, seq -> length(seq) == 2))
+        )
+        @test isequal(
+            only(collect(matches(m_len2, g(x, y)))),
+            MarkersMap(s => g(x, y))
+        )
     end
 end
