@@ -386,6 +386,8 @@ function _check_fixed_arity!(
             NodePlan.SeqCall(; op, children) => (op, children)
             NodePlan.CommCall(; op, fixed, slots, optionals, segments) =>
                 (op, vcat(fixed, slots, optionals, segments))
+            NodePlan.ACCall(; op, fixed, slots, optionals, segments) =>
+                (op, vcat(fixed, slots, optionals, segments))
             _ => (nothing, nothing)
         end
         children === nothing && continue
