@@ -28,6 +28,10 @@ end
     include("unit/commutative.jl")
 end
 
+@safetestset "associative" begin
+    include("unit/associative.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
