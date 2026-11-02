@@ -25,6 +25,13 @@ d = MarkersMap(x => x)
             (segmentspec, Tuple{}),
             (Base.getindex, Tuple{MarkersMap, _BS}),
             (Base.haskey, Tuple{MarkersMap, _BS}),
+            (set_operation_traits, Tuple{_BS}),
+            (compile_pattern, Tuple{_BS}),
+            (match, Tuple{_BS, _BS}),
+            (matchall, Tuple{_BS, _BS}),
+            (matches, Tuple{Matcher, _BS}),
+            (instantiate, Tuple{_BS, MarkersMap}),
+            (MatchMaker._seg_value, Tuple{MatchMaker.MatchEngine, Int32}),
         )
         reports = JET.get_reports(JET.report_call(f, tt; target_modules = (MatchMaker,)))
         @test isempty(reports)
