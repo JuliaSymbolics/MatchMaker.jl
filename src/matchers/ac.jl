@@ -75,6 +75,10 @@ function _step_ac!(
             (op, head, length(fixed) + length(slots))
         _ => error(lazy"AC frame got a non-ACCall plan at node $pat_node")
     end
+    # fresh frames take their trail mark before any obligation runs —
+    # `_seq_args` applies the head obligation, and an early failure must
+    # unwind to *this* frame's entry mark, never past it
+    iszero(child_pos[]) && (mark[] = length(eng.trail))
     got = _seq_args(eng, op, head, subj_node)
     got === nothing && return _call_fail!(eng, mark)
     (snbs, sstart) = got
@@ -83,7 +87,6 @@ function _step_ac!(
     backtrack = false
 
     if iszero(child_pos[])
-        mark[] = length(eng.trail)
         _comm_min_tail!(eng, order, min_tail)
         ok = m >= min_tail[1] && m <= _comm_upper(eng, order)
         ok || return _call_fail!(eng, mark)
