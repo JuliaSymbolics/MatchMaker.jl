@@ -45,16 +45,19 @@ end
 #     sorted by ascending candidate count (most-constrained-first;
 #     deterministic ties by initial position), permuting `order`/`cands`.
 #
-#   FORWARD — assignment positions dispatch via `_assign_next!` over
-#     their candidate list; reaching child_pos = np+1 produces iff every
-#     subject arg was consumed.
+#   FORWARD — assignment positions (order[1:nassign]) dispatch via
+#     `_assign_next!` over their candidate list. Phase 3 positions
+#     (optionals, then segments) dispatch over leftover args: an optional
+#     consumes one leftover arg first, then its spec default
+#     (assigned[j] = -1 marks the default branch); a segment takes a
+#     sub-multiset of what's left via the shared `_comm_seg_*`
+#     combination machinery. Reaching child_pos = np+1 produces iff
+#     every subject arg was consumed.
 #
 #   BACKTRACK — resume the deepest position with alternatives left (a
-#     live kid frame, then the next candidate), unwind to its mark, and
-#     continue FORWARD. Nothing resumable → fail to the frame's mark.
-#
-# Optional and segment positions land in the next sub-branch; for now
-# they make the frame error rather than silently misassign.
+#     live kid frame, the next candidate, the next combination, or the
+#     optional's one-time default), unwind to its mark, and continue
+#     FORWARD. Nothing resumable → fail to the frame's mark.
 
 function _step_ac!(
         eng::MatchEngine, pat_node::Int32, subj_node::Int32,
@@ -72,6 +75,10 @@ function _step_ac!(
             (op, head, length(fixed) + length(slots))
         _ => error(lazy"AC frame got a non-ACCall plan at node $pat_node")
     end
+    # fresh frames take their trail mark before any obligation runs —
+    # `_seq_args` applies the head obligation, and an early failure must
+    # unwind to *this* frame's entry mark, never past it
+    iszero(child_pos[]) && (mark[] = length(eng.trail))
     got = _seq_args(eng, op, head, subj_node)
     got === nothing && return _call_fail!(eng, mark)
     (snbs, sstart) = got
@@ -80,7 +87,6 @@ function _step_ac!(
     backtrack = false
 
     if iszero(child_pos[])
-        mark[] = length(eng.trail)
         _comm_min_tail!(eng, order, min_tail)
         ok = m >= min_tail[1] && m <= _comm_upper(eng, order)
         ok || return _call_fail!(eng, mark)
@@ -119,28 +125,54 @@ function _step_ac!(
         if backtrack
             while child_pos[] >= 1
                 j = child_pos[]
-                if j <= nassign
+                child_pat = order[j]
+                cplan = eng.pat.plans[child_pat]
+                is_seg_pos = MData.isa_variant(cplan, NodePlan.Segment)
+                is_opt_pos = MData.isa_variant(cplan, NodePlan.Slot) &&
+                    _is_opt_pos(eng, child_pat)
+                produced = false
+                if is_seg_pos
+                    vid = @match cplan begin
+                        NodePlan.Segment(; var_id) => var_id
+                    end
+                    len = _comm_seg_resume!(
+                        eng, vid, op, snbs, sstart, j, used,
+                        seg_sel, seg_pool, min_tail, owns_bind, bind_marks
+                    )
+                    produced = len !== nothing
+                elseif j <= nassign || is_opt_pos
+                    # a defaulted optional has no alternatives left
+                    exhausted = is_opt_pos && assigned[j] == -1
                     kf = kids[j]
-                    produced = kf !== nothing &&
-                        step!(eng, kf) === FrameStatus.Produced
-                    if !produced
+                    if !exhausted && kf !== nothing
+                        produced = step!(eng, kf) === FrameStatus.Produced
+                    end
+                    if !produced && !exhausted
                         kids[j] = nothing
-                        if assigned[j] != 0
+                        if assigned[j] > 0
                             used[assigned[j]] = false
                             assigned[j] = 0
                         end
                         _unwind!(eng, bind_marks[j])
                         produced = _assign_next!(
-                            eng, order[j], eng.pat.plans[order[j]], j,
-                            snbs, sstart, cands[j], used, scan, assigned, kids
+                            eng, child_pat, cplan, j, snbs, sstart,
+                            is_opt_pos ? nothing : cands[j],
+                            used, scan, assigned, kids
                         )
-                    end
-                    if produced
-                        child_pos[] += 1
-                        break
+                        if !produced && is_opt_pos
+                            # consume-alternatives exhausted: §4.7 default
+                            vid = _slot_vid(eng, child_pat)
+                            if _opt_default!(eng, vid)
+                                assigned[j] = -1
+                                produced = true
+                            end
+                        end
                     end
                 end
-                # positions past nassign have no resumable state yet
+                if produced
+                    child_pos[] += 1
+                    break
+                end
                 child_pos[] -= 1
             end
             child_pos[] == 0 && return _call_fail!(eng, mark)
@@ -148,19 +180,41 @@ function _step_ac!(
             continue
         end
         j = child_pos[]
-        j > nassign && error(
-            lazy"AC optional/segment positions are unimplemented (ac/segments)"
-        )
         bind_marks[j] = length(eng.trail)
-        scan[j] = 1    # fresh dispatch: retry all remaining candidates
-        if _assign_next!(
-                eng, order[j], eng.pat.plans[order[j]], j,
-                snbs, sstart, cands[j], used, scan, assigned, kids
+        child_pat = order[j]
+        cplan = eng.pat.plans[child_pat]
+        is_seg_pos = MData.isa_variant(cplan, NodePlan.Segment)
+        if j <= nassign
+            scan[j] = 1    # fresh dispatch: retry all remaining candidates
+            produced = _assign_next!(
+                eng, child_pat, cplan, j, snbs, sstart, cands[j],
+                used, scan, assigned, kids
             )
-            child_pos[] += 1
+        elseif is_seg_pos
+            vid = @match cplan begin
+                NodePlan.Segment(; var_id) => var_id
+            end
+            produced = _comm_seg_first!(
+                eng, vid, op, snbs, sstart, j, used,
+                seg_sel, seg_pool, min_tail, owns_bind
+            )
         else
-            backtrack = true
+            # optional (§4.7): consume one leftover arg first, then the
+            # spec default (assigned[j] = -1 marks the default branch)
+            @assert _is_opt_pos(eng, child_pat)
+            vid = _slot_vid(eng, child_pat)
+            scan[j] = 1
+            assigned[j] = 0
+            produced = _assign_next!(
+                eng, child_pat, cplan, j, snbs, sstart, nothing,
+                used, scan, assigned, kids
+            )
+            if !produced && _opt_default!(eng, vid)
+                assigned[j] = -1
+                produced = true
+            end
         end
+        produced ? (child_pos[] += 1) : (backtrack = true)
     end
     return
 end

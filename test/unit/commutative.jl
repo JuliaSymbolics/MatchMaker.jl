@@ -68,4 +68,22 @@ let
             MarkersMap(s => g(x, y))
         )
     end
+    @testset "nested frame failure" begin
+        # a nested frame failing its head check must not clobber
+        # already-bound vars — regression: _seq_args ran before the
+        # frame's trail mark, so _call_fail! unwound the entire trail.
+        # The ha(...) position's first candidate (h(y)) fails the head
+        # check after slot(a) bound a ↦ x in the outer frame.
+        ha = Sym{SymReal}(:ha; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+        ha = set_operation_traits(ha; associative = true)
+        g2 = Sym{SymReal}(:g2; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+        @syms c
+        @test isequal(
+            only(matchall(
+                g2(slot(a), g(ha(slot(b), segment(s)), slot(c))),
+                g2(x, g(h(y), ha(y)))
+            )),
+            MarkersMap(a => x, b => y, c => h(y), s => ha())
+        )
+    end
 end
