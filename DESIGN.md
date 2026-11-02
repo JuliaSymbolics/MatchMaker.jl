@@ -44,8 +44,9 @@ that drive every design decision below:
    provides a deterministic `<ₑ`-sorted view (itself a `@cache`d function, so
    amortized O(1) per node). Any place where observable behavior depends on
    argument order — enumeration order, segment capture order, result order of
-   `matches` — uses `sorted_arguments` where a canonical order is required, and
-   is otherwise explicitly marked *order-dependent*. It is acceptable for
+   `matches` — is order-dependent: AC/C phases iterate the raw `arguments`
+   order directly rather than paying for a canonical sort per node. It is
+   acceptable for
    results or performance to vary with this order; it is not acceptable for
    such dependence to be undocumented.
 
@@ -371,8 +372,8 @@ internal.
 
 5. **Segments** under a free or associative head capture a *contiguous run*;
    under a commutative or AC head they capture a *sub-multiset* materialized
-   in `sorted_arguments` order (canonical for `AddMul`; for other ops the
-   term's own argument order — deterministic per subject). `min`/`max` bounds
+   in `arguments` order (dict order for `AddMul` — order-dependent, §1.2;
+   for other ops the term's own argument order). `min`/`max` bounds
    apply; `predicate` applies to each captured element, `sequence_predicate`
    to the whole capture (a `Vector{BasicSymbolic{SymReal}}`). C-only +
    segment is allowed and means "unordered subset capture" — deterministic
@@ -395,10 +396,10 @@ internal.
    A var carrying `optional` occurrences must declare `default` in its spec;
    outside an AC/A node an `optional` occurrence is a compile error.
 
-8. **Enumeration order.** Deterministic *and* canonical where it counts:
-   AC/A subject arguments are iterated in `sorted_arguments` order (`<ₑ` —
-   deterministic across processes, `@cache`d), so the AC phases never touch
-   `AddMul`'s hash-ordered `arguments`. AC assignments enumerate right-side
+8. **Enumeration order.** Deterministic for a given subject term, but not
+   canonical: AC/A subject arguments are iterated in `arguments` order
+   (dict order for `AddMul` — hash-order-dependent, §1.2; positional for
+   `Term`). AC assignments enumerate right-side
    candidates in increasing subject index; segment splits enumerate by
    increasing captured length, left segment first. *Order-dependent:* the
    argument order of any reconstructed `f(captured…)` segment binding follows
@@ -651,8 +652,9 @@ positional `Call` obligations. (The segment-splitting machinery is adapted from
 pattern args partition into FIXED (ground and non-var subpatterns),
                          SLOTS (incl. already-bound slots, treated as fixed-
                                 by-lookup), OPTIONALS, SEGMENTS.
-subject args = sorted_arguments(subject) (or [subject] via identity coercion)
-             — canonical <ₑ order, never the hash-ordered raw arguments().
+subject args = arguments(subject) (or [subject] via identity coercion)
+             — the term's own argument order (dict order for `AddMul`;
+             order-dependent, §1.2).
 
 Phase 1 — candidates: for each fixed pattern arg, compute the set of subject
    indices it can match (each submatch is itself a nested frame obligation).
@@ -671,7 +673,7 @@ Phase 2 — assignment: enumerate matchings of (fixed ∪ slots) → subject arg
    (`matchpy/matching/hopcroft_karp.py`, `[R8]`).
 
 Phase 3 — leftovers: distribute remaining subject args among segments
-   (unordered subsets; capture order = canonical order) honoring min/max.
+   (unordered subsets; capture order = `arguments` order) honoring min/max.
    With one segment this is O(1): it takes everything left. Optionals that did
    not consume bind their defaults.
    (Cf. `CommutativeMatcher._match_sequence_variables` `[R5]`.)
@@ -898,8 +900,6 @@ this section exists only to keep today's choices compatible.
   is the only per-match allocation (and `eachmatch` avoids it).
 - `maxsteps` budget parameter guards pathological AC searches (the
   `COMM_BACKTRACK_BUDGET` analogue), counted in `eng.steps`.
-- `sorted_arguments` on `AddMul` nodes is `@cache`d — canonical order is
-  amortized-free per node.
 - Deferred optimizations (recorded, not scheduled): `(p_idx, s_idx)`-keyed
   submatch memoization once bindings-versioning is designed; linear-pattern
   fast path (§5.5f analysis); direct `AddMul`-dict matching to skip
