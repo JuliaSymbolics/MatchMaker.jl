@@ -85,6 +85,19 @@ let
             MarkersMap(a => p, b => q)
         )
         @test isempty(matchall(g(slot(a), slot(a) + slot(b)), g(p, r + q)))
+        # a nested frame failing its head check must not clobber
+        # already-bound vars — regression: the arg view ran before the
+        # frame's trail mark, so _call_fail! unwound the entire trail.
+        # Phase-1 candidacy for h(...) vs k(q) fails after slot(a)
+        # bound a ↦ p in the outer frame.
+        k = Sym{SymReal}(:k; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+        @test isequal(
+            only(matchall(
+                g(slot(a), f(slot(b), h(slot(c), segment(s)))),
+                g(p, f(k(q), h(q)))
+            )),
+            MarkersMap(a => p, b => k(q), c => q, s => h())
+        )
     end
     @testset "flattening + coercion" begin
         # nested same-op calls flatten under A
