@@ -371,6 +371,7 @@ function _comm_min_tail!(eng::MatchEngine, order::Vector{Int32}, min_tail::Vecto
     for j in length(order):-1:1
         min_tail[j] = min_tail[j + 1] + @match eng.pat.plans[order[j]] begin
             NodePlan.Segment(; var_id) => _seg_min(eng, var_id)
+            NodePlan.Slot(; optional) => optional ? 0 : 1
             _ => 1
         end
     end

@@ -399,7 +399,7 @@ function _check_fixed_arity!(
                     VarSpec.Segment(; min) => min
                     _ => 0
                 end
-            else
+            elseif !_is_optional_term(cex)
                 min_req += 1
             end
         end
