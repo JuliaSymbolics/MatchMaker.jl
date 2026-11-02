@@ -1,5 +1,5 @@
 # DESIGN.md §5.5e: Seq frame — contiguous-run segment capture under a
-# free head (identity coercion for A-heads is milestone 7).
+# free or associative head (A-heads also flatten and coerce, §4.5/§4.6).
 
 ###
 ### Segment spec helpers
