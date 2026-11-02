@@ -36,19 +36,24 @@ end
 # alternatives — non-segment positions iterate remaining subject args,
 # segment positions iterate sub-multiset combinations of their pool.
 
-# Dispatch position j onto the next unused subject arg. Returns true when
+# Dispatch position j onto the next unused subject arg among its
+# candidates: `cands` restricts the arg positions to try (the AC frame's
+# phase-1 candidate set, §5.5f); `nothing` means every arg is a candidate
+# (the Comm frame, where filtering wasn't precomputed). Returns true when
 # the position produced an alternative (obligation applied and used[i]
 # marked); false when no remaining arg satisfies it.
-function _comm_next!(
+function _assign_next!(
         eng::MatchEngine, child_pat::Int32, child_plan::NodePlanT,
-        j::Int, snbs, sstart::Int, used::BitVector,
+        j::Int, snbs, sstart::Int, cands::Union{Nothing, SmallV{Int32}},
+        used::BitVector,
         scan::Vector{Int32}, assigned::Vector{Int32},
         kids::Vector{Union{Nothing, MatchFrameT}}
     )
-    m = length(used)
-    while scan[j] <= m
-        i = scan[j]
+    nc = cands === nothing ? length(used) : length(cands)
+    while scan[j] <= nc
+        k = scan[j]
         scan[j] += 1
+        i = cands === nothing ? k : cands[k]
         used[i] && continue
         snode = snbs[sstart + i - 1]
         isleaf = MData.isa_variant(child_plan, NodePlan.Literal) ||
@@ -315,8 +320,8 @@ function _step_comm!(
                             assigned[j] = 0
                         end
                         _unwind!(eng, bind_marks[j])
-                        produced = _comm_next!(
-                            eng, order[j], cplan, j, snbs, sstart,
+                        produced = _assign_next!(
+                            eng, order[j], cplan, j, snbs, sstart, nothing,
                             used, scan, assigned, kids
                         )
                     end
@@ -351,8 +356,8 @@ function _step_comm!(
         else
             bind_marks[j] = length(eng.trail)
             scan[j] = 1    # fresh dispatch: all remaining args are candidates
-            if _comm_next!(
-                    eng, child_pat, child_plan, j, snbs, sstart,
+            if _assign_next!(
+                    eng, child_pat, child_plan, j, snbs, sstart, nothing,
                     used, scan, assigned, kids
                 )
                 child_pos[] += 1
