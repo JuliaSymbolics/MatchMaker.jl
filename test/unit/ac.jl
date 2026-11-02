@@ -10,7 +10,7 @@ using MatchMaker
 using SymbolicUtils
 using SymbolicUtils: Sym, SymReal, FnType
 
-@syms x y z a b c p q r
+@syms x y z a b c s t p q r
 
 let
     f = Sym{SymReal}(:f; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
@@ -97,5 +97,75 @@ let
         # ...but one arg can't fill two required positions
         @test isempty(matchall(f(slot(a), slot(b)), p))
         @test isempty(matchall(slot(a) + slot(b), p))
+    end
+    @testset "segments (phase 3)" begin
+        # a segment takes a sub-multiset of the leftover args
+        @test isequal(
+            only(matchall(x + segment(s), p + q + x)), MarkersMap(s => p + q)
+        )
+        # empty captures materialize through the head's identity (§4.6)
+        @test isequal(only(matchall(x * segment(s), x)), MarkersMap(s => 1))
+        @test isequal(
+            only(matchall(slot(a) + segment(s), p)),
+            MarkersMap(a => p, s => 0)
+        )
+        # a singleton capture keeps the arg (materialized via the head)
+        @test isequal(
+            only(matchall(f(x, segment(s)), f(x, y))), MarkersMap(s => f(y))
+        )
+        # two same-var segments must split equal multisets
+        res = collect(matchall(f(segment(s), segment(s)), f(p, q, p, q)))
+        @test length(res) == 2            # distinct assignments, equal binds
+        @test all(isequal(MarkersMap(s => f(p, q))), res)
+        @test isempty(matchall(f(segment(s), segment(s)), f(p, q, p, r)))
+        # leftovers distribute over every subset split
+        res = collect(matchall(f(segment(s), segment(t)), f(p, q, r)))
+        @test length(res) == 8
+        @test any(
+            Base.Fix1(isequal, MarkersMap(s => f(p), t => f(q, r))), res
+        )
+        @test any(
+            Base.Fix1(isequal, MarkersMap(s => :f0, t => f(p, q, r))), res
+        )
+        # a slot + a segment: each singleton pick leaves the rest
+        res = collect(matchall(slot(a) + segment(s), p + q + r))
+        @test length(res) == 3
+    end
+    @testset "optionals (phase 3)" begin
+        # §4.7: consume each leftover arg first, then the default
+        m = compile_pattern(
+            f(optional(a), segment(s));
+            vars = Dict(a => slotspec(nothing; default = 5))
+        )
+        @test isequal(
+            collect(matches(m, f(p, q))),
+            MarkersMap[
+                MarkersMap(a => p, s => f(q)),
+                MarkersMap(a => q, s => f(p)),
+                MarkersMap(a => 5, s => f(p, q)),
+            ]
+        )
+        @test isequal(
+            collect(matches(m, f(p))),
+            MarkersMap[
+                MarkersMap(a => p, s => :f0),
+                MarkersMap(a => 5, s => f(p)),
+            ]
+        )
+        # under `+` the default only wins when nothing is left to consume
+        m2 = compile_pattern(
+            x + optional(a); vars = Dict(a => slotspec(nothing; default = 7))
+        )
+        @test isequal(only(collect(matches(m2, x + p))), MarkersMap(a => p))
+        @test isequal(only(collect(matches(m2, x))), MarkersMap(a => 7))
+        # a var bound elsewhere rechecks consume and default alternatives
+        m3 = compile_pattern(
+            g(slot(a), f(optional(a), segment(s)));
+            vars = Dict(a => slotspec(nothing; default = x))
+        )
+        @test isequal(
+            only(collect(matches(m3, g(p, f(p, q))))),
+            MarkersMap(a => p, s => f(q))
+        )
     end
 end
