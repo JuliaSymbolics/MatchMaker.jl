@@ -217,14 +217,16 @@ end
 # Bind `vid` to its spec's default (§4.7). A var bound elsewhere checks
 # the bound value against the default; a free var binds `extra` (the
 # default may be a literal — not a subject node).
-function _opt_default!(eng::MatchEngine, vid::Int32, spec::VarSpecT)
-    dflt = @match spec begin
+function _opt_default!(eng::MatchEngine, vid::Int32)
+    dflt = @match eng.pat.var_specs[vid] begin
         VarSpec.Slot(; default) => default
         _ => nothing
     end
     b = eng.binds
     if is_bound_extra(b, vid)
-        return isequal(b.extra[vid], dflt)
+        return isequal(
+            b.extra[vid]::Union{BasicSymbolic{SymReal}, Const{SymReal}}, dflt
+        )
     end
     if is_bound_node(b, vid)
         return isequal(eng.subj[b.node[vid]], dflt)
@@ -260,9 +262,12 @@ function _seq_args(
         if ok
             if assoc
                 flat = _flat_args(eng, op, snbs, sstart)
-                flat === nothing || return (flat, 1)
+                flat === nothing ||
+                    return (flat, 1)
             end
-            return (snbs, sstart)
+            # collect to keep the return type `Vector{Int32}` — the
+            # flattened/coerced paths allocate anyway
+            return (collect(snbs), sstart)
         end
     end
     assoc || return nothing
@@ -379,7 +384,7 @@ function _step_seq!(
                     if capture_len[j] == 1
                         vid = _slot_vid(eng, children[j])
                         _unwind!(eng, bind_marks[j])
-                        if _opt_default!(eng, vid, eng.pat.var_specs[vid])
+                        if _opt_default!(eng, vid)
                             capture_len[j] = 0
                             soff = arg_start[j]
                             child_pos[] += 1
@@ -428,7 +433,7 @@ function _step_seq!(
                 capture_len[j] = 1
                 soff += 1
                 child_pos[] += 1
-            elseif _opt_default!(eng, vid, eng.pat.var_specs[vid])
+            elseif _opt_default!(eng, vid)
                 capture_len[j] = 0
                 child_pos[] += 1
             else
