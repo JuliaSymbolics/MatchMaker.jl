@@ -224,9 +224,7 @@ function _opt_default!(eng::MatchEngine, vid::Int32)
     end
     b = eng.binds
     if is_bound_extra(b, vid)
-        return isequal(
-            b.extra[vid]::Union{BasicSymbolic{SymReal}, Const{SymReal}}, dflt
-        )
+        return isequal(b.extra[vid], dflt)::Bool
     end
     if is_bound_node(b, vid)
         return isequal(eng.subj[b.node[vid]], dflt)
