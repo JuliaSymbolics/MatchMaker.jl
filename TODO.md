@@ -104,6 +104,12 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   produced or failed. Revisit if pattern depth or AC-phase structure
   demands it.
 
+- **Optional sequence wildcards (`oa__`/`oa___`, leftover-absorbing
+  `oa_` under A/AC).** Capture-wise a `min = 0` segment; the deltas are
+  a spec `default`, a bind-default-on-empty branch, and
+  materialization. Per-case work/perf breakdown:
+  `docs/optional-segments.md`.
+
 ## Tests
 
 - Port MatchPy's one_to_one tests into `test/matchpy/` as oracles.
