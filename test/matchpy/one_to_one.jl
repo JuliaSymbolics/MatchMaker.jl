@@ -107,6 +107,7 @@ end
 let
     h = Sym{SymReal}(:h; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
     h2 = Sym{SymReal}(:h2; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    hu = Sym{SymReal}(:hu; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
     g = Sym{SymReal}(:g; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
     g = set_operation_traits(g; commutative = true)
     g2 = Sym{SymReal}(:g2; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
@@ -803,5 +804,110 @@ let
         @test length(res) == 2
         @test any(r -> isequal(r[x], aa), res)
         @test any(r -> isequal(r[x], bb), res)
+    end
+
+    @testset "syntactic net" begin
+        # test_syntactic.py::test_generate_net_and_match — the
+        # DiscriminationNet is a different algorithm, but the one-to-one
+        # match/no-match semantics are comparable. f→h, f2→h2, f_u→hu.
+        # Anonymous _/__/___ are each a distinct variable: _ → slot(w1),
+        # __/___ → segment(w2)/segment(w3) (__ needs min=1 via vars, ___
+        # is the default min=0); _s (Wildcard.symbol) → slot(sw) +
+        # issym spec. Skipped: `(__, a)` — a bare segment at the
+        # pattern root has no argument list to capture here.
+        @syms w1 w2 w3 sw
+        D = Dict{BasicSymbolic{SymReal}, VarSpec.Type}
+        p1(v) = v => segmentspec(nothing; min = 1)
+        iss = slotspec(SymbolicUtils.issym)
+        cases = [
+            # (subject, pattern, is_match[, vars])
+            (a, a, true),
+            (a, slot(w1), true),
+            (h2(a), slot(w1), true),
+            (h2(hu(a)), slot(w1), true),
+            (h2(a, b), slot(w1), true),
+            (h(a), h(slot(w1)), true),
+            (h(h2(a)), h(slot(w1)), true),
+            (h(h2(hu(a))), h(slot(w1)), true),
+            (h(h2(a, b)), h(slot(w1)), true),
+            (h(a), h(a, a), false),
+            (h(a, a), h(a, a), true),
+            (h(a, b), h(a, a), false),
+            (h(b, a), h(a, a), false),
+            (h(a), h(segment(w2), a), false, D(p1(w2))),
+            (h(a, a), h(segment(w2), a), true, D(p1(w2))),
+            (h(a, b, a), h(segment(w2), a), true, D(p1(w2))),
+            (h(a, b, a, a), h(segment(w2), a, a), true, D(p1(w2))),
+            (h(a, a, a), h(segment(w2), a, a), true, D(p1(w2))),
+            (h(a), h(segment(w2), a, a), false, D(p1(w2))),
+            (h(a, a), h(segment(w2), a, a), false, D(p1(w2))),
+            (h(a), h(segment(w2), a), true),
+            (h(a, a), h(segment(w2), a), true),
+            (h(a, b, a), h(segment(w2), a), true),
+            (h(a, b, a, a), h(segment(w2), a, a), true),
+            (h(a, a, a), h(segment(w2), a, a), true),
+            (h(a), h(segment(w2), a, a), false),
+            (h(a, a), h(segment(w2), a, a), true),
+            (h(a, b, a, a), h(segment(w2), a, b), false),
+            (h(a, b, a, b), h(segment(w2), a, b), true),
+            (h(a, a, b), h(segment(w2), a, b), true),
+            (h(a, b, b), h(segment(w2), a, b), false),
+            (h(a, b), h(segment(w2), a, b), true),
+            (h(a, a), h(segment(w2), a, b), false),
+            (h(b, b), h(segment(w2), a, b), false),
+            (h(a), h(segment(w2), a, slot(w1)), false),
+            (h(), h(segment(w2), a, slot(w1)), false),
+            (h(b), h(segment(w2), a, slot(w1)), false),
+            (h(a, a), h(segment(w2), a, slot(w1)), true),
+            (h(a, b), h(segment(w2), a, slot(w1)), true),
+            (h(b, a), h(segment(w2), a, slot(w1)), false),
+            (h(a, a, a), h(segment(w2), a, slot(w1)), true),
+            (h(a, b, a), h(segment(w2), a, slot(w1)), false),
+            (h(b, a, a), h(segment(w2), a, slot(w1)), true),
+            (h(a, a, b), h(segment(w2), a, slot(w1)), true),
+            (h(a, b, a, b), h(segment(w2), a, slot(w1)), true),
+            (h(a, a, a, b, a, b), h(segment(w2), a, slot(w1)), true),
+            (h(a, b, a), h(segment(w2), a, segment(w3), a), true, D(p1(w3))),
+            (h(a, a, a), h(segment(w2), a, segment(w3), a), true, D(p1(w3))),
+            (h(a, b, a, b), h(segment(w2), a, segment(w3), a), false, D(p1(w3))),
+            (h(b, b, a, a), h(segment(w2), a, segment(w3), a), false, D(p1(w3))),
+            (h(b, a, a, a), h(segment(w2), a, segment(w3), a), true, D(p1(w3))),
+            (h(a, b, b, a), h(segment(w2), a, segment(w3), a), true, D(p1(w3))),
+            (h(h2(a)), h(segment(w2), h2(a)), true),
+            (h(a, h2(a)), h(segment(w2), h2(a)), true),
+            (h(h2(a), h2(a)), h(segment(w2), h2(a)), true),
+            (h(h2(a), h2(b)), h(segment(w2), h2(a)), false),
+            (h(h2(b), h2(a)), h(segment(w2), h2(a)), true),
+            (h(h2(a), h2(b)), h(segment(w2), h2(slot(w1))), true),
+            (h(h2(b), h2(a)), h(segment(w2), h2(slot(w1))), true),
+            (h(h2(b), h2(hu(a))), h(segment(w2), h2(slot(w1))), true),
+            (h(h2(b), h2(h2(a, b))), h(segment(w2), h2(slot(w1))), true),
+            (h(h2(b), h2(hu(a), a)), h(segment(w2), h2(slot(w1))), false),
+            (h(h2(a), h2(b)), h(segment(w2), h2(segment(w3))), true),
+            (h(h2(b), h2(a, b)), h(segment(w2), h2(segment(w3))), true),
+            (h(h2(a), h2(b)), h(segment(w2), h2(segment(w3), a)), false),
+            (h(h2(b), h2(a, b)), h(segment(w2), h2(segment(w3), a)), false),
+            (h(h2(b), h2(a, a)), h(segment(w2), h2(segment(w3), a)), true),
+            (h(h2(a, b), h2(a, a)), h(segment(w2), h2(segment(w3), a)), true),
+            (h(h2(b, b), h2(b, a)), h(segment(w2), h2(segment(w3), a)), true),
+            (h(h2(b, a), b, h2(b, a)), h(segment(w2), h2(segment(w3), a), b), false),
+            (h(h2(b, a), b, h2(b, a), b), h(segment(w2), h2(segment(w3), a), b), true),
+            (h(h2(a)), h(segment(w2), h2(hu(a))), false),
+            (h(h2(hu(b))), h(segment(w2), h2(hu(a))), false),
+            (h(h2(hu(a), b)), h(segment(w2), h2(hu(a))), false),
+            (h(h2(hu(a))), h(segment(w2), h2(hu(a))), true),
+            (h(a, a, a, b), h(segment(w2), a, a, b, segment(w3)), true),
+            (h(a, a, a, b), h(segment(w2), a, a, b), true),
+            (h(a, a, a, b), h(segment(w2), a, b), true),
+            (h(h2(b), h2(a), h2(a), h2(b)), h(segment(w2), h2(a), segment(w3), h2(b)), true),
+            (h(h2(a), h2(a), h2(b), h2(b)), h(segment(w2), h2(a), segment(w3), h2(b)), true),
+            (h(a, a), h(segment(w2), a, slot(sw)), true, D(sw => iss)),
+            (h(a, a, a), h(segment(w2), a, slot(sw)), true, D(sw => iss)),
+        ]
+        for case in cases
+            (subj, pat, want) = case[1:3]
+            vars = length(case) > 3 ? case[4] : D()
+            @test (mpc(pat, subj; vars) >= 1) == want
+        end
     end
 end
