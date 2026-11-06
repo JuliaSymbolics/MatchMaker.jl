@@ -89,6 +89,12 @@ let
             g(x, segment(s)); vars = Dict(s => segmentspec(SymbolicUtils.issym))
         )
         @test isempty(matches(m_pred2, g(x, 1, y)))
+        # a bound-elsewhere position must free its `used` marks when the
+        # seek passes it — regression: four distinct {x,y}-pairing
+        # assignments collapsed to two by stale marks
+        res = collect(matchall(g(segment(s), segment(s)), g(x, x, y, y)))
+        @test length(res) == 4
+        @test all(isequal(MarkersMap(s => g(x, y))), res)
     end
     @testset "nested frame failure" begin
         # a nested frame failing its head check must not clobber
