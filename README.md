@@ -3,12 +3,11 @@
 MatchPy-style symbolic pattern matching for [SymbolicUtils.jl](https://github.com/JuliaSymbolics/SymbolicUtils.jl),
 built on its `IRStructure` DAG representation.
 
-**Status: under implementation.** The governing design document is
-[`DESIGN.md`](DESIGN.md); developer-facing documentation is
-[`DEVELOPING.md`](DEVELOPING.md). Nothing in this README describes shipped
-behavior yet.
+The user-facing guide is [`docs/user-guide.md`](docs/user-guide.md);
+the governing design document is [`DESIGN.md`](DESIGN.md); developer-facing
+documentation is [`DEVELOPING.md`](DEVELOPING.md).
 
-## What it is (planned API)
+## What it is
 
 Patterns are ordinary symbolic expressions containing *marker terms* —
 
@@ -32,9 +31,16 @@ eachmatch(f, m, expr)   # zero-allocation iteration
 instantiate(rhs, subst)
 ```
 
+`compile_pattern` produces a `Matcher` once and any query runs it
+repeatedly; queries also take the raw pattern expression for one-shot
+use. `matchall` enumerates every match deterministically; `maxsteps`
+bounds the search; `Constraint`s prune partial assignments early.
+
 Matching is done by a non-recursive frame machine over `IRStructure`, with
 associative/commutative/AC matching implemented via bipartite-assignment
-enumeration in the Eker/MatchPy lineage.
+enumeration in the Eker/MatchPy lineage. Semantics, caveats, and the full
+API are in [`docs/user-guide.md`](docs/user-guide.md); correctness is
+cross-validated against a naive recursive oracle under randomized fuzzing.
 
 ## Why
 

@@ -228,11 +228,13 @@ Build a segment `VarSpec` for the `vars` map of `compile_pattern`.
 Two predicate roles:
 
 - `predicate` — applied to each captured element. A failing element
-  means *no* capture containing it can succeed, so the matcher stops
-  retrying lengths at that position entirely (a hard prune).
+  rejects any capture containing it: under an ordered head (contiguous
+  runs) the run stops growing entirely; under an unordered head
+  (sub-multisets) only the combinations containing it are rejected.
 - `sequence_predicate` — applied to the whole captured `Vector`.
-  Failure only invalidates the current length; the matcher retries
-  with a longer capture, since a longer sequence may satisfy it.
+  Failure only invalidates the current capture; the matcher retries
+  with other lengths/selections, since another collection may satisfy
+  it.
 
 Prefer `predicate` for per-element checks — it prunes strictly more.
 """

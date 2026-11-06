@@ -20,11 +20,6 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   bound lets the engine specialize on memory layout and cut allocations.
   Enforce at `compile_pattern` with a clear error.
 
-- **Canonical `Add`/`Mul` reconstruction in `_seg_value`.** `+`/`*` heads
-  go through `add_worker`/`mul_worker`; confirm empty-capture identity
-  handling (`Const` vs workers' own zero-arg behaviour) once segments
-  bind in milestone 5 (`feat/segments-free`).
-
 - **Cache `_seg_value` materialization in `SubstitutionView`.** If segment
   values were cached, views could serve every lookup without allocating —
   explore whether `MarkersMap` materialization can then be skipped
@@ -77,13 +72,6 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   Getting unwieldy — consider passing the `MatchFrame` as-is and
   destructuring inside the helper instead.
 
-- **Segment positions as pseudo-frames?** The seek branch in
-  `_assoc_backtrack` re-derives what a `MatchFrame.Segment` would
-  carry — a `_seg_resume!` helper would unify the "resumable
-  position" protocol without a real frame (the segment's state is
-  parent-mediated: `arg_start`/`min_tail`/`navail` depend on sibling
-  consumption, which only the parent tracks).
-
 - **`step!` currently nests calls.** `step!(eng, kf)` inside
   `_step_call!` recurses one Julia frame per *pattern* depth — bounded
   by pattern size and independent of subject size/sharing, so not a
@@ -99,5 +87,6 @@ actionable. Milestone scoping lives in DESIGN.md §12.
 ## Tests
 
 - Port MatchPy's one_to_one tests into `test/matchpy/` as oracles.
-- Add the generated fuzz suite (`test/fuzz/`) once Comm/Assoc/AC frames
-  exist.
+  (`test/fuzz/` exists — the naive oracle in `test/oracle.jl` +
+  `crosscheck.jl`/`generator.jl` cross-validate `matchall` result
+  multisets on fixed and generated cases.)
