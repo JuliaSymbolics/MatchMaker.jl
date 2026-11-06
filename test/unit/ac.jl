@@ -212,5 +212,62 @@ let
             f(optional(a)); vars = Dict(a => slotspec(nothing; default = 5))
         )
         @test isequal(only(collect(matches(m4, f()))), MarkersMap(a => 5))
+        # the predicate also applies to the default (SU ~!m::pred):
+        # a rejected default cannot bind, so the position fails
+        m5 = compile_pattern(
+            x + optional(a);
+            vars = Dict(a => slotspec(
+                v -> !(SymbolicUtils.isconst(v) && v.val === 0);
+                default = 0
+            ))
+        )
+        @test isempty(collect(matches(m5, x)))
+        @test isequal(only(collect(matches(m5, x + p))), MarkersMap(a => p))
+        # an accepted default binds through extra as before
+        m6 = compile_pattern(
+            x + optional(a);
+            vars = Dict(a => slotspec(
+                v -> SymbolicUtils.isconst(v) && v.val isa Int; default = 0
+            ))
+        )
+        @test isequal(only(collect(matches(m6, x))), MarkersMap(a => 0))
+        @test isequal(only(collect(matches(m6, x + 1))), MarkersMap(a => 1))
+        # a consume-alternative predicate failure falls back to the
+        # default alternative (opt-b absorbs the arg opt-a rejected)
+        m7 = compile_pattern(
+            x + optional(a) + optional(b);
+            vars = Dict(
+                a => slotspec(
+                    v -> !(SymbolicUtils.isconst(v) && v.val === 1);
+                    default = 7
+                ),
+                b => slotspec(nothing; default = 9),
+            )
+        )
+        @test isequal(
+            only(collect(matches(m7, x + 1))), MarkersMap(a => 7, b => 1)
+        )
+        # under * with a rejected identity default
+        m8 = compile_pattern(
+            x * optional(a);
+            vars = Dict(a => slotspec(
+                v -> !(SymbolicUtils.isconst(v) && v.val === 1);
+                default = 1
+            ))
+        )
+        @test isempty(collect(matches(m8, x)))
+        @test isequal(only(collect(matches(m8, x * p))), MarkersMap(a => p))
+        # same check inside a nested AC call
+        m9 = compile_pattern(
+            g(f(optional(a)), slot(a));
+            vars = Dict(a => slotspec(
+                v -> !(SymbolicUtils.isconst(v) && v.val === 5);
+                default = 5
+            ))
+        )
+        @test isempty(collect(matches(m9, g(f(), p))))
+        @test isequal(
+            only(collect(matches(m9, g(f(p), p)))), MarkersMap(a => p)
+        )
     end
 end
