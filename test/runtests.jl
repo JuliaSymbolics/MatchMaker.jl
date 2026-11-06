@@ -36,6 +36,10 @@ end
     include("unit/ac.jl")
 end
 
+@safetestset "constraints" begin
+    include("unit/constraints.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
