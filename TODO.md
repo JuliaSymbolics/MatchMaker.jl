@@ -110,6 +110,20 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   materialization. Per-case work/perf breakdown:
   `docs/optional-segments.md`.
 
+- **Coefficient/numeric splitting under `+`/`*` (SymPy-style).**
+  SymPy's `match` decomposes numeric args: `(x - p)^2` vs `(x - 2)^2`
+  → `{p: 2}` because `Mul(-1, p)` matches `Const(-2)` as `(-1)·2`;
+  `p*x` vs `x` → `{p: 1}` (implicit coefficient); `2*p` vs `6` →
+  `{p: 3}` (divisor split); `3x + p` vs `4x + 5` → `{p: x + 5}`
+  (additive term split). Our subject args are atomic IR nodes. The
+  sign-split slice alone wants an alternate subject-arg view under `*`
+  (`Const(-2)` → `[-1, 2]`); divisor splits want partial-arg
+  consumption with synthesized `Const` leftovers (bound via `extra`,
+  not subject nodes); additive splits under `+` are a second
+  decomposition dimension. Worth supporting at least the
+  sign/divisor-literal slice — it's what makes `x - p` match `x - 2`.
+  Skipped cases live in `test/sympy/match.jl`.
+
 ## Tests
 
 - Port MatchPy's one_to_one tests into `test/matchpy/` as oracles.
