@@ -44,6 +44,10 @@ end
     include("unit/constraints.jl")
 end
 
+@safetestset "oracle cross-check" begin
+    include("fuzz/crosscheck.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
