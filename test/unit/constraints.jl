@@ -63,7 +63,7 @@ let
         ]
         @test length(got) == length(want) == 1
         @test isequal(only(got), only(want))
-        # non-linear vars constrain each other through the engine
+        # a constraint rejects assignments where distinct vars coincide
         cn = Constraint(v -> !isequal(v[1], v[2]), [a, b])
         got = collect(
             matchall(g(slot(a), slot(b)), g(x, y); constraints = [cn])
@@ -73,6 +73,23 @@ let
             matchall(g(slot(a), slot(b)), g(x, x); constraints = [cn])
         )
         @test isempty(got)
+        # non-linear occurrences bind consistently before the constraint
+        # runs: slot(b) occupies two positions, so b must bind equal args
+        got = collect(
+            matchall(
+                g(slot(a), slot(b), slot(b)), g(x, y, y);
+                constraints = [cn]
+            )
+        )
+        # duplicate subject args → distinct assignments, equal binds
+        @test length(got) == 2
+        @test all(isequal(MarkersMap(a => x, b => y)), got)
+        @test isempty(
+            matchall(
+                g(slot(a), slot(b), slot(b)), g(x, x, x);
+                constraints = [cn]
+            )
+        )
     end
     @testset "segment + extra values" begin
         # a segment var delivers its materialized f(captured…) value —
