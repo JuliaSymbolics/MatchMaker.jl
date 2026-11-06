@@ -273,32 +273,44 @@ let
 end
 
 # `term` on ≥3 args does not promote the result symtype (it stays
-# `Any`) — `+`/`*` patterns built this way must still compile to the AC
-# frame, and `Any`-symtype subjects must still bind slots
-@testset "Any-symtype +/* stay AC" begin
-    # ACCall: a permuted subject matches
-    @test length(collect(matchall(
-        compile_pattern(term(+, slot(a), slot(b), slot(c))), c + b + a
-    ))) == 6
-    # * on ≥3 args: was an ordered Call before the fix → x would not
-    # bind across positions
+# `Any`), and `Any` is not assumed numeric: `+`/`*` on `Any` fall back
+# to the trait layer, which does not declare them AC — the pattern
+# compiles to an ordered Call plan. (e.g. `*` on matrices is not
+# commutative — `Any` can mean anything.) Patterns that need AC
+# semantics with duplicate/non-canonical arg lists must use a head
+# with declared traits, like `f`.
+@testset "Any-symtype term(+) is ordered" begin
+    # positional match: pattern args vs the subject's canonical arg
+    # order — a permuted term subject binds positionally, not
+    # commutatively
     @test isequal(
         only(collect(matchall(
-            compile_pattern(term(*, p, x, slot(a))), term(*, q, x, p)
+            compile_pattern(term(+, slot(a), slot(b), slot(c))),
+            term(+, c, b, a)
         ))),
-        MarkersMap(a => q)
+        MarkersMap(a => c, b => b, c => a)
     )
-    # non-linear same-var slots enumerate every consistent assignment
-    @test length(unique(collect(matchall(
-        compile_pattern(term(+, slot(a), slot(b), slot(s), slot(s))),
-        term(+, x, y, p, p)
-    )))) == 2
-    # an `Any`-symtype subject still binds a SymReal slot
+    # an `Any`-symtype subject is not admitted for a SymReal slot —
+    # `Any` is unknown, not provably numeric
     hh = Sym{SymReal}(:hh; type = FnType{Tuple{Any}, Number, Nothing})
-    @test isequal(
-        only(collect(matchall(
-            compile_pattern(hh(slot(a))), hh(term(+, x, y, z))
-        ))),
-        MarkersMap(a => term(+, x, y, z))
+    @test isempty(collect(matchall(
+        compile_pattern(hh(slot(a))), hh(term(+, x, y, z))
+    )))
+    # declared-trait heads keep AC regardless of arg count — the
+    # traits key on the Sym, not the symtype
+    fac = Sym{SymReal}(
+        :fac; type = FnType{Tuple{Vararg{Number}}, Number, Nothing}
     )
+    fac = set_operation_traits(fac; associative = true, commutative = true)
+    @test length(collect(matchall(
+        compile_pattern(fac(slot(a), slot(b), slot(c))), fac(c, b, a)
+    ))) == 6
+    # and canonical +/* constructed via the workers are AC-typed —
+    # the right way to build an Add/Mul programmatically
+    @test length(collect(matchall(
+        compile_pattern(
+            SymbolicUtils.add_worker(SymReal, (slot(a), slot(b), slot(c)))
+        ),
+        c + b + a
+    ))) == 6
 end

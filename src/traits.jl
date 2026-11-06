@@ -142,9 +142,7 @@ to the extensible traits (including `OperationTraitsCtx` symbolic heads).
 """
 function _is_ac_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils.TypeT))
     if op === (+) || op === (*)
-        # `Any` = symtype inference failed (e.g. `term(+)`/`term(*)` on ≥3
-        # args does not promote) — `+`/`*` are still the AC Add/Mul ops
-        (_is_number_st(ST) || ST === Any) && return true
+        _is_number_st(ST) && return true
     end
     return is_associative(op, ST)::Bool && is_commutative(op, ST)::Bool
 end
@@ -155,7 +153,7 @@ end
 See [`_is_ac_head`](@ref). Fast path for `+`/`*` on numeric symtypes.
 """
 function _is_associative_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils.TypeT))
-    (op === (+) || op === (*)) && (_is_number_st(ST) || ST === Any) && return true
+    (op === (+) || op === (*)) && _is_number_st(ST) && return true
     return is_associative(op, ST)::Bool
 end
 
@@ -165,7 +163,7 @@ end
 See [`_is_ac_head`](@ref). Fast path for `+`/`*` on numeric symtypes.
 """
 function _is_commutative_head(@nospecialize(op), @nospecialize(ST::SymbolicUtils.TypeT))
-    (op === (+) || op === (*)) && (_is_number_st(ST) || ST === Any) && return true
+    (op === (+) || op === (*)) && _is_number_st(ST) && return true
     return is_commutative(op, ST)::Bool
 end
 
@@ -176,7 +174,7 @@ The declared identity element for `op` at result symtype `ST`, or `nothing`.
 Fast path: `+`/`0`, `*`/`1` on numeric symtypes.
 """
 function _identity_el(@nospecialize(op), @nospecialize(ST::SymbolicUtils.TypeT))
-    op === (+) && (_is_number_st(ST) || ST === Any) && return 0
-    op === (*) && (_is_number_st(ST) || ST === Any) && return 1
+    op === (+) && _is_number_st(ST) && return 0
+    op === (*) && _is_number_st(ST) && return 1
     return identity_element(op, ST)
 end
