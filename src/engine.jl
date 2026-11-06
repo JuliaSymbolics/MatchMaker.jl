@@ -228,6 +228,8 @@ mutable struct MatchEngine
     const constr_fired::BitVector
     "var_id -> constraint indices mentioning it."
     const var_constrs::Vector{SmallV{Int32}}
+    "Indices of constraints over no vars — applied at every produce."
+    const global_constrs::SmallV{Int32}
     "Reusable arg vector for constraint calls."
     const argbuf::Vector{BasicSymbolic{SymReal}}
     "Reusable arg vector for segment sequence_predicates."
@@ -260,6 +262,7 @@ function MatchEngine(
 
     econstrs = EngineConstraint[]
     var_constrs = [SmallV{Int32}() for _ in 1:pat.nvars]
+    global_constrs = SmallV{Int32}()
     for c in constraints
         var_ids = SmallV{Int32}()
         for v in c.vars
@@ -272,14 +275,19 @@ function MatchEngine(
         end
         ci = Int32(length(econstrs) + 1)
         push!(econstrs, EngineConstraint(c.fn, var_ids))
-        for vid in var_ids
-            push!(var_constrs[vid], ci)
+        if isempty(var_ids)
+            push!(global_constrs, ci)
+        else
+            for vid in var_ids
+                push!(var_constrs[vid], ci)
+            end
         end
     end
 
     eng = MatchEngine(
         pat, subj, sroot, nothing, binds, trail, econstrs,
-        falses(length(econstrs)), var_constrs, argbuf, segbuf, false, 0,
+        falses(length(econstrs)), var_constrs, global_constrs,
+        argbuf, segbuf, false, 0,
         maxsteps
     )
 
@@ -658,6 +666,17 @@ end
 ### next_match! (§5.4)
 ###
 
+# Fire every constraint over no vars — MatchPy's "global" constraints.
+# Called once per produced alternative; the fn sees an empty arg vector.
+function _global_constraints_ok!(eng::MatchEngine)
+    isempty(eng.global_constrs) && return true
+    resize!(eng.argbuf, 0)
+    for ci in eng.global_constrs
+        eng.constraints[ci].fn(eng.argbuf)::Bool || return false
+    end
+    return true
+end
+
 """
     $TYPEDSIGNATURES
 
@@ -672,15 +691,21 @@ function next_match!(eng::MatchEngine)
         # leaf root: single-shot obligation, applied inline (§5.4)
         eng.root_done && return false
         eng.root_done = true
-        return _leaf_obligation!(eng, eng.pat.root, eng.sroot)
+        return _leaf_obligation!(eng, eng.pat.root, eng.sroot) &&
+            _global_constraints_ok!(eng)
     end
-    st = step!(eng, root)
-    eng.steps += 1
-    if st === FrameStatus.Produced
-        return true
-    else
-        # Matched/Failed: the root frame is done
-        eng.root = nothing
-        return false
+    while eng.steps < eng.maxsteps
+        st = step!(eng, root)
+        eng.steps += 1
+        if st === FrameStatus.Produced
+            _global_constraints_ok!(eng) && return true
+            # rejected: the frame resumes for the next alternative
+            continue
+        else
+            # Matched/Failed: the root frame is done
+            eng.root = nothing
+            return false
+        end
     end
+    return false
 end
