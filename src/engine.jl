@@ -106,6 +106,38 @@ so it has no alternatives of its own.
         "Whether a segment position created its var's bind."
         owns_bind::BitVector
     end
+    struct AC
+        pat_node::Int32
+        subj_node::Int32
+        child_pos::Base.RefValue{Int}
+        trail_mark::Base.RefValue{Int}
+        """Pattern children in dispatch order: fixed ∪ slots (sorted by
+        ascending candidate count at init), then optionals, then segments.
+        Every per-position array below (kids/bind_marks/assigned/scan/
+        cands/seg_*) is indexed by dispatch position j — `order[j]` is the
+        pattern child dispatched there — not by pattern-child index."""
+        order::Vector{Int32}
+        kids::Vector{Union{Nothing, MatchFrame.Type}}
+        "Trail mark before each position's binds."
+        bind_marks::Vector{Int}
+        """Subject arg index assigned to each non-segment position
+        (0=none; -1 = an optional position bound its default instead)."""
+        assigned::Vector{Int32}
+        "Next candidate index to try per position."
+        scan::Vector{Int32}
+        "Which subject args are consumed."
+        used::BitVector
+        "Phase-1 candidate arg indices per assignment position (§5.5f)."
+        cands::Vector{SmallV{Int32}}
+        "Selected arg indices per segment position."
+        seg_sel::Vector{SmallV{Int32}}
+        "Available arg pool recorded per segment position."
+        seg_pool::Vector{Vector{Int32}}
+        "Suffix minimum args required from each position onward."
+        min_tail::Vector{Int}
+        "Whether a segment position created its var's bind."
+        owns_bind::BitVector
+    end
 end
 const MatchFrameT = MatchFrame.Type
 
@@ -114,8 +146,7 @@ const MatchFrameT = MatchFrame.Type
 
 Build the frame for the non-leaf plan at `pat_node` against subject node
 `subj_node`. `nchildren` sizes the per-position `kids` storage (children
-count of `plan`'s argument list). Leaf plans never get frames; `CommCall`/
-`SeqCall`/`ACCall` plans land in later milestones.
+count of `plan`'s argument list). Leaf plans never get frames.
 """
 function _new_frame(
         plan::NodePlanT, pat_node::Int32, subj_node::Int32,
@@ -142,6 +173,20 @@ function _new_frame(
                 fill!(Vector{Union{Nothing, MatchFrameT}}(undef, np), nothing),
                 zeros(Int, np), zeros(Int32, np), ones(Int32, np),
                 BitVector(), [SmallV{Int32}() for _ in 1:np],
+                Vector{Int32}[Int32[] for _ in 1:np],
+                zeros(Int, np + 1), falses(np)
+            )
+        end
+        NodePlan.ACCall(; fixed, slots, optionals, segments) => begin
+            order = Int32[]
+            append!(order, fixed, slots, optionals, segments)
+            np = length(order)
+            MatchFrame.AC(
+                pat_node, subj_node, Ref(0), Ref(0), order,
+                fill!(Vector{Union{Nothing, MatchFrameT}}(undef, np), nothing),
+                zeros(Int, np), zeros(Int32, np), ones(Int32, np),
+                BitVector(), [SmallV{Int32}() for _ in 1:np],
+                [SmallV{Int32}() for _ in 1:np],
                 Vector{Int32}[Int32[] for _ in 1:np],
                 zeros(Int, np + 1), falses(np)
             )
@@ -255,6 +300,10 @@ function _root_frame(plan::NodePlanT, pat_node::Int32, subj_node::Int32)
             plan, pat_node, subj_node, length(children)
         )
         NodePlan.CommCall(; fixed, slots, optionals, segments) => _new_frame(
+            plan, pat_node, subj_node,
+            length(fixed) + length(slots) + length(optionals) + length(segments)
+        )
+        NodePlan.ACCall(; fixed, slots, optionals, segments) => _new_frame(
             plan, pat_node, subj_node,
             length(fixed) + length(slots) + length(optionals) + length(segments)
         )
@@ -452,6 +501,16 @@ function step!(eng::MatchEngine, f::MatchFrameT)
             kids, bind_marks, assigned, scan, used, seg_sel, seg_pool,
             min_tail, owns_bind
         )
+        MatchFrame.AC(;
+            pat_node, subj_node, child_pos, trail_mark, order, kids,
+            bind_marks, assigned, scan, used, cands, seg_sel, seg_pool,
+            min_tail, owns_bind
+        ) =>
+            _step_ac!(
+            eng, pat_node, subj_node, child_pos, trail_mark, order,
+            kids, bind_marks, assigned, scan, used, cands, seg_sel,
+            seg_pool, min_tail, owns_bind
+        )
     end
 end
 
@@ -572,6 +631,8 @@ function _nchildren(plan::NodePlanT)
         NodePlan.Call(; children) => length(children)
         NodePlan.SeqCall(; children) => length(children)
         NodePlan.CommCall(; fixed, slots, optionals, segments) =>
+            length(fixed) + length(slots) + length(optionals) + length(segments)
+        NodePlan.ACCall(; fixed, slots, optionals, segments) =>
             length(fixed) + length(slots) + length(optionals) + length(segments)
         _ => 0
     end

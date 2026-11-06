@@ -1,5 +1,5 @@
 # DESIGN.md §5.5e: Seq frame — contiguous-run segment capture under a
-# free head (identity coercion for A-heads is milestone 7).
+# free or associative head (A-heads also flatten and coerce, §4.5/§4.6).
 
 ###
 ### Segment spec helpers
@@ -308,6 +308,11 @@ function _step_seq!(
     end
     n = length(children)
 
+    # fresh frames take their trail mark before any obligation runs —
+    # `_seq_args` applies the head obligation, and an early failure must
+    # unwind to *this* frame's entry mark, never past it
+    iszero(child_pos[]) && (mark[] = length(eng.trail))
+
     # subject arg view — recomputed each step: cheap when the subject is
     # a flat f-call (snbs reused); allocated only for flattened A-subjects
     # or singleton coercion
@@ -318,8 +323,7 @@ function _step_seq!(
     backtrack = false
 
     if iszero(child_pos[])
-        # init: head + arity lower bound; coercion/flattening done above
-        mark[] = length(eng.trail)
+        # init: arity lower bound; head/coercion/flattening done above
         _seq_min_tail!(eng, children, min_tail)
         m >= min_tail[1] || return _call_fail!(eng, mark)
         child_pos[] = 1

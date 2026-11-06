@@ -32,6 +32,10 @@ end
     include("unit/associative.jl")
 end
 
+@safetestset "AC" begin
+    include("unit/ac.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
