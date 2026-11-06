@@ -180,5 +180,11 @@ let
             only(collect(matches(m3, g(p, f(p, q))))),
             MarkersMap(a => p, s => f(q))
         )
+        # an all-optional pattern needs no subject args (optional
+        # positions contribute 0 to required arity)
+        m4 = compile_pattern(
+            f(optional(a)); vars = Dict(a => slotspec(nothing; default = 5))
+        )
+        @test isequal(only(collect(matches(m4, f()))), MarkersMap(a => 5))
     end
 end
