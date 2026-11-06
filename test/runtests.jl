@@ -36,6 +36,10 @@ end
     include("unit/ac.jl")
 end
 
+@safetestset "instantiate" begin
+    include("unit/instantiate.jl")
+end
+
 @safetestset "constraints" begin
     include("unit/constraints.jl")
 end
