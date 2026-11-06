@@ -234,8 +234,10 @@ mutable struct MatchEngine
     const segbuf::Vector{BasicSymbolic{SymReal}}
     "Whether the (leaf) root obligation has already yielded."
     root_done::Bool
-    "Work meter; compare against budget."
+    "Work meter; compare against `maxsteps`."
     steps::Int
+    "Step budget; the search ends once `steps` reaches it."
+    const maxsteps::Int
 end
 
 """
@@ -247,7 +249,7 @@ unknown syms throw `ArgumentError`.
 """
 function MatchEngine(
         pat::Matcher, s::BasicSymbolic{SymReal},
-        constraints::AbstractVector{Constraint}
+        constraints::AbstractVector{Constraint}; maxsteps::Int = typemax(Int)
     )
     subj = IRStructure{SymReal}()
     sroot = populate_ir!(subj, s)
@@ -277,7 +279,8 @@ function MatchEngine(
 
     eng = MatchEngine(
         pat, subj, sroot, nothing, binds, trail, econstrs,
-        falses(length(econstrs)), var_constrs, argbuf, segbuf, false, 0
+        falses(length(econstrs)), var_constrs, argbuf, segbuf, false, 0,
+        maxsteps
     )
 
     # Leaf roots (a bare slot/literal pattern) are applied inline by
@@ -663,6 +666,7 @@ search space is exhausted. A complete match leaves bindings on the trail;
 the frames stay live so a further call resumes enumeration.
 """
 function next_match!(eng::MatchEngine)
+    eng.steps >= eng.maxsteps && return false
     root = eng.root
     if root === nothing
         # leaf root: single-shot obligation, applied inline (§5.4)

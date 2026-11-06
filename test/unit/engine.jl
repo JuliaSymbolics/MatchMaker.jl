@@ -93,3 +93,29 @@ end
     )
     @test isequal(instantiate(h(slot(a), 2), MarkersMap(a => x)), h(x, 2))
 end
+
+@testset "maxsteps + eachmatch" begin
+    # budget exhausted → truncated results, no error
+    @test length(matchall(slot(a) + slot(b), x + y; maxsteps = 1)) == 1
+    @test matchall(slot(a) + slot(b), x + y; maxsteps = 0) |> isempty
+    @test match(slot(a), x; maxsteps = 0) === nothing
+    # a large budget is equivalent to no budget
+    @test isequal(
+        matchall(slot(a) + slot(b), x + y),
+        matchall(slot(a) + slot(b), x + y; maxsteps = typemax(Int))
+    )
+    # eachmatch visits every match through a live view
+    seen = MarkersMap[]
+    eachmatch(slot(a) + slot(b), x + y) do v
+        push!(seen, materialize(v))
+        true
+    end
+    @test isequal(seen, collect(matchall(slot(a) + slot(b), x + y)))
+    # returning false stops the iteration early
+    n = Ref(0)
+    eachmatch(slot(a) + slot(b), x + y) do v
+        n[] += 1
+        false
+    end
+    @test n[] == 1
+end

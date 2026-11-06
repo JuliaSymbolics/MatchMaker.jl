@@ -23,7 +23,7 @@ using FunctionWrappers: FunctionWrapper
 using Graphs
 using ReadOnlyArrays
 using EnumX: @enumx
-import Base: match, materialize
+import Base: match, materialize, eachmatch
 
 include("patternvars.jl")
 include("traits.jl")
@@ -41,12 +41,13 @@ export slot, segment, optional,
     is_marker_term, is_marker_op,
     is_slot_marker, is_segment_marker, unwrap_varspec, varsym,
     VarSpec, slotspec, segmentspec,
-    MarkersMap,
+    MarkersMap, materialize,
     is_associative, is_commutative, identity_element,
     OperationTraitsCtx, OperationTraits, set_operation_traits,
     Matcher, NodePlan, compile_pattern,
     Constraint, MatchEngine, MatchFrame, next_match!,
-    SubstitutionView, MatchIterator, matches, matchall, instantiate,
+    SubstitutionView, MatchIterator, matches, matchall, eachmatch,
+    instantiate,
     FrameStatus,
     @slots, @segments
 

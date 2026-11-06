@@ -199,6 +199,8 @@ end
 # Resume a segment position: free its previous capture, then take the
 # next combination (or grow toward `hi`) of its recorded pool. Returns
 # the new bound length or `nothing` when no alternatives are left.
+# Non-owning positions (the var bound elsewhere) have exactly one
+# selection; the marks must still be freed as the seek passes them.
 function _comm_seg_resume!(
         eng::MatchEngine, vid::Int32, @nospecialize(op), snbs,
         sstart::Int, j::Int, used::BitVector,
@@ -206,12 +208,12 @@ function _comm_seg_resume!(
         min_tail::Vector{Int}, owns_bind::BitVector,
         bind_marks::Vector{Int}
     )
-    owns_bind[j] || return nothing
-    pool = seg_pool[j]
     sel = seg_sel[j]
     for i in sel
         used[i] = false
     end
+    owns_bind[j] || return nothing
+    pool = seg_pool[j]
     hi = min(_seg_max(eng, vid), length(pool) - min_tail[j + 1])
     while true
         if !_next_combo!(sel, pool)
