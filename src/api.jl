@@ -105,29 +105,55 @@ The first match of pattern `m` (a `Matcher` or a raw expression, compiled
 via [`compile_pattern`](@ref)) against subject `s`, as a [`MarkersMap`](@ref)
 or `nothing`. `constraints` is a collection of [`Constraint`](@ref)s.
 """
-function match(m::Matcher, s::BasicSymbolic{SymReal}; constraints = Constraint[])
-    eng = MatchEngine(m, s, constraints)
+function match(
+        m::Matcher, s::BasicSymbolic{SymReal};
+        constraints = Constraint[], maxsteps::Int = typemax(Int)
+    )
+    eng = MatchEngine(m, s, constraints; maxsteps)
     next_match!(eng) || return nothing
     return materialize(SubstitutionView(eng, eng.steps))
 end
-match(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; constraints = Constraint[]) =
-    match(compile_pattern(p), s; constraints)
+match(
+    p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...
+) = match(compile_pattern(p), s; kwargs...)
 
 """
     $TYPEDSIGNATURES
 
 Lazy iterator of all matches of `m` against `s`; each item is a
-[`MarkersMap`](@ref).
+[`MarkersMap`](@ref). `maxsteps` bounds total search steps — the iterator
+ends when the budget is exhausted (a truncated result set).
 """
-matches(m::Matcher, s::BasicSymbolic{SymReal}; constraints = Constraint[]) =
-    MatchIterator(MatchEngine(m, s, constraints))
-matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; constraints = Constraint[]) =
-    matches(compile_pattern(p), s; constraints)
+matches(
+    m::Matcher, s::BasicSymbolic{SymReal};
+    constraints = Constraint[], maxsteps::Int = typemax(Int)
+) = MatchIterator(MatchEngine(m, s, constraints; maxsteps))
+matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
+    matches(compile_pattern(p), s; kwargs...)
 
 """
     $TYPEDSIGNATURES
 
 `collect(matches(m, s))` — all matches as a `Vector{MarkersMap}`.
 """
-matchall(m, s::BasicSymbolic{SymReal}; constraints = Constraint[]) =
-    collect(matches(m, s; constraints))
+matchall(m, s; kwargs...) = collect(matches(m, s; kwargs...))
+
+"""
+    $TYPEDSIGNATURES
+
+Call `f(::SubstitutionView)` on each successive match of `m` against `s`;
+stop when `f` returns `false`. The zero-allocation hot path (§5.6): the
+view is only valid inside `f` — copy with `materialize` to keep results.
+"""
+function eachmatch(
+        f::F, m::Matcher, s::BasicSymbolic{SymReal};
+        constraints = Constraint[], maxsteps::Int = typemax(Int)
+    ) where {F}
+    eng = MatchEngine(m, s, constraints; maxsteps)
+    while next_match!(eng)
+        f(SubstitutionView(eng, eng.steps)) === false && return nothing
+    end
+    return nothing
+end
+eachmatch(f, p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
+    eachmatch(f, compile_pattern(p), s; kwargs...)
