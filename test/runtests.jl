@@ -48,6 +48,10 @@ end
     include("fuzz/crosscheck.jl")
 end
 
+@safetestset "generated fuzz" begin
+    include("fuzz/generator.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
