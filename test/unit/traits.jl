@@ -73,6 +73,14 @@ end
     @test _identity_el(+, Number) === 0
     @test _identity_el(*, Int) === 1
     @test _identity_el(-, Number) === nothing
+
+    # `Any` = inference failed (`term(+)`/`term(*)` on ≥3 args does not
+    # promote) — `+`/`*` keep their AC semantics rather than silently
+    # falling back to an ordered Call plan
+    @test _is_ac_head(+, Any) && _is_ac_head(*, Any)
+    @test _is_associative_head(+, Any) && _is_commutative_head(*, Any)
+    @test _identity_el(+, Any) === 0 && _identity_el(*, Any) === 1
+    @test !_is_ac_head(-, Any) && !_is_commutative_head(sin, Any)
 end
 
 @testset "wrapper inference" begin

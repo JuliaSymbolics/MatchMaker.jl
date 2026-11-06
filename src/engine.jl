@@ -417,6 +417,9 @@ function _symtype_ok(
     )
     want === Any && return true
     cand === want && return true
+    # `Any` on the subject side means inference failed (e.g. `term` on ≥3
+    # args), not a provable mismatch — admit it (§3.5 symtype is a hint)
+    cand === Any && return true
     want === Number && return _is_number_st(cand)
     want === Real && return (
         cand === Int || cand === Float64 || cand === Float32 ||

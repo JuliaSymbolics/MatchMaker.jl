@@ -271,3 +271,34 @@ let
         )
     end
 end
+
+# `term` on ≥3 args does not promote the result symtype (it stays
+# `Any`) — `+`/`*` patterns built this way must still compile to the AC
+# frame, and `Any`-symtype subjects must still bind slots
+@testset "Any-symtype +/* stay AC" begin
+    # ACCall: a permuted subject matches
+    @test length(collect(matchall(
+        compile_pattern(term(+, slot(a), slot(b), slot(c))), c + b + a
+    ))) == 6
+    # * on ≥3 args: was an ordered Call before the fix → x would not
+    # bind across positions
+    @test isequal(
+        only(collect(matchall(
+            compile_pattern(term(*, p, x, slot(a))), term(*, q, x, p)
+        ))),
+        MarkersMap(a => q)
+    )
+    # non-linear same-var slots enumerate every consistent assignment
+    @test length(unique(collect(matchall(
+        compile_pattern(term(+, slot(a), slot(b), slot(s), slot(s))),
+        term(+, x, y, p, p)
+    )))) == 2
+    # an `Any`-symtype subject still binds a SymReal slot
+    hh = Sym{SymReal}(:hh; type = FnType{Tuple{Any}, Number, Nothing})
+    @test isequal(
+        only(collect(matchall(
+            compile_pattern(hh(slot(a))), hh(term(+, x, y, z))
+        ))),
+        MarkersMap(a => term(+, x, y, z))
+    )
+end
