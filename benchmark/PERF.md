@@ -1,12 +1,16 @@
 # perf/hardening notes (§9, §12)
 
-Run `jld run bench/bench.jl` to reproduce (timings are best-of-5
-`@elapsed`/`@allocated`).
+The suite lives at `benchmark/benchmarks.jl` in
+AirspeedVelocity/PkgBenchmark format (`SUITE::BenchmarkGroup`) — run it
+with `benchpkg`/AirspeedVelocity once set up, or
+`PkgBenchmark.benchmarkpkg(".")`. Baselines: the naive oracle
+(`test/oracle.jl`, §5.7's top-level seam) and `@acrule` for AC
+first-match.
 
-## Benchmark vs naive oracle + `@acrule`
+Indicative numbers from the initial hand-rolled run (best-of-5
+`@elapsed`/`@allocated`):
 
-The frame engine beats the naive recursive oracle on every workload —
-the gap widens with search-space size:
+## Engine vs naive oracle
 
 | workload | engine | oracle |
 |---|---|---|
@@ -17,9 +21,9 @@ the gap widens with search-space size:
 
 The oracle allocates `Any[]`/`Dict` per node and enumerates without the
 AC candidate matrix — the engine's fail-fast candidacy shows in the
-larger cases. `match` on the `slot + segment` pattern beats
-`@acrule` rule-application (32.2 μs vs 40.7 μs) — different work (rule
-also substitutes) but the same order.
+larger cases. `match` on the `slot + segment` pattern beats `@acrule`
+rule-application (32.2 μs vs 40.7 μs) — different work (the rule also
+substitutes) but the same order.
 
 ## `_symtype_ok` memo-vs-enumerate (§5.5b) — decided: no memo
 
