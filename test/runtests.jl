@@ -48,6 +48,10 @@ end
     include("matchpy/one_to_one.jl")
 end
 
+@safetestset "SymPy port" begin
+    include("sympy/match.jl")
+end
+
 @safetestset "oracle cross-check" begin
     include("fuzz/crosscheck.jl")
 end
