@@ -91,8 +91,11 @@ SUITE["alloc"]["matchall g(3 slots)"] =
 #
 # SU's ~y absorbs the leftover args under + — our translation is
 # `segment` with min=1 (empty → the identity, covered by `optional`).
-# Duplicate pattern vars under + need `term(+, …)`: `x + x` and
-# `segment(s) + segment(s)` canonicalize to `2*(…)` otherwise.
+# Duplicate pattern vars can't be expressed under canonical + (x + x
+# folds to 2x), and `term(+, …)` on ≥3 args keeps symtype `Any` → an
+# ordered Call, not AC — so the non-linear/segment cases below use the
+# trait-declared heads `f` (AC) and `g` (commutative), which keep their
+# traits at any symtype.
 # ------------------------------------------------------------------
 
 @syms u v
@@ -159,24 +162,25 @@ sub_nofact = p * q + r * s + t * u + v * x
 # --- Non-linear slots, rechecked late -------------------------------
 # a..d take 4 of 6 args, then s must pair the last two — fails on all
 # distinct args (≈720 assignment attempts), succeeds on term-dups
-pat_nl_late = compile_pattern(term(
-    +, slot(a), slot(b), slot(c), slot(d), slot(s), slot(s)
-))
-sub_nl_late_fail = p + q + r + x + y + z
-sub_nl_late_hit = term(+, p, q, r, x, p, p)
-# non-linear segment under AC: s must capture the same multiset twice
-pat_nl_seg = compile_pattern(term(+, segment(s), segment(s)))
-sub_nl_seg_hit = term(+, p, q, r, p, q, r)
-sub_nl_seg_fail = term(+, p, q, r, p, q, x)
-# non-linear segment under a commutative head (multiset recheck)
-pat_nl_g = compile_pattern(term(g, segment(s), segment(s)))
-sub_nl_g_hit = g(p, q, p, q)
-# nested non-linear: a bound at depth 1, rechecked at depth 4
-pat_nl_deep = compile_pattern(
-    f(slot(a), f(slot(a), f(slot(a), slot(a))))
+pat_nl_late = compile_pattern(
+    f(slot(a), slot(b), slot(c), slot(d), slot(s), slot(s))
 )
-sub_nl_deep_hit = f(p, f(p, f(p, p)))
-sub_nl_deep_fail = f(p, f(p, f(p, q)))
+sub_nl_late_fail = f(p, q, r, x, y, z)
+sub_nl_late_hit = f(p, q, r, x, p, p)
+# non-linear segment under AC: s must capture the same multiset twice
+pat_nl_seg = compile_pattern(f(segment(s), segment(s)))
+sub_nl_seg_hit = f(p, q, r, p, q, r)
+sub_nl_seg_fail = f(p, q, r, p, q, x)
+# non-linear segment under a commutative head (multiset recheck)
+pat_nl_g = compile_pattern(g(segment(s), segment(s)))
+sub_nl_g_hit = g(p, q, p, q)
+# nested non-linear: a bound at depth 1, rechecked at depth 4 —
+# comm-only `g` (an associative head would flatten the nesting away)
+pat_nl_deep = compile_pattern(
+    g(slot(a), g(slot(a), g(slot(a), slot(a))))
+)
+sub_nl_deep_hit = g(p, g(p, g(p, p)))
+sub_nl_deep_fail = g(p, g(p, g(p, q)))
 
 # --- Failing searches ------------------------------------------------
 # missing literal → phase-1 candidate matrix rejects immediately
