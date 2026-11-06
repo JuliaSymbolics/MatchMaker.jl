@@ -124,6 +124,19 @@ the zero-arg term `f()`. A *single-element* capture materializes as
 the element itself (`+(x) ≡ x`); `segment` values are otherwise the
 head applied to the captures — `s ↦ f(p, q)`.
 
+**Numeric constants under `+`/`*`.** Subject arguments are atomic —
+a `Const` is one argument and is never split. The practical
+consequence: `x + slot(n)` on `x - 2` matches with `n ↦ -2` (the
+slot absorbs the signed constant), but `x - slot(n)` does **not**
+match — the pattern contains `Mul(-1, slot(n))`, which cannot match
+`Const(-2)` because there is no sign/coefficient splitting (SymPy's
+matcher does split — `x - n` there yields `n ↦ 2`). Similarly
+`x + slot(n)` on bare `x` fails: the engine does not bind implicit
+identity elements (`n ↦ 0`) for missing terms. Write `x + slot(n)`
+for "a constant term" and expect the signed value; capturing the
+positive constant from a subtraction needs the splitting work tracked
+in `TODO.md`.
+
 **`optional` positions** are only legal under associative or AC heads
 (the head must be able to "grow" an argument list to accommodate the
 slot being present or absent) and the variable must have a `default`
