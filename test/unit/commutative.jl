@@ -8,7 +8,7 @@ using MatchMaker
 using SymbolicUtils
 using SymbolicUtils: Sym, SymReal, FnType
 
-@syms x y z a b s
+@syms x y z a b s t
 
 let
     g = Sym{SymReal}(:g; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
@@ -67,6 +67,28 @@ let
             only(collect(matches(m_len2, g(x, y)))),
             MarkersMap(s => g(x, y))
         )
+        # element-predicate failure is non-killing under a C head:
+        # combinations containing the failing element are rejected, but
+        # s can still take any sym-only sub-multiset while t absorbs
+        # the rest (contrast the contiguous-run kill in segments.jl)
+        m_pred = compile_pattern(
+            g(segment(s), segment(t));
+            vars = Dict(s => segmentspec(SymbolicUtils.issym))
+        )
+        @test isequal(
+            collect(matches(m_pred, g(x, 1, y))),
+            MarkersMap[
+                MarkersMap(s => g(), t => g(x, 1, y)),
+                MarkersMap(s => g(x), t => g(1, y)),
+                MarkersMap(s => g(y), t => g(x, 1)),
+                MarkersMap(s => g(x, y), t => g(1)),
+            ]
+        )
+        # ...but the failing element still has to be consumed somewhere
+        m_pred2 = compile_pattern(
+            g(x, segment(s)); vars = Dict(s => segmentspec(SymbolicUtils.issym))
+        )
+        @test isempty(matches(m_pred2, g(x, 1, y)))
     end
     @testset "nested frame failure" begin
         # a nested frame failing its head check must not clobber

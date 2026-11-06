@@ -92,6 +92,33 @@ using SymbolicUtils: Sym, SymReal, FnType
         h(x, z, y)
     )
 
+    # element-predicate rejection kills the position: every longer
+    # contiguous capture contains the failing element
+    m_kill = compile_pattern(
+        h(segment(s), y); vars = Dict(s => segmentspec(SymbolicUtils.issym))
+    )
+    @test isempty(collect(matches(m_kill, h(x, 1, y))))
+    # captures stop before the failing element
+    m_pred2 = compile_pattern(
+        h(segment(s), segment(t));
+        vars = Dict(s => segmentspec(SymbolicUtils.issym))
+    )
+    @test isequal(
+        collect(matches(m_pred2, h(x, 1, y))),
+        MarkersMap[
+            MarkersMap(s => h(), t => h(x, 1, y)),
+            MarkersMap(s => h(x), t => h(1, y)),
+        ]
+    )
+    # sequence predicate accept path
+    m_seq2 = compile_pattern(
+        h(segment(s));
+        vars = Dict(s => segmentspec(nothing, seq -> length(seq) == 2))
+    )
+    @test isequal(
+        only(collect(matches(m_seq2, h(x, y)))), MarkersMap(s => h(x, y))
+    )
+
     # fixed-domain head: segment min > domain arity is a compile error
     @test_throws ArgumentError compile_pattern(
         f2(segment(s), y);

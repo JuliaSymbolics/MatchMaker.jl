@@ -143,6 +143,30 @@ let
         # a slot + a segment: each singleton pick leaves the rest
         res = collect(matchall(slot(a) + segment(s), p + q + r))
         @test length(res) == 3
+        # element-predicate failure is non-killing (shared _comm_sel_ok
+        # path): combos containing 1 are rejected, sym-only sub-multisets
+        # still bind while t absorbs the rest
+        mp = compile_pattern(
+            f(segment(s), segment(t));
+            vars = Dict(s => segmentspec(SymbolicUtils.issym))
+        )
+        res = collect(matches(mp, f(x, 1, y)))
+        @test length(res) == 4
+        @test any(
+            Base.Fix1(isequal, MarkersMap(s => f(x, y), t => f(1))), res
+        )
+        # a failing element consumed nowhere → no match
+        mp2 = compile_pattern(
+            f(x, segment(s)); vars = Dict(s => segmentspec(SymbolicUtils.issym))
+        )
+        @test isempty(matches(mp2, f(x, g(y))))
+        # sequence predicate filters complete captures
+        msp = compile_pattern(
+            f(segment(s));
+            vars = Dict(s => segmentspec(nothing, seq -> length(seq) == 2))
+        )
+        @test isequal(only(matches(msp, f(p, q))), MarkersMap(s => f(p, q)))
+        @test isempty(matches(msp, f(p, q, r)))
     end
     @testset "optionals (phase 3)" begin
         # §4.7: consume each leftover arg first, then the default
