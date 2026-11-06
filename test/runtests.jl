@@ -52,6 +52,10 @@ end
     include("sympy/match.jl")
 end
 
+@safetestset "SymbolicUtils port" begin
+    include("su/rewrite.jl")
+end
+
 @safetestset "oracle cross-check" begin
     include("fuzz/crosscheck.jl")
 end
