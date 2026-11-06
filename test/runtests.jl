@@ -56,6 +56,10 @@ end
     include("su/rewrite.jl")
 end
 
+@safetestset "Metatheory port" begin
+    include("metatheory/reductions.jl")
+end
+
 @safetestset "oracle cross-check" begin
     include("fuzz/crosscheck.jl")
 end
