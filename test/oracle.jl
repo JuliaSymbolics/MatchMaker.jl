@@ -343,18 +343,22 @@ function _o_comm_seg!(
     spec = _o_segspec(vars, vs)
     pool = findall(!, used)
     if haskey(st.b, vs)
-        # bound elsewhere: its captured run must appear in the pool in
-        # pool order — the single viable selection (greedy subsequence)
+        # bound elsewhere: its captured multiset must be contained in
+        # the pool — under an unordered head the capture is a
+        # sub-multiset, so bound order does not matter
         run = st.sruns[vs]
         sel = Int[]
-        si = 1
-        for a in pool
-            si <= length(run) || break
-            isequal(run[si], sargs[a]) || continue
-            si += 1
-            push!(sel, a)
+        for e in run
+            found = false
+            for a in pool
+                a in sel && continue
+                isequal(e, sargs[a]) || continue
+                push!(sel, a)
+                found = true
+                break
+            end
+            found || return nothing
         end
-        si > length(run) || return nothing
         foreach(a -> used[a] = true, sel)
         rec(j + 1)
         foreach(a -> used[a] = false, sel)

@@ -122,20 +122,25 @@ function _comm_seg_first!(
     sel = seg_sel[j]
     b = eng.binds
     if b.seg_op[vid] !== nothing
-        # bound elsewhere: exactly one viable selection — the bound set,
-        # aligned in pool order
+        # bound elsewhere: exactly one viable selection — the bound
+        # multiset, matched elementwise against pool args (pool-order
+        # positions; under an unordered head the capture is a
+        # sub-multiset, so bound order does not matter)
         bound = b.seq[vid]
         empty!(sel)
         length(pool) >= length(bound) || return false
-        k = 1
-        for i in pool
-            k > length(bound) && break
-            if isequal(eng.subj[bound[k]], eng.subj[snbs[sstart + i - 1]])
-                push!(sel, i)
-                k += 1
+        for e in bound
+            found = false
+            for i in pool
+                i in sel && continue
+                if isequal(eng.subj[e], eng.subj[snbs[sstart + i - 1]])
+                    push!(sel, i)
+                    found = true
+                    break
+                end
             end
+            found || return false
         end
-        length(sel) == length(bound) || return false
         for i in sel
             used[i] = true
         end
