@@ -251,6 +251,12 @@ function _opt_default!(eng::MatchEngine, vid::Int32)
     if is_bound_node(b, vid)
         return isequal(eng.subj[b.node[vid]], dflt)
     end
+    spec = eng.pat.var_specs[vid]
+    pred = spec.predicate
+    if MData.isa_variant(spec, VarSpec.Slot) && dflt !== nothing &&
+            pred !== nothing && !pred(dflt)
+        return false
+    end
     b.extra[vid] = dflt
     push!(eng.trail, vid)
     if !_ready_constraints!(eng, vid)

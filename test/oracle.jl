@@ -272,6 +272,7 @@ function _o_seq!(
             _o_seq!(k, effop, kids, sargs, vars, st, ST, i + 1, sidx + 1)
         end
         MData.isa_variant(spec, VarSpec.Slot) && spec.default !== nothing &&
+            (spec.predicate === nothing || spec.predicate(spec.default)) &&
             _o_bind(vs, spec.default, st) do
                 _o_seq!(k, effop, kids, sargs, vars, st, ST, i + 1, sidx)
             end
@@ -320,6 +321,7 @@ function _o_comm!(k::F, effop, kids, sargs, vars, st, ST) where {F}
                 used[a] = false
             end
             MData.isa_variant(spec, VarSpec.Slot) && spec.default !== nothing &&
+                (spec.predicate === nothing || spec.predicate(spec.default)) &&
                 _o_bind(vs, spec.default, st) do
                     rec(j + 1)
                 end
