@@ -227,12 +227,13 @@ of scope (it would need a `TreeReal` pattern domain).
 
 General AC matching is **NP-complete** — bipartite-assignment
 enumeration can blow up exponentially in pathological cases. With
-*linear* patterns (each variable at most once) it is polynomial
-(`O(|p|·|s|³)`), and the engine front-loads candidate rejection
-(fail-fast before dispatch) so linear patterns are fast in practice.
-`maxsteps` bounds the search when a pattern/subject pair would
-otherwise enumerate forever — the result is a truncated prefix of the
-deterministic enumeration, not an error.
+*linear* patterns (each variable occurs at most once) it is polynomial —
+`O(|p|·|s|³)`, where `|p|` is the number of pattern positions and `|s|`
+the number of subject arguments under the AC head — and the engine
+front-loads candidate rejection (fail-fast before dispatch) so linear
+patterns are fast in practice. `maxsteps` bounds the search when a
+pattern/subject pair would otherwise enumerate forever — the result is a
+truncated prefix of the deterministic enumeration, not an error.
 
 Matching is otherwise linear-in-`matchall`-output in the same way as
 MatchPy: sequence captures and unordered assignment are the dominant
