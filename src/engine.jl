@@ -112,12 +112,16 @@ so it has no alternatives of its own.
         child_pos::Base.RefValue{Int}
         trail_mark::Base.RefValue{Int}
         """Pattern children in dispatch order: fixed ∪ slots (sorted by
-        ascending candidate count at init), then optionals, then segments."""
+        ascending candidate count at init), then optionals, then segments.
+        Every per-position array below (kids/bind_marks/assigned/scan/
+        cands/seg_*) is indexed by dispatch position j — `order[j]` is the
+        pattern child dispatched there — not by pattern-child index."""
         order::Vector{Int32}
         kids::Vector{Union{Nothing, MatchFrame.Type}}
         "Trail mark before each position's binds."
         bind_marks::Vector{Int}
-        "Subject arg index assigned to each non-segment position (0=none)."
+        """Subject arg index assigned to each non-segment position
+        (0=none; -1 = an optional position bound its default instead)."""
         assigned::Vector{Int32}
         "Next candidate index to try per position."
         scan::Vector{Int32}
