@@ -33,6 +33,7 @@ function oracle_matchall(
     st = (
         b = Dict{BasicSymbolic{SymReal}, Any}(),
         sruns = Dict{BasicSymbolic{SymReal}, Vector}(),
+        sops = Dict{BasicSymbolic{SymReal}, Any}(),
         res = Dict{BasicSymbolic{SymReal}, Any}[]
     )
     _o_match(pat, subj, vars, st) do
@@ -101,9 +102,11 @@ function _o_seg_bind(k::F, vs, effop, run, st, ST) where {F}
     end
     b[vs] = _o_seg_value(effop, ST, run)
     st.sruns[vs] = copy(run)
+    st.sops[vs] = effop
     k()
     delete!(b, vs)
     delete!(st.sruns, vs)
+    delete!(st.sops, vs)
     return nothing
 end
 
@@ -224,10 +227,25 @@ function _o_seq!(
         vs = varsym(c)
         spec = _o_segspec(vars, vs)
         if haskey(st.b, vs)
+            # bound elsewhere: contiguous-window recheck — ordered when
+            # the capture was under an ordered head, multiset when it
+            # was under an unordered one (MatchPy `try_add_variable`)
             run = st.sruns[vs]
             len = length(run)
-            sidx + len - 1 <= n &&
-                isequal(run, sargs[sidx:(sidx + len - 1)]) &&
+            ok = sidx + len - 1 <= n
+            if ok && _is_commutative_head(st.sops[vs], ST)
+                win = sargs[sidx:(sidx + len - 1)]
+                used = falses(len)
+                ok = all(run) do e
+                    found = findfirst(
+                        k -> !used[k] && isequal(e, win[k]), 1:len
+                    )
+                    found === nothing ? false : (used[found] = true)
+                end
+            elseif ok
+                ok = isequal(run, sargs[sidx:(sidx + len - 1)])
+            end
+            ok &&
                 _o_seq!(k, effop, kids, sargs, vars, st, ST, i + 1, sidx + len)
             return nothing
         end
