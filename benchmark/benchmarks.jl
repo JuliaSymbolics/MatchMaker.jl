@@ -8,7 +8,7 @@
 using BenchmarkTools
 using MatchMaker
 using SymbolicUtils
-using SymbolicUtils: Sym, SymReal, FnType
+using SymbolicUtils: Sym, SymReal, FnType, Const, BasicSymbolic, term
 
 include(joinpath(@__DIR__, "..", "test", "oracle.jl"))
 
@@ -82,3 +82,149 @@ SUITE["alloc"]["eachmatch g(3 slots)"] =
     @benchmarkable eachmatch(v -> true, $pat_c3, $sub_g3)
 SUITE["alloc"]["matchall g(3 slots)"] =
     @benchmarkable matchall($pat_c3, $sub_g3)
+
+# ------------------------------------------------------------------
+# Stress workloads (§12 follow-up) — scaling fronts the user asked
+# for: AC assignment enumeration, non-linear rechecks, segment
+# partitioning, identity coercion, and failing searches. Sizes keep
+# matchall in the 10²–10³ result range.
+#
+# SU's ~y absorbs the leftover args under + — our translation is
+# `segment` with min=1 (empty → the identity, covered by `optional`).
+# Duplicate pattern vars under + need `term(+, …)`: `x + x` and
+# `segment(s) + segment(s)` canonicalize to `2*(…)` otherwise.
+# ------------------------------------------------------------------
+
+@syms u v
+isconst_pred = SymbolicUtils.isconst
+
+# --- SU overhead port (overhead["acrule"]) -------------------------
+# SU: @rule ~x::is_literal_number + ~y => ~y on 1, a, a+2, a+b, a+2+b
+pat_su = compile_pattern(
+    slot(a) + segment(s); vars = Dict(a => slotspec(isconst_pred))
+)
+sub_su_1 = Const{SymReal}(1)
+sub_su_a = a
+sub_su_a2 = a + 2
+sub_su_ab = a + b
+sub_su_a2b = a + 2 + b
+
+SUITE["su_overhead"] = BenchmarkGroup()
+SUITE["su_overhead"]["isconst + seg vs 1"] =
+    @benchmarkable matchall($pat_su, $sub_su_1)
+SUITE["su_overhead"]["isconst + seg vs a"] =
+    @benchmarkable matchall($pat_su, $sub_su_a)
+SUITE["su_overhead"]["isconst + seg vs a+2"] =
+    @benchmarkable matchall($pat_su, $sub_su_a2)
+SUITE["su_overhead"]["isconst + seg vs a+b"] =
+    @benchmarkable matchall($pat_su, $sub_su_ab)
+SUITE["su_overhead"]["isconst + seg vs a+2+b"] =
+    @benchmarkable matchall($pat_su, $sub_su_a2b)
+
+# --- AC assignment enumeration: k slots vs k args → k! -------------
+pat_k5 = compile_pattern(slot(a) + slot(b) + slot(c) + slot(d) + slot(s))
+pat_k6 = compile_pattern(
+    slot(a) + slot(b) + slot(c) + slot(d) + slot(s) + slot(t)
+)
+sub_k5 = p + q + r + x + y
+sub_k6 = p + q + r + x + y + z
+
+# --- Segment partitioning ------------------------------------------
+# two sub-multiset segments under + → 2^n ordered partitions
+pat_seg2_ac = compile_pattern(segment(s) + segment(t))
+sub_8args = p + q + r + x + y + z + a + b
+# three contiguous segments under a free head → C(n+2, 2) splits
+pat_seg3_f = compile_pattern(f(segment(s), segment(t), segment(w)))
+sub_f8 = f(p, q, r, x, y, z, a, b)
+
+# --- Non-linear AC (factor extraction) ------------------------------
+# x must unify across the Mul terms; a segment absorbs leftovers.
+pat_factor = compile_pattern(slot(w) * slot(y) + slot(w) * slot(z))
+sub_fact2 = p * q + p * r
+pat_factor_seg = compile_pattern(
+    slot(w) * slot(y) + slot(w) * slot(z) + segment(s)
+)
+sub_fact4 = p * q + p * r + p * s + p * t
+pat_factor3_seg = compile_pattern(
+    slot(w) * slot(y) + slot(w) * slot(z) + slot(w) * slot(u) + segment(s)
+)
+sub_fact6 = p * q + p * r + p * s + p * t + p * u + p * v
+# no shared factor → the full assignment space is searched, zero results
+pat_nofact = compile_pattern(
+    slot(w) * slot(y) + slot(w) * slot(z) + slot(w) * slot(u) +
+        slot(w) * slot(v)
+)
+sub_nofact = p * q + r * s + t * u + v * x
+
+# --- Non-linear slots, rechecked late -------------------------------
+# a..d take 4 of 6 args, then s must pair the last two — fails on all
+# distinct args (≈720 assignment attempts), succeeds on term-dups
+pat_nl_late = compile_pattern(term(
+    +, slot(a), slot(b), slot(c), slot(d), slot(s), slot(s)
+))
+sub_nl_late_fail = p + q + r + x + y + z
+sub_nl_late_hit = term(+, p, q, r, x, p, p)
+# non-linear segment under AC: s must capture the same multiset twice
+pat_nl_seg = compile_pattern(term(+, segment(s), segment(s)))
+sub_nl_seg_hit = term(+, p, q, r, p, q, r)
+sub_nl_seg_fail = term(+, p, q, r, p, q, x)
+# non-linear segment under a commutative head (multiset recheck)
+pat_nl_g = compile_pattern(term(g, segment(s), segment(s)))
+sub_nl_g_hit = g(p, q, p, q)
+# nested non-linear: a bound at depth 1, rechecked at depth 4
+pat_nl_deep = compile_pattern(
+    f(slot(a), f(slot(a), f(slot(a), slot(a))))
+)
+sub_nl_deep_hit = f(p, f(p, f(p, p)))
+sub_nl_deep_fail = f(p, f(p, f(p, q)))
+
+# --- Failing searches ------------------------------------------------
+# missing literal → phase-1 candidate matrix rejects immediately
+pat_fail_lit = compile_pattern(42 + slot(a) + slot(b))
+# --- Identity coercion -----------------------------------------------
+pat_coerce = compile_pattern(slot(a) + segment(s))
+sub_coerce = p
+
+SUITE["stress"] = BenchmarkGroup()
+# AC enumeration
+SUITE["stress"]["ac 5 slots matchall (5!)"] =
+    @benchmarkable matchall($pat_k5, $sub_k5)
+SUITE["stress"]["ac 6 slots matchall (6!)"] =
+    @benchmarkable matchall($pat_k6, $sub_k6)
+SUITE["stress"]["ac 6 slots first-match"] =
+    @benchmarkable match($pat_k6, $sub_k6)
+# segment partitioning
+SUITE["stress"]["ac seg+seg on 8 args (2^8)"] =
+    @benchmarkable matchall($pat_seg2_ac, $sub_8args)
+SUITE["stress"]["free f 3 segs on 8 args"] =
+    @benchmarkable matchall($pat_seg3_f, $sub_f8)
+# non-linear factor extraction
+SUITE["stress"]["ac factor x*y+x*z on 2 prods"] =
+    @benchmarkable matchall($pat_factor, $sub_fact2)
+SUITE["stress"]["ac factor+rest on 4 prods"] =
+    @benchmarkable matchall($pat_factor_seg, $sub_fact4)
+SUITE["stress"]["ac factor3+rest on 6 prods"] =
+    @benchmarkable matchall($pat_factor3_seg, $sub_fact6)
+SUITE["stress"]["ac factor4 no common factor"] =
+    @benchmarkable matchall($pat_nofact, $sub_nofact)
+# non-linear late rechecks
+SUITE["stress"]["ac nl slots fail (distinct)"] =
+    @benchmarkable matchall($pat_nl_late, $sub_nl_late_fail)
+SUITE["stress"]["ac nl slots hit (dup args)"] =
+    @benchmarkable matchall($pat_nl_late, $sub_nl_late_hit)
+SUITE["stress"]["ac nl segment hit (2^6 subs)"] =
+    @benchmarkable matchall($pat_nl_seg, $sub_nl_seg_hit)
+SUITE["stress"]["ac nl segment fail (odd multiset)"] =
+    @benchmarkable matchall($pat_nl_seg, $sub_nl_seg_fail)
+SUITE["stress"]["comm nl segment g hit"] =
+    @benchmarkable matchall($pat_nl_g, $sub_nl_g_hit)
+SUITE["stress"]["nested nl depth-4 hit"] =
+    @benchmarkable matchall($pat_nl_deep, $sub_nl_deep_hit)
+SUITE["stress"]["nested nl depth-4 fail"] =
+    @benchmarkable matchall($pat_nl_deep, $sub_nl_deep_fail)
+# failing searches
+SUITE["stress"]["ac missing literal fail-fast"] =
+    @benchmarkable matchall($pat_fail_lit, $sub_8args)
+# identity coercion
+SUITE["stress"]["ac singleton coerce x+seg vs p"] =
+    @benchmarkable matchall($pat_coerce, $sub_coerce)
