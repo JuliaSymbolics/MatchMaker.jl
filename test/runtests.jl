@@ -44,6 +44,10 @@ end
     include("unit/constraints.jl")
 end
 
+@safetestset "MatchPy port" begin
+    include("matchpy/one_to_one.jl")
+end
+
 @safetestset "oracle cross-check" begin
     include("fuzz/crosscheck.jl")
 end

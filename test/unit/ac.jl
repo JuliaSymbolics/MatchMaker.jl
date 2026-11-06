@@ -126,10 +126,12 @@ let
         @test isequal(
             only(matchall(f(x, segment(s)), f(x, y))), MarkersMap(s => f(y))
         )
-        # two same-var segments must split equal multisets
+        # two same-var segments must split equal multisets — the bound
+        # run is a multiset recheck, so [q,p] survives pool order [p,q]
         res = collect(matchall(f(segment(s), segment(s)), f(p, q, p, q)))
-        @test length(res) == 2            # distinct assignments, equal binds
-        @test all(isequal(MarkersMap(s => f(p, q))), res)
+        @test length(res) == 4            # distinct assignments
+        @test count(isequal(MarkersMap(s => f(p, q))), res) == 3
+        @test count(isequal(MarkersMap(s => f(q, p))), res) == 1
         @test isempty(matchall(f(segment(s), segment(s)), f(p, q, p, r)))
         # leftovers distribute over every subset split
         res = collect(matchall(f(segment(s), segment(t)), f(p, q, r)))

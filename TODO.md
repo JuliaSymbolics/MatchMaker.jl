@@ -72,6 +72,26 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   Getting unwieldy — consider passing the `MatchFrame` as-is and
   destructuring inside the helper instead.
 
+- **Ambiguous segment materialization across binder heads.** When a
+  segment var is captured under one head and rechecked under another —
+  e.g. `h(h(segment(x)), g(segment(x)))` vs `h(h(x, y), g(y, x))` — the
+  binding materializes through the *first* binder's operation
+  (`x ↦ h(x, y)`). `x ↦ g(x, y)` is an equivalently valid answer
+  (the multiset recheck passed under both), and which head wins is an
+  implementation detail of dispatch order — there is no user-facing
+  guarantee which materialization is produced. Triage: document
+  first-binder-wins, pick a canonical materialization, or surface the
+  ambiguity to the caller.
+
+- **Bound segment capture length?** Segment-scale buffers grow with
+  subject arity: per-frame `used`/`seg_sel`/`seg_pool`/`cands`, the
+  captured run `binds.seq[vid]`, `segbuf` (sequence predicates), the
+  `_seg_try!` recheck mask, and `_seg_value`'s materialized `args`.
+  Investigate a practical bound on how long a segment can usefully be
+  (spec-side cap or engine-level limit like `maxsteps`) — it would
+  bound these allocations and could keep `SmallV` storage
+  stack-resident.
+
 - **`step!` currently nests calls.** `step!(eng, kf)` inside
   `_step_call!` recurses one Julia frame per *pattern* depth — bounded
   by pattern size and independent of subject size/sharing, so not a
@@ -83,6 +103,12 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   `eng.last_pop` so a resumed parent knows whether its popped child
   produced or failed. Revisit if pattern depth or AC-phase structure
   demands it.
+
+- **Optional sequence wildcards (`oa__`/`oa___`, leftover-absorbing
+  `oa_` under A/AC).** Capture-wise a `min = 0` segment; the deltas are
+  a spec `default`, a bind-default-on-empty branch, and
+  materialization. Per-case work/perf breakdown:
+  `docs/optional-segments.md`.
 
 ## Tests
 

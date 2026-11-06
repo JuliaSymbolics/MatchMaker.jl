@@ -33,6 +33,7 @@ function oracle_matchall(
     st = (
         b = Dict{BasicSymbolic{SymReal}, Any}(),
         sruns = Dict{BasicSymbolic{SymReal}, Vector}(),
+        sops = Dict{BasicSymbolic{SymReal}, Any}(),
         res = Dict{BasicSymbolic{SymReal}, Any}[]
     )
     _o_match(pat, subj, vars, st) do
@@ -101,9 +102,11 @@ function _o_seg_bind(k::F, vs, effop, run, st, ST) where {F}
     end
     b[vs] = _o_seg_value(effop, ST, run)
     st.sruns[vs] = copy(run)
+    st.sops[vs] = effop
     k()
     delete!(b, vs)
     delete!(st.sruns, vs)
+    delete!(st.sops, vs)
     return nothing
 end
 
@@ -224,10 +227,25 @@ function _o_seq!(
         vs = varsym(c)
         spec = _o_segspec(vars, vs)
         if haskey(st.b, vs)
+            # bound elsewhere: contiguous-window recheck — ordered when
+            # the capture was under an ordered head, multiset when it
+            # was under an unordered one (MatchPy `try_add_variable`)
             run = st.sruns[vs]
             len = length(run)
-            sidx + len - 1 <= n &&
-                isequal(run, sargs[sidx:(sidx + len - 1)]) &&
+            ok = sidx + len - 1 <= n
+            if ok && _is_commutative_head(st.sops[vs], ST)
+                win = sargs[sidx:(sidx + len - 1)]
+                used = falses(len)
+                ok = all(run) do e
+                    found = findfirst(
+                        k -> !used[k] && isequal(e, win[k]), 1:len
+                    )
+                    found === nothing ? false : (used[found] = true)
+                end
+            elseif ok
+                ok = isequal(run, sargs[sidx:(sidx + len - 1)])
+            end
+            ok &&
                 _o_seq!(k, effop, kids, sargs, vars, st, ST, i + 1, sidx + len)
             return nothing
         end
@@ -343,18 +361,22 @@ function _o_comm_seg!(
     spec = _o_segspec(vars, vs)
     pool = findall(!, used)
     if haskey(st.b, vs)
-        # bound elsewhere: its captured run must appear in the pool in
-        # pool order — the single viable selection (greedy subsequence)
+        # bound elsewhere: its captured multiset must be contained in
+        # the pool — under an unordered head the capture is a
+        # sub-multiset, so bound order does not matter
         run = st.sruns[vs]
         sel = Int[]
-        si = 1
-        for a in pool
-            si <= length(run) || break
-            isequal(run[si], sargs[a]) || continue
-            si += 1
-            push!(sel, a)
+        for e in run
+            found = false
+            for a in pool
+                a in sel && continue
+                isequal(e, sargs[a]) || continue
+                push!(sel, a)
+                found = true
+                break
+            end
+            found || return nothing
         end
-        si > length(run) || return nothing
         foreach(a -> used[a] = true, sel)
         rec(j + 1)
         foreach(a -> used[a] = false, sel)

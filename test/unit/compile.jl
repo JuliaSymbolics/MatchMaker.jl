@@ -78,10 +78,12 @@ end
     @test !m.is_ground[m.root]
     @test !m.is_ground[m.ir[slot(y)]]
 
-    # var-free pattern compiles and is fully ground
+    # var-free pattern compiles; the `+` head itself is not ground —
+    # `isequal` cannot decide an unordered/coercible head
     mg = compile_pattern(x + 2)
     @test mg.nvars == 0
-    @test all(mg.is_ground)
+    @test !mg.is_ground[mg.root]
+    @test count(!, mg.is_ground) == 1
 end
 
 @testset "var table" begin

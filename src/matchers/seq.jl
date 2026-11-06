@@ -84,6 +84,28 @@ function _seg_try!(
         # nodes), so compare exprs, not node indices.
         seq = b.seq[vid]
         length(seq) == len || return SegResult.Dead
+        if iszero(len)
+            return SegResult.Bound
+        end
+        if _is_commutative_head(b.seg_op[vid], symtype(eng.subj[snbs[sidx]]))
+            # bound under an unordered head — the capture is a multiset,
+            # so the recheck compares multisets rather than the run's
+            # incidental pool order (MatchPy `try_add_variable`)
+            used = falses(len)
+            for e in seq
+                found = false
+                for k in 1:len
+                    if !used[k] &&
+                            isequal(eng.subj[e], eng.subj[snbs[sidx + k - 1]])
+                        used[k] = true
+                        found = true
+                        break
+                    end
+                end
+                found || return SegResult.Dead
+            end
+            return SegResult.Bound
+        end
         for i in 1:len
             isequal(
                 eng.subj[seq[i]], eng.subj[snbs[sidx + i - 1]]

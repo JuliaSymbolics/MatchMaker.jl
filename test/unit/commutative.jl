@@ -55,7 +55,7 @@ let
             MarkersMap(s => g(y))
         )
         # two same-var segments need equal multisets left over
-        @test length(matchall(g(segment(s), segment(s)), g(x, y, x, y))) == 2
+        @test length(matchall(g(segment(s), segment(s)), g(x, y, x, y))) == 4
         @test isempty(matchall(g(segment(s), segment(s)), g(x, y, x, z)))
         # grown selections aren't skipped: every sub-size fails the
         # sequence predicate, so the only viable capture needs growth
@@ -95,6 +95,23 @@ let
         res = collect(matchall(g(segment(s), segment(s)), g(x, x, y, y)))
         @test length(res) == 4
         @test all(isequal(MarkersMap(s => g(x, y))), res)
+        # a run bound under an ordered head is a multiset when
+        # rechecked under an unordered head — pool order must not
+        # matter
+        vars = Dict(x => segmentspec(nothing; min = 1))
+        res = collect(
+            matchall(
+                compile_pattern(h(h(segment(x)), g(segment(x))); vars),
+                h(h(x, y), g(y, x))
+            )
+        )
+        @test isequal(only(res), MarkersMap(x => h(x, y)))
+        @test isempty(
+            matchall(
+                compile_pattern(h(h(segment(x)), g(segment(x))); vars),
+                h(h(x, y), g(x, x))
+            )
+        )
     end
     @testset "nested frame failure" begin
         # a nested frame failing its head check must not clobber
