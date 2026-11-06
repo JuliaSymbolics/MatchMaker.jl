@@ -54,12 +54,18 @@ function instantiate(template::BasicSymbolic{SymReal}, subst)
         for j in argstart:length(nbs)
             cexpr = out[nbs[j]]
             if is_seg[nbs[j]]
-                if isconst(cexpr)
-                    continue    # identity element: zero args (§5.6)
-                elseif iscall(cexpr) && operation(cexpr) === newop
+                if iscall(cexpr) && operation(cexpr) === newop
                     for ca in arguments(cexpr)
                         push!(newargs, ca)
                     end
+                elseif isconst(cexpr)
+                    # a Const binding equal to the head's identity
+                    # contributes zero args (§5.6); any other Const is a
+                    # one-element literal capture (canonical +(2) ≡ 2)
+                    id = _identity_el(newop, symtype(t))
+                    id === nothing || !isequal(unwrap_const(cexpr), id) ||
+                        continue
+                    push!(newargs, cexpr)
                 else
                     push!(newargs, cexpr)
                 end
