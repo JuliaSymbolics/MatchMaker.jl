@@ -102,9 +102,23 @@ function _step_ac!(
             end
             isempty(cands[j]) && return _call_fail!(eng, mark)
         end
-        perm = sortperm([(length(cands[j]), j) for j in 1:nassign])
-        order[1:nassign] = order[perm]
-        cands[1:nassign] = cands[perm]
+        # most-constrained first — insertion-sort the assignment prefix
+        # by candidate count, keeping order/cands permuted identically
+        # (stable: ties keep plan order; nassign is small, and this avoids
+        # allocating a perm vector or permuted temporaries)
+        for i in 2:nassign
+            o = order[i]
+            ci = cands[i]
+            ni = length(ci)
+            j = i - 1
+            while j >= 1 && length(cands[j]) > ni
+                order[j + 1] = order[j]
+                cands[j + 1] = cands[j]
+                j -= 1
+            end
+            order[j + 1] = o
+            cands[j + 1] = ci
+        end
         child_pos[] = 1
     elseif child_pos[] > np
         child_pos[] = np
