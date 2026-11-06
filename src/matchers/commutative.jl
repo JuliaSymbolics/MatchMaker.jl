@@ -125,24 +125,31 @@ function _comm_seg_first!(
         # bound elsewhere: exactly one viable selection — the bound
         # multiset, matched elementwise against pool args (pool-order
         # positions; under an unordered head the capture is a
-        # sub-multiset, so bound order does not matter)
+        # sub-multiset, so bound order does not matter). `used` doubles
+        # as the selection mask: pool ⊆ unused positions, so marking as
+        # we select replaces a linear `i in sel` membership scan.
         bound = b.seq[vid]
         empty!(sel)
         length(pool) >= length(bound) || return false
         for e in bound
             found = false
             for i in pool
-                i in sel && continue
+                used[i] && continue
                 if isequal(eng.subj[e], eng.subj[snbs[sstart + i - 1]])
+                    used[i] = true
                     push!(sel, i)
                     found = true
                     break
                 end
             end
-            found || return false
-        end
-        for i in sel
-            used[i] = true
+            if !found
+                # release the partial selection's marks
+                for i in sel
+                    used[i] = false
+                end
+                empty!(sel)
+                return false
+            end
         end
         owns_bind[j] = false
         return true
