@@ -262,6 +262,10 @@ function _plan_call!(
             is_ground[i] &= is_ground[c]
         end
         is_ground[i] &= (iszero(head) || is_ground[head])
+        # an unordered head may match a reordered subject, and an
+        # associative head may match a flattened/coerced one — a plain
+        # `isequal` on the ground literal cannot decide either
+        is_ground[i] &= !(ac || comm)
         return if ac
             NodePlan.ACCall(op, head, fixed, slots, optionals, segments)
         else
@@ -285,6 +289,9 @@ function _plan_call!(
             is_ground[i] &= is_ground[c]
         end
         is_ground[i] &= (iszero(head) || is_ground[head])
+        # same: associative heads flatten/coerce — not decidable by
+        # `isequal` alone
+        is_ground[i] &= !assoc
         # Free-head calls with segment children route to SeqCall: the
         # Seq frame implements the contiguous-run capture both cases
         # share (§4.5). Identity coercion for A-heads is milestone 7.
