@@ -142,61 +142,193 @@ so it has no alternatives of its own.
 end
 const MatchFrameT = MatchFrame.Type
 
-"""
-    _new_frame(plan, pat_node, subj_node, nchildren) -> MatchFrameT
 
-Build the frame for the non-leaf plan at `pat_node` against subject node
-`subj_node`. `nchildren` sizes the per-position `kids` storage (children
-count of `plan`'s argument list). Leaf plans never get frames.
+###
+### FramePool
+###
+
 """
-function _new_frame(
-        plan::NodePlanT, pat_node::Int32, subj_node::Int32,
-        nchildren::Int
-    )
-    return @match plan begin
-        NodePlan.Call(; op, head) => MatchFrame.Call(
-            pat_node, subj_node, Ref(0), Ref(0),
-            zeros(Int32, nchildren)
-        )
-        NodePlan.SeqCall(; op, head) => MatchFrame.Seq(
-            pat_node, subj_node, Ref(0), Ref(0),
-            zeros(Int32, nchildren),
-            zeros(Int, nchildren), zeros(Int, nchildren),
-            zeros(Int, nchildren), zeros(Int, nchildren + 1),
-            falses(nchildren)
-        )
-        NodePlan.CommCall(; fixed, slots, optionals, segments) => begin
-            order = Int32[]
-            append!(order, fixed, slots, optionals, segments)
-            np = length(order)
-            MatchFrame.Comm(
-                pat_node, subj_node, Ref(0), Ref(0), order,
-                zeros(Int32, np),
-                zeros(Int, np), zeros(Int32, np), ones(Int32, np),
-                BitVector(), [SmallV{Int32}() for _ in 1:np],
-                Vector{Int32}[Int32[] for _ in 1:np],
-                zeros(Int, np + 1), falses(np)
-            )
-        end
-        NodePlan.ACCall(; fixed, slots, optionals, segments) => begin
-            order = Int32[]
-            append!(order, fixed, slots, optionals, segments)
-            np = length(order)
-            MatchFrame.AC(
-                pat_node, subj_node, Ref(0), Ref(0), order,
-                zeros(Int32, np),
-                zeros(Int, np), zeros(Int32, np), ones(Int32, np),
-                BitVector(), [SmallV{Int32}() for _ in 1:np],
-                [SmallV{Int32}() for _ in 1:np],
-                Vector{Int32}[Int32[] for _ in 1:np],
-                zeros(Int, np + 1), falses(np)
-            )
-        end
-        _ => error(
-            lazy"pattern node $pat_node has an unsupported plan for this milestone"
-        )
+    FramePool
+
+Per-variant freelists of dead frames. When `sp` retracts past index `i`,
+every frame in `stk[i:sp]` is dead and can be recycled: `pool_release!`
+returns them to the matching freelist and `pool_acquire!` hands out a
+reset one — its buffers (`kids`, `assigned`, `seg_sel`, …) are resized
+and cleared in place instead of reallocating per dispatch.
+"""
+struct FramePool
+    call::Vector{MatchFrameT}
+    seq::Vector{MatchFrameT}
+    comm::Vector{MatchFrameT}
+    ac::Vector{MatchFrameT}
+end
+FramePool() = FramePool(MatchFrameT[], MatchFrameT[], MatchFrameT[], MatchFrameT[])
+
+"    _reset!(v, n, x) -> v — resize to `n`, fill with `x`."
+function _reset!(v::AbstractVector, n::Int, x)
+    resize!(v, n)
+    fill!(v, x)
+    return v
+end
+
+"_reset! for nested SmallV/Vector buffers: reuse live objects, empty them."
+function _reset!(v::Vector{T}, n::Int) where T <: Union{SmallV{Int32}, Vector{Int32}}
+    while length(v) < n
+        push!(v, T())
+    end
+    resize!(v, n)
+    foreach(empty!, v)
+    return v
+end
+
+"""
+    pool_release!(pool::FramePool, f::MatchFrameT)
+
+Return `f` to the freelist for its variant. The frame's buffers keep
+their capacity; `pool_acquire!` reinitializes every field on reuse, so
+stale contents are never observed.
+"""
+function pool_release!(pool::FramePool, f::MatchFrameT)
+    return @match f begin
+        MatchFrame.Call() => push!(pool.call, f)
+        MatchFrame.Seq() => push!(pool.seq, f)
+        MatchFrame.Comm() => push!(pool.comm, f)
+        MatchFrame.AC() => push!(pool.ac, f)
     end
 end
+
+"""
+    pool_acquire!(pool, ::Type{MatchFrame.Call}, pat_node, subj_node, nchildren)
+    pool_acquire!(pool, ::Type{MatchFrame.Comm}, pat_node, subj_node,
+                  fixed, slots, optionals, segments)
+
+Return a frame of the requested variant — a reset pooled frame if one is
+available, else a fresh allocation.
+"""
+function pool_acquire!(
+        pool::FramePool, ::Type{MatchFrame.Call},
+        pat_node::Int32, subj_node::Int32, n::Int
+    )
+    isempty(pool.call) && return MatchFrame.Call(
+        pat_node, subj_node, Ref(0), Ref(0), zeros(Int32, n)
+    )
+    f = pop!(pool.call)
+    f.pat_node = pat_node
+    f.subj_node = subj_node
+    f.child_pos[] = 0
+    f.trail_mark[] = 0
+    _reset!(f.kids, n, Int32(0))
+    return f
+end
+
+function pool_acquire!(
+        pool::FramePool, ::Type{MatchFrame.Seq},
+        pat_node::Int32, subj_node::Int32, n::Int
+    )
+    isempty(pool.seq) && return MatchFrame.Seq(
+        pat_node, subj_node, Ref(0), Ref(0),
+        zeros(Int32, n),
+        zeros(Int, n), zeros(Int, n), zeros(Int, n),
+        zeros(Int, n + 1), falses(n)
+    )
+    f = pop!(pool.seq)
+    f.pat_node = pat_node
+    f.subj_node = subj_node
+    f.child_pos[] = 0
+    f.trail_mark[] = 0
+    _reset!(f.kids, n, Int32(0))
+    _reset!(f.bind_marks, n, 0)
+    _reset!(f.arg_start, n, 0)
+    _reset!(f.capture_len, n, 0)
+    _reset!(f.min_tail, n + 1, 0)
+    resize!(f.owns_bind, n)
+    f.owns_bind .= false
+    return f
+end
+
+function _reset_order!(f::MatchFrameT, fixed, slots, optionals, segments)
+    np = length(fixed) + length(slots) + length(optionals) + length(segments)
+    resize!(f.order, np)
+    i = 0
+    for g in (fixed, slots, optionals, segments), c in g
+        f.order[i += 1] = c
+    end
+    return np
+end
+
+function _reset_comm_fields!(
+        f::MatchFrameT, pat_node::Int32, subj_node::Int32,
+        fixed, slots, optionals, segments
+    )
+    f.pat_node = pat_node
+    f.subj_node = subj_node
+    f.child_pos[] = 0
+    f.trail_mark[] = 0
+    np = _reset_order!(f, fixed, slots, optionals, segments)
+    _reset!(f.kids, np, Int32(0))
+    _reset!(f.bind_marks, np, 0)
+    _reset!(f.assigned, np, Int32(0))
+    _reset!(f.scan, np, Int32(1))
+    empty!(f.used)
+    _reset!(f.seg_sel, np)
+    _reset!(f.seg_pool, np)
+    _reset!(f.min_tail, np + 1, 0)
+    resize!(f.owns_bind, np)
+    f.owns_bind .= false
+    return np
+end
+
+function pool_acquire!(
+        pool::FramePool, ::Type{MatchFrame.Comm},
+        pat_node::Int32, subj_node::Int32,
+        fixed, slots, optionals, segments
+    )
+    if isempty(pool.comm)
+        order = Int32[]
+        append!(order, fixed, slots, optionals, segments)
+        np = length(order)
+        return MatchFrame.Comm(
+            pat_node, subj_node, Ref(0), Ref(0), order,
+            zeros(Int32, np),
+            zeros(Int, np), zeros(Int32, np), ones(Int32, np),
+            BitVector(), [SmallV{Int32}() for _ in 1:np],
+            Vector{Int32}[Int32[] for _ in 1:np],
+            zeros(Int, np + 1), falses(np)
+        )
+    end
+    f = pop!(pool.comm)
+    _reset_comm_fields!(f, pat_node, subj_node, fixed, slots, optionals, segments)
+    return f
+end
+
+function pool_acquire!(
+        pool::FramePool, ::Type{MatchFrame.AC},
+        pat_node::Int32, subj_node::Int32,
+        fixed, slots, optionals, segments
+    )
+    if isempty(pool.ac)
+        order = Int32[]
+        append!(order, fixed, slots, optionals, segments)
+        np = length(order)
+        return MatchFrame.AC(
+            pat_node, subj_node, Ref(0), Ref(0), order,
+            zeros(Int32, np),
+            zeros(Int, np), zeros(Int32, np), ones(Int32, np),
+            BitVector(), [SmallV{Int32}() for _ in 1:np],
+            [SmallV{Int32}() for _ in 1:np],
+            Vector{Int32}[Int32[] for _ in 1:np],
+            zeros(Int, np + 1), falses(np)
+        )
+    end
+    f = pop!(pool.ac)
+    np = _reset_comm_fields!(
+        f, pat_node, subj_node, fixed, slots, optionals, segments
+    )
+    _reset!(f.cands, np)
+    return f
+end
+
+
 
 ###
 ### MatchEngine (§5.4)
@@ -220,9 +352,11 @@ mutable struct MatchEngine
     "Node index of the subject root."
     const sroot::Int32
     "DFS stack of live frames; `stk[1]` is the root when `sp >= 1`."
-    stk::Vector{MatchFrameT}
+    stk::Vector{Union{Nothing, MatchFrameT}}
     "Top of `stk` — the deepest live frame index."
     sp::Int
+    "Freelist of dead frames by variant — see [`FramePool`](@ref)."
+    pool::FramePool
     "Index-only binding state."
     const binds::Bindings
     "Var ids bound, in order — backtracking unwinds to a mark."
@@ -290,7 +424,8 @@ function MatchEngine(
     end
 
     eng = MatchEngine(
-        pat, subj, sroot, MatchFrameT[], 0, binds, trail, econstrs,
+        pat, subj, sroot, Union{Nothing, MatchFrameT}[], 0, FramePool(),
+        binds, trail, econstrs,
         falses(length(econstrs)), var_constrs, global_constrs,
         argbuf, segbuf, false, 0,
         maxsteps
@@ -302,7 +437,7 @@ function MatchEngine(
     isleaf = MData.isa_variant(root_plan, NodePlan.Literal) ||
         MData.isa_variant(root_plan, NodePlan.Slot)
     if !isleaf
-        _push_frame!(eng, _root_frame(root_plan, pat.root, sroot))
+        _push_frame!(eng, _acquire_frame!(eng, root_plan, pat.root, sroot))
     end
     return eng
 end
@@ -327,34 +462,57 @@ function _kid(eng::MatchEngine, kids::Vector{Int32}, j::Int)
     return ki == 0 ? nothing : eng.stk[ki]
 end
 
-"Drop position `j`'s kid: mark it none and retract `sp` past its index."
+"Drop position `j`'s kid: release the dead range and retract `sp`."
 function _drop_kid!(eng::MatchEngine, kids::Vector{Int32}, j::Int)
     ki = kids[j]
     kids[j] = Int32(0)
-    ki == 0 || (eng.sp = ki - 1)
+    ki == 0 && return
+    _pool_release_range!(eng, ki, eng.sp)
+    eng.sp = ki - 1
     return
 end
 
+"Return every frame in `stk[lo:hi]` to the pool and clear the slots."
+function _pool_release_range!(eng::MatchEngine, lo::Integer, hi::Integer)
+    for i in lo:hi
+        f = eng.stk[i]
+        f === nothing && continue
+        eng.stk[i] = nothing
+        pool_release!(eng.pool, f)
+    end
+    return
+end
 
-function _root_frame(plan::NodePlanT, pat_node::Int32, subj_node::Int32)
+"""
+    _acquire_frame!(eng, plan, pat_node, subj_node) -> MatchFrameT
+
+Acquire the frame for the non-leaf `plan` — from `eng.pool` when a dead
+frame of the right variant is available, else freshly allocated.
+"""
+function _acquire_frame!(
+        eng::MatchEngine, plan::NodePlanT, pat_node::Int32, subj_node::Int32
+    )
     return @match plan begin
-        NodePlan.Call(; children) => _new_frame(
-            plan, pat_node, subj_node, length(children)
+        NodePlan.Call(; children) => pool_acquire!(
+            eng.pool, MatchFrame.Call, pat_node, subj_node, length(children)
         )
-        NodePlan.SeqCall(; children) => _new_frame(
-            plan, pat_node, subj_node, length(children)
+        NodePlan.SeqCall(; children) => pool_acquire!(
+            eng.pool, MatchFrame.Seq, pat_node, subj_node, length(children)
         )
-        NodePlan.CommCall(; fixed, slots, optionals, segments) => _new_frame(
-            plan, pat_node, subj_node,
-            length(fixed) + length(slots) + length(optionals) + length(segments)
+        NodePlan.CommCall(; fixed, slots, optionals, segments) => pool_acquire!(
+            eng.pool, MatchFrame.Comm, pat_node, subj_node,
+            fixed, slots, optionals, segments
         )
-        NodePlan.ACCall(; fixed, slots, optionals, segments) => _new_frame(
-            plan, pat_node, subj_node,
-            length(fixed) + length(slots) + length(optionals) + length(segments)
+        NodePlan.ACCall(; fixed, slots, optionals, segments) => pool_acquire!(
+            eng.pool, MatchFrame.AC, pat_node, subj_node,
+            fixed, slots, optionals, segments
         )
-        _ => _new_frame(plan, pat_node, subj_node, 0)
+        _ => error(
+            lazy"pattern node $pat_node has an unsupported plan for this milestone"
+        )
     end
 end
+
 
 ###
 ### Trail (§5.3)
@@ -652,7 +810,7 @@ function _step_call!(
         else
             kf = _kid(eng, kids, child_pos[])
             if kf === nothing
-                kf = _new_frame(cplan, cp, cs, _nchildren(cplan))
+                kf = _acquire_frame!(eng, cplan, cp, cs)
                 kids[child_pos[]] = _push_frame!(eng, kf)
             end
             if step!(eng, kf) === FrameStatus.Produced
@@ -671,17 +829,6 @@ function _call_fail!(eng::MatchEngine, mark::Base.RefValue{Int})
     return FrameStatus.Failed
 end
 
-function _nchildren(plan::NodePlanT)
-    return @match plan begin
-        NodePlan.Call(; children) => length(children)
-        NodePlan.SeqCall(; children) => length(children)
-        NodePlan.CommCall(; fixed, slots, optionals, segments) =>
-            length(fixed) + length(slots) + length(optionals) + length(segments)
-        NodePlan.ACCall(; fixed, slots, optionals, segments) =>
-            length(fixed) + length(slots) + length(optionals) + length(segments)
-        _ => 0
-    end
-end
 
 # Head obligation (§4.10): the subject's operation is itself a pattern
 # position. Symbolic ops live in the subject IR; non-symbolic ops bind
@@ -728,7 +875,7 @@ function next_match!(eng::MatchEngine)
             _global_constraints_ok!(eng)
     end
     while eng.steps < eng.maxsteps
-        st = step!(eng, eng.stk[1])
+        st = step!(eng, something(eng.stk[1]))
         eng.steps += 1
         if st === FrameStatus.Produced
             _global_constraints_ok!(eng) && return true
@@ -736,7 +883,9 @@ function next_match!(eng::MatchEngine)
             continue
         else
             # Matched/Failed: the root frame is done
+            _pool_release_range!(eng, 1, eng.sp)
             eng.sp = 0
+            eng.root_done = true
             return false
         end
     end

@@ -71,15 +71,14 @@ function _assign_next!(
                 return true
             end
         else
-            ki = _push_frame!(
-                eng, _new_frame(child_plan, child_pat, snode, _nchildren(child_plan))
-            )
-            if step!(eng, eng.stk[ki]) === FrameStatus.Produced
+            ki = _push_frame!(eng, _acquire_frame!(eng, child_plan, child_pat, snode))
+            if step!(eng, something(eng.stk[ki])) === FrameStatus.Produced
                 assigned[j] = i
                 used[i] = true
                 kids[j] = ki
                 return true
             end
+            _pool_release_range!(eng, ki, eng.sp)
             eng.sp = ki - 1
         end
     end
