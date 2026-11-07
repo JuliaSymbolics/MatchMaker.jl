@@ -232,3 +232,99 @@ SUITE["stress"]["ac missing literal fail-fast"] =
 # identity coercion
 SUITE["stress"]["ac singleton coerce x+seg vs p"] =
     @benchmarkable matchall($pat_coerce, $sub_coerce)
+
+# ------------------------------------------------------------------
+# Workload benchmarks — batched passes sized to a few ms per sample,
+# so ratios aren't dominated by timer noise on µs-scale cases.
+#
+# Model: a fixed rule set applied to a corpus of independent subject
+# expressions — the rewrite-pass scenario (apply every rule to every
+# expression, gather all results). Compilation and corpus construction
+# happen once at suite setup; the timed body is one pass over
+# pattern × subject pairs, counting results so nothing is
+# dead-code-eliminated. Each pass exercises engine setup, frame
+# dispatch, and backtracking across every matcher family.
+#
+# The corpus is deterministic — index arithmetic over an 8-symbol
+# pool, no RNG — and mixes hit and miss shapes so a pass pays both
+# fast head-mismatch rejections and deep backtracking:
+#   * canonical Adds of 2–5 terms,
+#   * factored-product sums (the w·y + w·z + rest shape),
+#   * AC f / commutative g calls at arities 2–6,
+#   * duplicate-arg f's (non-linear recheck hits),
+#   * nested f's and g's,
+#   * free-head h calls, including h over Add arguments.
+# ------------------------------------------------------------------
+
+const _WL_SYMS = (p, q, r, x, y, z, a, b)
+_wl_arg(i) = _WL_SYMS[mod1(i, length(_WL_SYMS))]
+
+const _WL_CORPUS = let s = _wl_arg
+    corpus = Any[]
+    for n in 2:5, seed in 1:12
+        push!(corpus, +((s(seed + k * n) for k in 1:n)...))
+    end
+    for i in 1:8, j in 1:8
+        push!(corpus, s(i) * s(j) + s(i) * s(j + 1) + s(3) * s(i + j))
+    end
+    for n in 2:6, seed in 1:8
+        push!(corpus, f((s(seed + k) for k in 1:n)...))
+        push!(corpus, g((s(seed * k + n) for k in 1:n)...))
+    end
+    for i in 1:8
+        push!(corpus, f(s(i), s(i), s(i + 1), s(i + 1)))
+        push!(corpus, f(s(i), s(i + 1), s(i + 2), s(i)))
+    end
+    for i in 1:12
+        push!(corpus, f(s(i), f(s(i + 1), f(s(i + 2), s(i + 3), s(i + 4)))))
+        push!(corpus, f(s(i), f(s(i), s(i + 1))))
+        push!(corpus, g(s(i), g(s(i + 1), s(i + 2))))
+        push!(corpus, g(s(i), g(s(i), s(i))))
+    end
+    for i in 1:8, j in 1:8
+        push!(corpus, h(s(i), s(j)))
+        push!(corpus, h(s(i) + s(j), s(i + 1)))
+    end
+    corpus
+end
+
+const _WL_PATS = (
+    compile_pattern(h(slot(a), slot(b))),
+    compile_pattern(g(slot(a), slot(b), slot(c))),
+    compile_pattern(slot(a) + segment(s)),
+    compile_pattern(slot(w) * slot(y) + slot(w) * slot(z) + segment(s)),
+    compile_pattern(f(slot(a), slot(a), segment(s))),
+    compile_pattern(g(slot(a), g(slot(b), slot(c)))),
+)
+
+function _wl_matchall(pats, corpus)
+    n = 0
+    for pat in pats, subj in corpus
+        n += length(matchall(pat, subj))
+    end
+    return n
+end
+
+function _wl_match(pats, corpus)
+    n = 0
+    for pat in pats, subj in corpus
+        match(pat, subj) === nothing || (n += 1)
+    end
+    return n
+end
+
+function _wl_eachmatch(pats, corpus)
+    n = Ref(0)
+    for pat in pats, subj in corpus
+        eachmatch(b -> (n[] += 1), pat, subj)
+    end
+    return n[]
+end
+
+SUITE["workload"] = BenchmarkGroup()
+SUITE["workload"]["matchall batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
+    @benchmarkable _wl_matchall($_WL_PATS, $_WL_CORPUS)
+SUITE["workload"]["first-match batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
+    @benchmarkable _wl_match($_WL_PATS, $_WL_CORPUS)
+SUITE["workload"]["eachmatch batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
+    @benchmarkable _wl_eachmatch($_WL_PATS, $_WL_CORPUS)
