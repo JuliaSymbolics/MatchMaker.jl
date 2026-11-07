@@ -24,10 +24,9 @@ function _ac_cand!(
         isequal(eng.pat.ir[child_pat], eng.subj[snode])
     else
         sp0 = eng.sp
-        ki = _push_frame!(
-            eng, _new_frame(child_plan, child_pat, snode, _nchildren(child_plan))
-        )
-        produced = step!(eng, eng.stk[ki]) === FrameStatus.Produced
+        ki = _push_frame!(eng, _acquire_frame!(eng, child_plan, child_pat, snode))
+        produced = step!(eng, something(eng.stk[ki])) === FrameStatus.Produced
+        _pool_release_range!(eng, sp0 + 1, eng.sp)
         eng.sp = sp0
         produced
     end

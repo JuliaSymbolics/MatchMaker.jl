@@ -487,7 +487,7 @@ function _step_seq!(
         else
             kf = _kid(eng, kids, j)
             if kf === nothing
-                kf = _new_frame(child_plan, child_pat, snbs[soff], _nchildren(child_plan))
+                kf = _acquire_frame!(eng, child_plan, child_pat, snbs[soff])
                 kids[j] = _push_frame!(eng, kf)
             end
             if step!(eng, kf) === FrameStatus.Produced
