@@ -325,7 +325,7 @@ end
 function _step_seq!(
         eng::MatchEngine, pat_node::Int32, subj_node::Int32,
         child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
-        kids::Vector{Union{Nothing, MatchFrameT}},
+        kids::Vector{Int32},
         bind_marks::Vector{Int}, arg_start::Vector{Int}, capture_len::Vector{Int},
         min_tail::Vector{Int}, owns_bind::BitVector
     )
@@ -385,14 +385,14 @@ function _step_seq!(
             # seek the deepest resumable position and resume it
             while child_pos[] >= 1
                 j = child_pos[]
-                kf = kids[j]
+                kf = _kid(eng, kids, j)
                 if kf !== nothing
                     if step!(eng, kf) === FrameStatus.Produced
                         soff = arg_start[j] + 1
                         child_pos[] += 1
                         break
                     else
-                        kids[j] = nothing
+                        _drop_kid!(eng, kids, j)
                     end
                 elseif MData.isa_variant(
                         eng.pat.plans[children[j]], NodePlan.Segment
@@ -485,16 +485,16 @@ function _step_seq!(
                 backtrack = true
             end
         else
-            kf = kids[j]
+            kf = _kid(eng, kids, j)
             if kf === nothing
                 kf = _new_frame(child_plan, child_pat, snbs[soff], _nchildren(child_plan))
-                kids[j] = kf
+                kids[j] = _push_frame!(eng, kf)
             end
             if step!(eng, kf) === FrameStatus.Produced
                 soff += 1
                 child_pos[] += 1
             else
-                kids[j] = nothing
+                _drop_kid!(eng, kids, j)
                 backtrack = true
             end
         end

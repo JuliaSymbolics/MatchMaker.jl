@@ -7,4 +7,4 @@ docs/build/
 *.jl.*.cov
 *.jl.mem
 benchmark/tune.json
-results_*.json
+results_*.json*

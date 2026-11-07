@@ -23,10 +23,13 @@ function _ac_cand!(
     elseif eng.pat.is_ground[child_pat]
         isequal(eng.pat.ir[child_pat], eng.subj[snode])
     else
-        step!(
-            eng,
-            _new_frame(child_plan, child_pat, snode, _nchildren(child_plan))
-        ) === FrameStatus.Produced
+        sp0 = eng.sp
+        ki = _push_frame!(
+            eng, _new_frame(child_plan, child_pat, snode, _nchildren(child_plan))
+        )
+        produced = step!(eng, eng.stk[ki]) === FrameStatus.Produced
+        eng.sp = sp0
+        produced
     end
     _unwind!(eng, mk)
     return ok::Bool
@@ -62,7 +65,7 @@ end
 function _step_ac!(
         eng::MatchEngine, pat_node::Int32, subj_node::Int32,
         child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
-        order::Vector{Int32}, kids::Vector{Union{Nothing, MatchFrameT}},
+        order::Vector{Int32}, kids::Vector{Int32},
         bind_marks::Vector{Int}, assigned::Vector{Int32},
         scan::Vector{Int32}, used::BitVector,
         cands::Vector{SmallV{Int32}}, seg_sel::Vector{SmallV{Int32}},
@@ -157,12 +160,12 @@ function _step_ac!(
                 elseif j <= nassign || is_opt_pos
                     # a defaulted optional has no alternatives left
                     exhausted = is_opt_pos && assigned[j] == -1
-                    kf = kids[j]
+                    kf = _kid(eng, kids, j)
                     if !exhausted && kf !== nothing
                         produced = step!(eng, kf) === FrameStatus.Produced
                     end
                     if !produced && !exhausted
-                        kids[j] = nothing
+                        _drop_kid!(eng, kids, j)
                         if assigned[j] > 0
                             used[assigned[j]] = false
                             assigned[j] = 0
