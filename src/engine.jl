@@ -683,13 +683,21 @@ end
 ### step! protocol (§5.4)
 ###
 
-# See `FrameStatus` for the contract of each return value. `stk` holds
-# the union directly, so `step!` dispatches on the concrete frame type —
-# no wrapper indirection.
-step!(eng::MatchEngine, f::CallFrame) = _step_call!(eng, f)
-step!(eng::MatchEngine, f::SeqFrame) = _step_seq!(eng, f)
-step!(eng::MatchEngine, f::CommFrame) = _step_comm!(eng, f)
-step!(eng::MatchEngine, f::ACFrame) = _step_ac!(eng, f)
+# See `FrameStatus` for the contract of each return value. An `isa`
+# chain rather than method dispatch: the 5-type stk element union
+# exceeds Julia's union-split limit, so method dispatch on it costs a
+# generic call per step — `isa` folds to a tag check + jump instead.
+@inline function step!(eng::MatchEngine, f::MatchFrameT)
+    return if f isa ACFrame
+        _step_ac!(eng, f)
+    elseif f isa CallFrame
+        _step_call!(eng, f)
+    elseif f isa SeqFrame
+        _step_seq!(eng, f)
+    else
+        _step_comm!(eng, f)
+    end
+end
 
 ###
 ### Call frame (§5.5c) — free head, positional children
