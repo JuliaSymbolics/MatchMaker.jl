@@ -61,11 +61,16 @@ end
 #     optional's one-time default), unwind to its mark, and continue
 #     FORWARD. Nothing resumable → fail to the frame's mark.
 
-function _step_ac!(eng::MatchEngine, f::ACFrame)
-    (; pat_node, subj_node, child_pos, trail_mark, order, kids,
-        bind_marks, assigned, scan, used, cands, seg_sel, seg_pool,
-        min_tail, owns_bind) = f
-    mark = trail_mark
+function _step_ac!(
+        eng::MatchEngine, pat_node::Int32, subj_node::Int32,
+        child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
+        order::Vector{Int32}, kids::Vector{Int32},
+        bind_marks::Vector{Int}, assigned::Vector{Int32},
+        scan::Vector{Int32}, used::BitVector,
+        cands::Vector{SmallV{Int32}}, seg_sel::Vector{SmallV{Int32}},
+        seg_pool::Vector{Vector{Int32}},
+        min_tail::Vector{Int}, owns_bind::BitVector
+    )
     plan = eng.pat.plans[pat_node]
     (op, head, nassign) = @match plan begin
         NodePlan.ACCall(; op, head, fixed, slots, optionals, segments) =>

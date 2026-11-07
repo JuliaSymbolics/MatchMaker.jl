@@ -252,11 +252,15 @@ function _comm_seg_resume!(
 end
 
 
-function _step_comm!(eng::MatchEngine, f::CommFrame)
-    (; pat_node, subj_node, child_pos, trail_mark, order, kids,
-        bind_marks, assigned, scan, used, seg_sel, seg_pool,
-        min_tail, owns_bind) = f
-    mark = trail_mark
+function _step_comm!(
+        eng::MatchEngine, pat_node::Int32, subj_node::Int32,
+        child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
+        order::Vector{Int32}, kids::Vector{Int32},
+        bind_marks::Vector{Int}, assigned::Vector{Int32},
+        scan::Vector{Int32}, used::BitVector,
+        seg_sel::Vector{SmallV{Int32}}, seg_pool::Vector{Vector{Int32}},
+        min_tail::Vector{Int}, owns_bind::BitVector
+    )
     plan = eng.pat.plans[pat_node]
     (op, head) = @match plan begin
         NodePlan.CommCall(; op, head) => (op, head)

@@ -689,13 +689,27 @@ end
 # generic call per step — `isa` folds to a tag check + jump instead.
 @inline function step!(eng::MatchEngine, f::MatchFrameT)
     return if f isa ACFrame
-        _step_ac!(eng, f)
+        _step_ac!(
+            eng, f.pat_node, f.subj_node, f.child_pos, f.trail_mark,
+            f.order, f.kids, f.bind_marks, f.assigned, f.scan, f.used,
+            f.cands, f.seg_sel, f.seg_pool, f.min_tail, f.owns_bind
+        )
     elseif f isa CallFrame
-        _step_call!(eng, f)
+        _step_call!(
+            eng, f.pat_node, f.subj_node, f.child_pos, f.trail_mark, f.kids
+        )
     elseif f isa SeqFrame
-        _step_seq!(eng, f)
+        _step_seq!(
+            eng, f.pat_node, f.subj_node, f.child_pos, f.trail_mark,
+            f.kids, f.bind_marks, f.arg_start, f.capture_len, f.min_tail,
+            f.owns_bind
+        )
     else
-        _step_comm!(eng, f)
+        _step_comm!(
+            eng, f.pat_node, f.subj_node, f.child_pos, f.trail_mark,
+            f.order, f.kids, f.bind_marks, f.assigned, f.scan, f.used,
+            f.seg_sel, f.seg_pool, f.min_tail, f.owns_bind
+        )
     end
 end
 
@@ -703,9 +717,11 @@ end
 ### Call frame (§5.5c) — free head, positional children
 ###
 
-function _step_call!(eng::MatchEngine, f::CallFrame)
-    (; pat_node, subj_node, child_pos, trail_mark, kids) = f
-    mark = trail_mark
+function _step_call!(
+        eng::MatchEngine, pat_node::Int32, subj_node::Int32,
+        child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
+        kids::Vector{Int32}
+    )
     plan = eng.pat.plans[pat_node]
     (op, head, children) = @match plan begin
         NodePlan.Call(; op, head, children) => (op, head, children)
