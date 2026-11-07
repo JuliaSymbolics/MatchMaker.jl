@@ -47,7 +47,7 @@ function _assign_next!(
         j::Int, snbs, sstart::Int, cands::Union{Nothing, SmallV{Int32}},
         used::BitVector,
         scan::Vector{Int32}, assigned::Vector{Int32},
-        kids::Vector{Union{Nothing, MatchFrameT}}
+        kids::Vector{Int32}
     )
     nc = cands === nothing ? length(used) : length(cands)
     while scan[j] <= nc
@@ -71,13 +71,16 @@ function _assign_next!(
                 return true
             end
         else
-            kf = _new_frame(child_plan, child_pat, snode, _nchildren(child_plan))
-            if step!(eng, kf) === FrameStatus.Produced
+            ki = _push_frame!(
+                eng, _new_frame(child_plan, child_pat, snode, _nchildren(child_plan))
+            )
+            if step!(eng, eng.stk[ki]) === FrameStatus.Produced
                 assigned[j] = i
                 used[i] = true
-                kids[j] = kf
+                kids[j] = ki
                 return true
             end
+            eng.sp = ki - 1
         end
     end
     return false
@@ -253,7 +256,7 @@ end
 function _step_comm!(
         eng::MatchEngine, pat_node::Int32, subj_node::Int32,
         child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
-        order::Vector{Int32}, kids::Vector{Union{Nothing, MatchFrameT}},
+        order::Vector{Int32}, kids::Vector{Int32},
         bind_marks::Vector{Int}, assigned::Vector{Int32},
         scan::Vector{Int32}, used::BitVector,
         seg_sel::Vector{SmallV{Int32}}, seg_pool::Vector{Vector{Int32}},
@@ -324,11 +327,11 @@ function _step_comm!(
                         break
                     end
                 else
-                    kf = kids[j]
+                    kf = _kid(eng, kids, j)
                     produced = kf !== nothing &&
                         step!(eng, kf) === FrameStatus.Produced
                     if !produced
-                        kids[j] = nothing
+                        _drop_kid!(eng, kids, j)
                         if assigned[j] != 0
                             used[assigned[j]] = false
                             assigned[j] = 0

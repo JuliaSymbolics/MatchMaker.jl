@@ -39,9 +39,9 @@ backtracking — `eng.root` therefore only ever holds the root.
 `NodePlan.Call` (free head, positional children): `child_pos` is the
 argument position currently being enumerated (`0` = uninitialized),
 `trail_mark` the trail length at frame creation (its unwind target), and
-`kids` the live child frame per position — `nothing` for leaf positions,
-since literal/slot obligations are applied inline by the parent and never
-get frames.
+`kids` the stack index of the live child frame per position — `0` for
+leaf positions and for positions with no live kid, since literal/slot
+obligations are applied inline by the parent and never get frames.
 
 `Seq(pat_node, subj_node, child_pos, trail_mark, kids, bind_marks,
 arg_start, capture_len, min_tail, owns_bind)` — the frame for a
@@ -49,7 +49,8 @@ arg_start, capture_len, min_tail, owns_bind)` — the frame for a
 exactly one subject argument or is a `segment` that consumes a contiguous
 run. `child_pos` is the pattern position currently being dispatched;
 `trail_mark` is the trail length when the frame was created — its unwind
-target on failure; `kids` holds live child frames (one per position).
+target on failure; `kids` holds each position's live child frame stack
+index (one per position).
 
 `bind_marks[i]` — the trail length before position `i` bound anything;
 unwinding to it clears position `i`'s bind and every later position's.
@@ -67,14 +68,14 @@ so it has no alternatives of its own.
         subj_node::Int32
         child_pos::Base.RefValue{Int}
         trail_mark::Base.RefValue{Int}
-        kids::Vector{Union{Nothing, MatchFrame.Type}}
+        kids::Vector{Int32}
     end
     struct Seq
         pat_node::Int32
         subj_node::Int32
         child_pos::Base.RefValue{Int}
         trail_mark::Base.RefValue{Int}
-        kids::Vector{Union{Nothing, MatchFrame.Type}}
+        kids::Vector{Int32}
         bind_marks::Vector{Int}
         arg_start::Vector{Int}
         capture_len::Vector{Int}
@@ -88,7 +89,7 @@ so it has no alternatives of its own.
         trail_mark::Base.RefValue{Int}
         "Pattern children in dispatch order: fixed, slots, optionals, segments."
         order::Vector{Int32}
-        kids::Vector{Union{Nothing, MatchFrame.Type}}
+        kids::Vector{Int32}
         "Trail mark before each position's binds."
         bind_marks::Vector{Int}
         "Subject arg index assigned to each non-segment position (0=none)."
@@ -117,7 +118,7 @@ so it has no alternatives of its own.
         cands/seg_*) is indexed by dispatch position j — `order[j]` is the
         pattern child dispatched there — not by pattern-child index."""
         order::Vector{Int32}
-        kids::Vector{Union{Nothing, MatchFrame.Type}}
+        kids::Vector{Int32}
         "Trail mark before each position's binds."
         bind_marks::Vector{Int}
         """Subject arg index assigned to each non-segment position
@@ -155,11 +156,11 @@ function _new_frame(
     return @match plan begin
         NodePlan.Call(; op, head) => MatchFrame.Call(
             pat_node, subj_node, Ref(0), Ref(0),
-            fill!(Vector{Union{Nothing, MatchFrameT}}(undef, nchildren), nothing)
+            zeros(Int32, nchildren)
         )
         NodePlan.SeqCall(; op, head) => MatchFrame.Seq(
             pat_node, subj_node, Ref(0), Ref(0),
-            fill!(Vector{Union{Nothing, MatchFrameT}}(undef, nchildren), nothing),
+            zeros(Int32, nchildren),
             zeros(Int, nchildren), zeros(Int, nchildren),
             zeros(Int, nchildren), zeros(Int, nchildren + 1),
             falses(nchildren)
@@ -170,7 +171,7 @@ function _new_frame(
             np = length(order)
             MatchFrame.Comm(
                 pat_node, subj_node, Ref(0), Ref(0), order,
-                fill!(Vector{Union{Nothing, MatchFrameT}}(undef, np), nothing),
+                zeros(Int32, np),
                 zeros(Int, np), zeros(Int32, np), ones(Int32, np),
                 BitVector(), [SmallV{Int32}() for _ in 1:np],
                 Vector{Int32}[Int32[] for _ in 1:np],
@@ -183,7 +184,7 @@ function _new_frame(
             np = length(order)
             MatchFrame.AC(
                 pat_node, subj_node, Ref(0), Ref(0), order,
-                fill!(Vector{Union{Nothing, MatchFrameT}}(undef, np), nothing),
+                zeros(Int32, np),
                 zeros(Int, np), zeros(Int32, np), ones(Int32, np),
                 BitVector(), [SmallV{Int32}() for _ in 1:np],
                 [SmallV{Int32}() for _ in 1:np],
@@ -201,6 +202,8 @@ end
 ### MatchEngine (§5.4)
 ###
 
+
+
 """
     MatchEngine
 
@@ -216,8 +219,10 @@ mutable struct MatchEngine
     const subj::IRStructure{SymReal}
     "Node index of the subject root."
     const sroot::Int32
-    "Live root frame; `nothing` for leaf-root patterns."
-    root::Union{Nothing, MatchFrameT}
+    "DFS stack of live frames; `stk[1]` is the root when `sp >= 1`."
+    stk::Vector{MatchFrameT}
+    "Top of `stk` — the deepest live frame index."
+    sp::Int
     "Index-only binding state."
     const binds::Bindings
     "Var ids bound, in order — backtracking unwinds to a mark."
@@ -285,7 +290,7 @@ function MatchEngine(
     end
 
     eng = MatchEngine(
-        pat, subj, sroot, nothing, binds, trail, econstrs,
+        pat, subj, sroot, MatchFrameT[], 0, binds, trail, econstrs,
         falses(length(econstrs)), var_constrs, global_constrs,
         argbuf, segbuf, false, 0,
         maxsteps
@@ -297,10 +302,39 @@ function MatchEngine(
     isleaf = MData.isa_variant(root_plan, NodePlan.Literal) ||
         MData.isa_variant(root_plan, NodePlan.Slot)
     if !isleaf
-        eng.root = _root_frame(root_plan, pat.root, sroot)
+        _push_frame!(eng, _root_frame(root_plan, pat.root, sroot))
     end
     return eng
 end
+
+"""
+    _push_frame!(eng, kf) -> Int32
+
+Push `kf` onto `eng`'s DFS frame stack; returns its stack index. Frames
+are pushed in depth-first order — when a frame at index `i` fails, every
+frame above `i` is dead (its own subtree plus already-dropped later
+positions), so `sp` retracts to `i - 1` on failure.
+"""
+function _push_frame!(eng::MatchEngine, kf::MatchFrameT)
+    ki = (eng.sp += 1)
+    ki > length(eng.stk) ? push!(eng.stk, kf) : (eng.stk[ki] = kf)
+    return ki
+end
+
+"Live child frame at position `j` of `kids`, or `nothing`."
+function _kid(eng::MatchEngine, kids::Vector{Int32}, j::Int)
+    ki = kids[j]
+    return ki == 0 ? nothing : eng.stk[ki]
+end
+
+"Drop position `j`'s kid: mark it none and retract `sp` past its index."
+function _drop_kid!(eng::MatchEngine, kids::Vector{Int32}, j::Int)
+    ki = kids[j]
+    kids[j] = Int32(0)
+    ki == 0 || (eng.sp = ki - 1)
+    return
+end
+
 
 function _root_frame(plan::NodePlanT, pat_node::Int32, subj_node::Int32)
     return @match plan begin
@@ -532,7 +566,7 @@ end
 function _step_call!(
         eng::MatchEngine, pat_node::Int32, subj_node::Int32,
         child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
-        kids::Vector{Union{Nothing, MatchFrameT}}
+        kids::Vector{Int32}
     )
     plan = eng.pat.plans[pat_node]
     (op, head, children) = @match plan begin
@@ -580,7 +614,7 @@ function _step_call!(
         if backtrack
             # find the deepest live child and resume its enumerator
             while child_pos[] >= 1
-                kf = kids[child_pos[]]
+                kf = _kid(eng, kids, child_pos[])
                 if kf === nothing
                     child_pos[] -= 1
                     continue
@@ -589,7 +623,7 @@ function _step_call!(
                     child_pos[] += 1
                     break
                 else
-                    kids[child_pos[]] = nothing
+                    _drop_kid!(eng, kids, child_pos[])
                     child_pos[] -= 1
                 end
             end
@@ -616,15 +650,15 @@ function _step_call!(
                 backtrack = true
             end
         else
-            kf = kids[child_pos[]]
+            kf = _kid(eng, kids, child_pos[])
             if kf === nothing
                 kf = _new_frame(cplan, cp, cs, _nchildren(cplan))
-                kids[child_pos[]] = kf
+                kids[child_pos[]] = _push_frame!(eng, kf)
             end
             if step!(eng, kf) === FrameStatus.Produced
                 child_pos[] += 1
             else
-                kids[child_pos[]] = nothing
+                _drop_kid!(eng, kids, child_pos[])
                 backtrack = true
             end
         end
@@ -686,8 +720,7 @@ the frames stay live so a further call resumes enumeration.
 """
 function next_match!(eng::MatchEngine)
     eng.steps >= eng.maxsteps && return false
-    root = eng.root
-    if root === nothing
+    if iszero(eng.sp)
         # leaf root: single-shot obligation, applied inline (§5.4)
         eng.root_done && return false
         eng.root_done = true
@@ -695,7 +728,7 @@ function next_match!(eng::MatchEngine)
             _global_constraints_ok!(eng)
     end
     while eng.steps < eng.maxsteps
-        st = step!(eng, root)
+        st = step!(eng, eng.stk[1])
         eng.steps += 1
         if st === FrameStatus.Produced
             _global_constraints_ok!(eng) && return true
@@ -703,7 +736,7 @@ function next_match!(eng::MatchEngine)
             continue
         else
             # Matched/Failed: the root frame is done
-            eng.root = nothing
+            eng.sp = 0
             return false
         end
     end
