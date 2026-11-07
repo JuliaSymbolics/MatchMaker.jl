@@ -322,13 +322,10 @@ end
 # head and arity lower bound, then FORWARD) and `child_pos > n`
 # (a previous Produced — seek the next alternative).
 
-function _step_seq!(
-        eng::MatchEngine, pat_node::Int32, subj_node::Int32,
-        child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
-        kids::Vector{Int32},
-        bind_marks::Vector{Int}, arg_start::Vector{Int}, capture_len::Vector{Int},
-        min_tail::Vector{Int}, owns_bind::BitVector
-    )
+function _step_seq!(eng::MatchEngine, f::SeqFrame)
+    (; pat_node, subj_node, child_pos, trail_mark, kids,
+        bind_marks, arg_start, capture_len, min_tail, owns_bind) = f
+    mark = trail_mark
     plan = eng.pat.plans[pat_node]
     (op, head, children) = @match plan begin
         NodePlan.SeqCall(; op, head, children) => (op, head, children)

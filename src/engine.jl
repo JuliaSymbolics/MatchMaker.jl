@@ -62,85 +62,91 @@ computed once at init). `owns_bind[i]` — whether position `i` *created*
 its segment var's current bind; a var bound elsewhere can only recheck,
 so it has no alternatives of its own.
 """
-@data mutable MatchFrame begin
-    struct Call
-        pat_node::Int32
-        subj_node::Int32
-        child_pos::Base.RefValue{Int}
-        trail_mark::Base.RefValue{Int}
-        kids::Vector{Int32}
-    end
-    struct Seq
-        pat_node::Int32
-        subj_node::Int32
-        child_pos::Base.RefValue{Int}
-        trail_mark::Base.RefValue{Int}
-        kids::Vector{Int32}
-        bind_marks::Vector{Int}
-        arg_start::Vector{Int}
-        capture_len::Vector{Int}
-        min_tail::Vector{Int}
-        owns_bind::BitVector
-    end
-    struct Comm
-        pat_node::Int32
-        subj_node::Int32
-        child_pos::Base.RefValue{Int}
-        trail_mark::Base.RefValue{Int}
-        "Pattern children in dispatch order: fixed, slots, optionals, segments."
-        order::Vector{Int32}
-        kids::Vector{Int32}
-        "Trail mark before each position's binds."
-        bind_marks::Vector{Int}
-        "Subject arg index assigned to each non-segment position (0=none)."
-        assigned::Vector{Int32}
-        "Next candidate arg index to try per position."
-        scan::Vector{Int32}
-        "Which subject args are consumed."
-        used::BitVector
-        "Selected arg indices per segment position."
-        seg_sel::Vector{SmallV{Int32}}
-        "Available arg pool recorded per segment position."
-        seg_pool::Vector{Vector{Int32}}
-        "Suffix minimum args required from each position onward."
-        min_tail::Vector{Int}
-        "Whether a segment position created its var's bind."
-        owns_bind::BitVector
-    end
-    struct AC
-        pat_node::Int32
-        subj_node::Int32
-        child_pos::Base.RefValue{Int}
-        trail_mark::Base.RefValue{Int}
-        """Pattern children in dispatch order: fixed ∪ slots (sorted by
-        ascending candidate count at init), then optionals, then segments.
-        Every per-position array below (kids/bind_marks/assigned/scan/
-        cands/seg_*) is indexed by dispatch position j — `order[j]` is the
-        pattern child dispatched there — not by pattern-child index."""
-        order::Vector{Int32}
-        kids::Vector{Int32}
-        "Trail mark before each position's binds."
-        bind_marks::Vector{Int}
-        """Subject arg index assigned to each non-segment position
-        (0=none; -1 = an optional position bound its default instead)."""
-        assigned::Vector{Int32}
-        "Next candidate index to try per position."
-        scan::Vector{Int32}
-        "Which subject args are consumed."
-        used::BitVector
-        "Phase-1 candidate arg indices per assignment position (§5.5f)."
-        cands::Vector{SmallV{Int32}}
-        "Selected arg indices per segment position."
-        seg_sel::Vector{SmallV{Int32}}
-        "Available arg pool recorded per segment position."
-        seg_pool::Vector{Vector{Int32}}
-        "Suffix minimum args required from each position onward."
-        min_tail::Vector{Int}
-        "Whether a segment position created its var's bind."
-        owns_bind::BitVector
-    end
+mutable struct CallFrame
+    pat_node::Int32
+    subj_node::Int32
+    child_pos::Base.RefValue{Int}
+    trail_mark::Base.RefValue{Int}
+    kids::Vector{Int32}
 end
-const MatchFrameT = MatchFrame.Type
+
+mutable struct SeqFrame
+    pat_node::Int32
+    subj_node::Int32
+    child_pos::Base.RefValue{Int}
+    trail_mark::Base.RefValue{Int}
+    kids::Vector{Int32}
+    bind_marks::Vector{Int}
+    arg_start::Vector{Int}
+    capture_len::Vector{Int}
+    min_tail::Vector{Int}
+    owns_bind::BitVector
+end
+
+mutable struct CommFrame
+    pat_node::Int32
+    subj_node::Int32
+    child_pos::Base.RefValue{Int}
+    trail_mark::Base.RefValue{Int}
+    "Pattern children in dispatch order: fixed, slots, optionals, segments."
+    order::Vector{Int32}
+    kids::Vector{Int32}
+    "Trail mark before each position's binds."
+    bind_marks::Vector{Int}
+    "Subject arg index assigned to each non-segment position (0=none)."
+    assigned::Vector{Int32}
+    "Next candidate arg index to try per position."
+    scan::Vector{Int32}
+    "Which subject args are consumed."
+    used::BitVector
+    "Selected arg indices per segment position."
+    seg_sel::Vector{SmallV{Int32}}
+    "Available arg pool recorded per segment position."
+    seg_pool::Vector{Vector{Int32}}
+    "Suffix minimum args required from each position onward."
+    min_tail::Vector{Int}
+    "Whether a segment position created its var's bind."
+    owns_bind::BitVector
+end
+
+mutable struct ACFrame
+    pat_node::Int32
+    subj_node::Int32
+    child_pos::Base.RefValue{Int}
+    trail_mark::Base.RefValue{Int}
+    """Pattern children in dispatch order: fixed ∪ slots (sorted by
+    ascending candidate count at init), then optionals, then segments.
+    Every per-position array below (kids/bind_marks/assigned/scan/
+    cands/seg_*) is indexed by dispatch position j — `order[j]` is the
+    pattern child dispatched there — not by pattern-child index."""
+    order::Vector{Int32}
+    kids::Vector{Int32}
+    "Trail mark before each position's binds."
+    bind_marks::Vector{Int}
+    """Subject arg index assigned to each non-segment position
+    (0=none; -1 = an optional position bound its default instead)."""
+    assigned::Vector{Int32}
+    "Next candidate index to try per position."
+    scan::Vector{Int32}
+    "Which subject args are consumed."
+    used::BitVector
+    "Phase-1 candidate arg indices per assignment position (§5.5f)."
+    cands::Vector{SmallV{Int32}}
+    "Selected arg indices per segment position."
+    seg_sel::Vector{SmallV{Int32}}
+    "Available arg pool recorded per segment position."
+    seg_pool::Vector{Vector{Int32}}
+    "Suffix minimum args required from each position onward."
+    min_tail::Vector{Int}
+    "Whether a segment position created its var's bind."
+    owns_bind::BitVector
+end
+
+"""A match frame — the union of the concrete per-variant structs; `step!`
+dispatches on the concrete type directly (small-union dispatch is a tag
+check + jump)."""
+const MatchFrameT = Union{CallFrame, SeqFrame, CommFrame, ACFrame}
+const MatchFrame = MatchFrameT
 
 
 ###
@@ -157,12 +163,12 @@ reset one — its buffers (`kids`, `assigned`, `seg_sel`, …) are resized
 and cleared in place instead of reallocating per dispatch.
 """
 struct FramePool
-    call::Vector{MatchFrameT}
-    seq::Vector{MatchFrameT}
-    comm::Vector{MatchFrameT}
-    ac::Vector{MatchFrameT}
+    call::Vector{CallFrame}
+    seq::Vector{SeqFrame}
+    comm::Vector{CommFrame}
+    ac::Vector{ACFrame}
 end
-FramePool() = FramePool(MatchFrameT[], MatchFrameT[], MatchFrameT[], MatchFrameT[])
+FramePool() = FramePool(CallFrame[], SeqFrame[], CommFrame[], ACFrame[])
 
 "    _reset!(v, n, x) -> v — resize to `n`, fill with `x`."
 function _reset!(v::AbstractVector, n::Int, x)
@@ -188,28 +194,24 @@ Return `f` to the freelist for its variant. The frame's buffers keep
 their capacity; `pool_acquire!` reinitializes every field on reuse, so
 stale contents are never observed.
 """
-function pool_release!(pool::FramePool, f::MatchFrameT)
-    return @match f begin
-        MatchFrame.Call() => push!(pool.call, f)
-        MatchFrame.Seq() => push!(pool.seq, f)
-        MatchFrame.Comm() => push!(pool.comm, f)
-        MatchFrame.AC() => push!(pool.ac, f)
-    end
-end
+pool_release!(pool::FramePool, f::CallFrame) = push!(pool.call, f)
+pool_release!(pool::FramePool, f::SeqFrame) = push!(pool.seq, f)
+pool_release!(pool::FramePool, f::CommFrame) = push!(pool.comm, f)
+pool_release!(pool::FramePool, f::ACFrame) = push!(pool.ac, f)
 
 """
-    pool_acquire!(pool, ::Type{MatchFrame.Call}, pat_node, subj_node, nchildren)
-    pool_acquire!(pool, ::Type{MatchFrame.Comm}, pat_node, subj_node,
+    pool_acquire!(pool, ::Type{CallFrame}, pat_node, subj_node, nchildren)
+    pool_acquire!(pool, ::Type{CommFrame}, pat_node, subj_node,
                   fixed, slots, optionals, segments)
 
 Return a frame of the requested variant — a reset pooled frame if one is
 available, else a fresh allocation.
 """
 function pool_acquire!(
-        pool::FramePool, ::Type{MatchFrame.Call},
+        pool::FramePool, ::Type{CallFrame},
         pat_node::Int32, subj_node::Int32, n::Int
     )
-    isempty(pool.call) && return MatchFrame.Call(
+    isempty(pool.call) && return CallFrame(
         pat_node, subj_node, Ref(0), Ref(0), zeros(Int32, n)
     )
     f = pop!(pool.call)
@@ -222,10 +224,10 @@ function pool_acquire!(
 end
 
 function pool_acquire!(
-        pool::FramePool, ::Type{MatchFrame.Seq},
+        pool::FramePool, ::Type{SeqFrame},
         pat_node::Int32, subj_node::Int32, n::Int
     )
-    isempty(pool.seq) && return MatchFrame.Seq(
+    isempty(pool.seq) && return SeqFrame(
         pat_node, subj_node, Ref(0), Ref(0),
         zeros(Int32, n),
         zeros(Int, n), zeros(Int, n), zeros(Int, n),
@@ -246,7 +248,7 @@ function pool_acquire!(
     return f
 end
 
-function _reset_order!(f::MatchFrameT, fixed, slots, optionals, segments)
+function _reset_order!(f::Union{CommFrame, ACFrame}, fixed, slots, optionals, segments)
     np = length(fixed) + length(slots) + length(optionals) + length(segments)
     resize!(f.order, np)
     i = 0
@@ -257,7 +259,7 @@ function _reset_order!(f::MatchFrameT, fixed, slots, optionals, segments)
 end
 
 function _reset_comm_fields!(
-        f::MatchFrameT, pat_node::Int32, subj_node::Int32,
+        f::Union{CommFrame, ACFrame}, pat_node::Int32, subj_node::Int32,
         fixed, slots, optionals, segments
     )
     f.pat_node = pat_node
@@ -279,7 +281,7 @@ function _reset_comm_fields!(
 end
 
 function pool_acquire!(
-        pool::FramePool, ::Type{MatchFrame.Comm},
+        pool::FramePool, ::Type{CommFrame},
         pat_node::Int32, subj_node::Int32,
         fixed, slots, optionals, segments
     )
@@ -287,7 +289,7 @@ function pool_acquire!(
         order = Int32[]
         append!(order, fixed, slots, optionals, segments)
         np = length(order)
-        return MatchFrame.Comm(
+        return CommFrame(
             pat_node, subj_node, Ref(0), Ref(0), order,
             zeros(Int32, np),
             zeros(Int, np), zeros(Int32, np), ones(Int32, np),
@@ -302,7 +304,7 @@ function pool_acquire!(
 end
 
 function pool_acquire!(
-        pool::FramePool, ::Type{MatchFrame.AC},
+        pool::FramePool, ::Type{ACFrame},
         pat_node::Int32, subj_node::Int32,
         fixed, slots, optionals, segments
     )
@@ -310,7 +312,7 @@ function pool_acquire!(
         order = Int32[]
         append!(order, fixed, slots, optionals, segments)
         np = length(order)
-        return MatchFrame.AC(
+        return ACFrame(
             pat_node, subj_node, Ref(0), Ref(0), order,
             zeros(Int32, np),
             zeros(Int, np), zeros(Int32, np), ones(Int32, np),
@@ -494,17 +496,17 @@ function _acquire_frame!(
     )
     return @match plan begin
         NodePlan.Call(; children) => pool_acquire!(
-            eng.pool, MatchFrame.Call, pat_node, subj_node, length(children)
+            eng.pool, CallFrame, pat_node, subj_node, length(children)
         )
         NodePlan.SeqCall(; children) => pool_acquire!(
-            eng.pool, MatchFrame.Seq, pat_node, subj_node, length(children)
+            eng.pool, SeqFrame, pat_node, subj_node, length(children)
         )
         NodePlan.CommCall(; fixed, slots, optionals, segments) => pool_acquire!(
-            eng.pool, MatchFrame.Comm, pat_node, subj_node,
+            eng.pool, CommFrame, pat_node, subj_node,
             fixed, slots, optionals, segments
         )
         NodePlan.ACCall(; fixed, slots, optionals, segments) => pool_acquire!(
-            eng.pool, MatchFrame.AC, pat_node, subj_node,
+            eng.pool, ACFrame, pat_node, subj_node,
             fixed, slots, optionals, segments
         )
         _ => error(
@@ -681,51 +683,21 @@ end
 ### step! protocol (§5.4)
 ###
 
-# See `FrameStatus` for the contract of each return value.
-function step!(eng::MatchEngine, f::MatchFrameT)
-    return @match f begin
-        MatchFrame.Call(; pat_node, subj_node, child_pos, trail_mark, kids) =>
-            _step_call!(eng, pat_node, subj_node, child_pos, trail_mark, kids)
-        MatchFrame.Seq(;
-            pat_node, subj_node, child_pos, trail_mark, kids, bind_marks,
-            arg_start, capture_len, min_tail, owns_bind
-        ) =>
-            _step_seq!(
-            eng, pat_node, subj_node, child_pos, trail_mark, kids,
-            bind_marks, arg_start, capture_len, min_tail, owns_bind
-        )
-        MatchFrame.Comm(;
-            pat_node, subj_node, child_pos, trail_mark, order, kids,
-            bind_marks, assigned, scan, used, seg_sel, seg_pool, min_tail,
-            owns_bind
-        ) =>
-            _step_comm!(
-            eng, pat_node, subj_node, child_pos, trail_mark, order,
-            kids, bind_marks, assigned, scan, used, seg_sel, seg_pool,
-            min_tail, owns_bind
-        )
-        MatchFrame.AC(;
-            pat_node, subj_node, child_pos, trail_mark, order, kids,
-            bind_marks, assigned, scan, used, cands, seg_sel, seg_pool,
-            min_tail, owns_bind
-        ) =>
-            _step_ac!(
-            eng, pat_node, subj_node, child_pos, trail_mark, order,
-            kids, bind_marks, assigned, scan, used, cands, seg_sel,
-            seg_pool, min_tail, owns_bind
-        )
-    end
-end
+# See `FrameStatus` for the contract of each return value. `stk` holds
+# the union directly, so `step!` dispatches on the concrete frame type —
+# no wrapper indirection.
+step!(eng::MatchEngine, f::CallFrame) = _step_call!(eng, f)
+step!(eng::MatchEngine, f::SeqFrame) = _step_seq!(eng, f)
+step!(eng::MatchEngine, f::CommFrame) = _step_comm!(eng, f)
+step!(eng::MatchEngine, f::ACFrame) = _step_ac!(eng, f)
 
 ###
 ### Call frame (§5.5c) — free head, positional children
 ###
 
-function _step_call!(
-        eng::MatchEngine, pat_node::Int32, subj_node::Int32,
-        child_pos::Base.RefValue{Int}, mark::Base.RefValue{Int},
-        kids::Vector{Int32}
-    )
+function _step_call!(eng::MatchEngine, f::CallFrame)
+    (; pat_node, subj_node, child_pos, trail_mark, kids) = f
+    mark = trail_mark
     plan = eng.pat.plans[pat_node]
     (op, head, children) = @match plan begin
         NodePlan.Call(; op, head, children) => (op, head, children)
