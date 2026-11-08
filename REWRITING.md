@@ -134,13 +134,36 @@ tasks and calls — all mutable state lives in the workspace (§6). This
 is the "shared global data structure": one `const`-held `RuleSet`,
 compiled once, read by every rewrite pass.
 
-**`RuleSet` is itself the callable.** `Postwalk(rs)`,
-`Chain([rs, …])`, `IfElse(…, rs, …)` need a plain
-`x -> expr′ | nothing` — that is the `RuleSet`:
+`RuleSet` is pure data — it is deliberately **not** callable, since
+applying rules requires mutable state (engines, memo cache) that an
+immutable shared artifact shouldn't smuggle through a global. The
+`x -> expr′ | nothing` callable a traversal needs is the workspace
+(§4): `Postwalk(RuleWorkspace(rs))` makes the state being created
+visible at the call site. Per-site `maxsteps` lives on the `RuleSet`
+because combinators call `rw(x)` with no kwargs — options must ride
+on an object, and a differently-budgeted variant is a second
+`RuleSet` sharing the compiled `rules`/`index`.
+
+## 4. `RuleWorkspace` — bounded reuse
 
 ```julia
-(rs::RuleSet)(x) = begin
-    ws = workspace(rs)                    # task-local, §4
+mutable struct RuleWorkspace
+    set::RuleSet                        # the ruleset it serves
+    subj::IRStructure{SymReal}          # one per application site, shared
+    engines::Vector{Union{Nothing,MatchEngine}}  # per rule id, lazy
+    net_cache::Dict{Tuple{Int32,Int32}, SmallV{Int32}}  # Phase-2 only;
+                                                        # persists across iterations (§7)
+end
+```
+
+**The workspace is the callable.** It already needs `set` (engines
+are per-rule, `lookup`/`apply` need `set.index`/`set.rules`), so it
+holds the ruleset ref and is itself the `x -> expr′ | nothing` a
+traversal applies:
+
+```julia
+(ws::RuleWorkspace)(x) = begin
+    rs = ws.set
     for id in lookup(ws, rs.index, x)     # index → candidate rule ids
         y = apply(ws, rs.rules[id], x)
         y !== nothing && return y         # first-match semantics
@@ -149,24 +172,12 @@ compiled once, read by every rewrite pass.
 end
 ```
 
-No separate `RuleApplier` type — a thin wrapper would only re-wrap
-`(rs)(x)`. `ws` is resolved per call rather than stored (a cached
-reference would pin the wrong task's workspace if the call crossed
-tasks), and the per-site budget lives on the `RuleSet`: combinators
-call `rw(x)` with no kwargs anyway, so options must ride on the
-object — a differently-budgeted variant is a second `RuleSet`
-sharing the compiled `rules`/`index`.
-
-## 4. `RuleWorkspace` — bounded reuse
-
-```julia
-mutable struct RuleWorkspace
-    subj::IRStructure{SymReal}          # one per application site, shared
-    engines::Vector{Union{Nothing,MatchEngine}}  # per rule id, lazy
-    net_cache::Dict{Tuple{Int32,Int32}, SmallV{Int32}}  # Phase-2 only;
-                                                        # persists across iterations (§7)
-end
-```
+This makes the layering honest: `RuleSet` is the immutable compiled
+artifact; `RuleWorkspace` is the mutable application context — *and*
+the rewriter callable. `const ws = RuleWorkspace(rs)` is the
+global-shared-engine answer: one long-lived workspace per ruleset,
+reset-and-reused, bounded in size; users who want per-task instances
+create them (or TLS-wrap their own), users who don't, don't.
 
 The workspace holds **engine state only** — the rules themselves are
 immutable in `RuleSet`. Concretely: one subject `IRStructure`
@@ -180,22 +191,17 @@ functions of structure it also persists across fixpoint iterations
 and `rewrite` calls on the same workspace (§7). Phase 1 leaves
 `net_cache` empty — the bucket `lookup` needs no per-node memo.
 
-One workspace per `RuleSet` **per task**, keyed by the `RuleSet` object
-in `task_local_storage` (project compat is Julia 1.10, so
-`task_local_storage`, not `Base.ScopedValues`):
+Workspaces are **explicitly created**: `RuleWorkspace(rs)` is a plain
+constructor — call it inline per pass (`Postwalk(RuleWorkspace(rs))`),
+hold one in a `const` for a long-lived global, hand one out per task,
+or wrap it in `TaskLocalValue`/`ScopedValues` yourself if you want
+task-local pooling. No hidden task-local default exists to resolve —
+whoever holds the workspace owns its lifetime and thread-safety. The
+native `rewrite` pass takes it:
 
 ```julia
-workspace(rs::RuleSet) =
-    get!(() -> RuleWorkspace(rs), task_local_storage(), rs)::RuleWorkspace
+rewrite(ws::RuleWorkspace, expr; order = :post) -> expr′   # bottom-up
 ```
-
-The zero-arg default makes `get!` lazy: the workspace is built **once
-per task per `RuleSet`**, not per call — later calls are a
-task-local-storage dict hit (~ns). (Careful with the alternative
-`get!(tls, rs, RuleWorkspace(rs))` — the positional default evaluates
-eagerly and *would* rebuild every call.) Inside the native rewrite
-pass `ws` is bound once up front; only `(rs::RuleSet)(x)` resolves it
-per invocation — appropriate for a callable that may cross tasks.
 
 - Same `RuleSet` across threads → distinct workspaces; no locks.
 - One IR per subject *per pass*: `populate_ir!` runs once per
@@ -315,7 +321,7 @@ The canonical call is a MatchMaker-native bottom-up pass over the
 workspace IR, not `Postwalk(applier)`:
 
 ```julia
-rewrite(rs::RuleSet, expr; order = :post) -> expr′   # bottom-up default
+rewrite(ws::RuleWorkspace, expr; order = :post) -> expr′   # bottom-up
 ```
 
 The pass walks `ws.subj`'s dependency graph once: at each node
@@ -326,10 +332,10 @@ opposite direction before descending. This *is* the net's evaluation
 walk under Phase 2 — one traversal serves the whole rule set, not one
 traversal per candidate.
 
-SU interop stays free: `Postwalk(rs)(expr)` works unmodified
-because `rs` is a plain callable — use it where SU combinator
-composition matters (`instrument`, `threaded`), prefer the native
-pass where it doesn't.
+SU interop stays free: `Postwalk(RuleWorkspace(rs))(expr)` works
+unmodified because `ws` is a plain callable — use it where SU
+combinator composition matters (`instrument`, `threaded`), prefer
+the native pass where it doesn't.
 
 - `IfElse` conditions that are *patterns* become `x -> match(m, x) !== nothing`
   — a `PatternCond` convenience wraps this.
@@ -339,15 +345,15 @@ pass where it doesn't.
 - `maxsteps` budgets per application site, shared across the site's
   candidate rules — not a global rewrite budget (that's a rewriter
   concern: `FixpointNoCycle` exists for termination).
-- `threaded` walks (SU `Walk` path): task-local workspaces keep it
-  safe — `workspace(rs)` re-resolves per call, so `rs` crossing tasks
-  lands on the right workspace.
+- `threaded` walks (SU `Walk` path): give each task its own
+  `RuleWorkspace` — the callable is the workspace, so thread-safety
+  is literally which `ws` object the task holds.
 
 ## 7. Fixpoint & incremental rewriting
 
-`Fixpoint(rs)` iterates the rewrite pass until `isequal`-stable — the
-common case changes a small subtree per iteration, so the design
-accumulates rather than restarts:
+`Fixpoint` over a workspace iterates the rewrite pass until
+`isequal`-stable — the common case changes a small subtree per
+iteration, so the design accumulates rather than restarts:
 
 - **IR accumulation.** `rewrite` iterations repopulate the *same*
   workspace `IRStructure`: unchanged subtrees are the same interned
