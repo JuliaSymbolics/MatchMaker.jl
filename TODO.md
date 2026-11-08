@@ -124,6 +124,35 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   sign/divisor-literal slice — it's what makes `x - p` match `x - 2`.
   Skipped cases live in `test/sympy/match.jl`.
 
+- **First/all occurrences of a pattern *within* a subject (§4's
+  `eachmatch_at` seam).** "Where does `p` match inside `s`?" is the
+  common rewriter query — today it means descending the subject and
+  calling `match` at every node, paying full `MatchEngine` setup
+  (bindings, frame stack, pool) per attempt. A dedicated design should
+  beat naive descend-and-match on several fronts:
+
+  - **Compiled prefilter.** The pattern root's head, arity bounds, and
+    literal structure are known at compile time — most subject nodes
+    can be rejected by a cheap discriminator without entering the
+    engine at all.
+  - **DAG dedup.** Subject IR is interned — each root attempt starts
+    from empty bindings, so `(root_plan, subj_node) -> results` is
+    memoizable per node. Naive descent pays per *occurrence*; the
+    specialized version pays per *node*. (Same key shape as the
+    memoization item above, but safe by construction at root
+    attempts — no live bindings to key on.)
+  - **Engine reuse.** One `MatchEngine` (or its buffers) reset per
+    candidate node instead of allocating fresh per attempt.
+  - **Bottom-up marking (further out).** Propagating "which pattern
+    nodes can this subject node match" up the subject DAG —
+    tree-automaton style — would make occurrence search O(|subj
+    nodes|) instead of per-node engine runs.
+
+  Semantics to fix first: traversal order for "first" (preorder DFS?
+  leftmost-outermost like rewriting systems?), whether nested matches
+  inside a matched subtree are reported, and result shape (nodes vs
+  substitution maps).
+
 ## Tests
 
 - Port MatchPy's one_to_one tests into `test/matchpy/` as oracles.
