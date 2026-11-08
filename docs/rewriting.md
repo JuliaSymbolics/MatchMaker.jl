@@ -77,13 +77,22 @@ struct CompiledRule
     name::Symbol
 end
 
+abstract type RuleIndex end
+# lookup(ws, idx::RuleIndex, node) -> SmallV{Int32} of candidate rule ids
+
 struct RuleSet
     rules::Vector{CompiledRule}
-    index::RuleIndex        # §5 — bucket index now, net later
+    index::RuleIndex        # §5 — BucketIndex now, DiscrimNet later
 end
 
 compile_rules(rules) -> RuleSet     # build once, share globally, thread-safe
 ```
+
+`RuleIndex` is the dispatch seam, not a concrete layout: Phase 1's
+`BucketIndex` is a small op→rule-ids map plus spill lists; Phase 2's
+`DiscrimNet` carries net states and transition tables. `lookup` is
+the only operation both must implement, so the phases are A/B-able
+behind one call site.
 
 `RuleSet` is immutable after construction and safe to share across
 tasks and calls — all mutable state lives in the workspace (§6). This
@@ -175,6 +184,15 @@ Group rules by root-obligation signature at `compile_rules` time:
 - head-slot (`~f` over args) → `:any_head`
 - leaf/literal root → `:leaf`
 - plus arity bounds (Seq `min…max`, Comm position count) as a range check
+
+```julia
+struct BucketIndex <: RuleIndex
+    by_op::Dict{Any, SmallV{Int32}}   # root op identity -> rule ids
+    any_head::SmallV{Int32}           # rules whose root head is a slot
+    leaf_rules::SmallV{Int32}         # rules whose root is ground/literal
+    arity::Vector{Tuple{Int,Int}}     # per-rule (min, max) arg bounds
+end
+```
 
 At a site, one `signature(node)` probe selects the bucket — typically
 1–3 survivors out of ~100 rules; each survivor runs `match` in order.
