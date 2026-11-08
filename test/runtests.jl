@@ -72,6 +72,10 @@ end
     include("unit/lazy.jl")
 end
 
+@safetestset "rewrite / ruleset" begin
+    include("unit/rewrite.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end

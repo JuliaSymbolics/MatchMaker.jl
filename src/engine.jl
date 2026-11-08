@@ -349,10 +349,10 @@ reusable argument buffer for constraint evaluation. `steps` meters work.
 mutable struct MatchEngine
     "Compiled pattern."
     const pat::Matcher
-    "Subject DAG."
-    const subj::IRStructure{SymReal}
+    "Subject DAG — workspace-owned under [`reset!`](@ref) (REWRITING.md §4)."
+    subj::IRStructure{SymReal}
     "Node index of the subject root."
-    const sroot::Int32
+    sroot::Int32
     "DFS stack of live frames; `stk[1]` is the root when `sp >= 1`."
     stk::Vector{Union{Nothing, MatchFrameT}}
     "Top of `stk` — the deepest live frame index."
@@ -380,7 +380,7 @@ mutable struct MatchEngine
     "Work meter; compare against `maxsteps`."
     steps::Int
     "Step budget; the search ends once `steps` reaches it."
-    const maxsteps::Int
+    maxsteps::Int
 end
 
 """
@@ -396,6 +396,21 @@ function MatchEngine(
     )
     subj = IRStructure{SymReal}()
     sroot = populate_ir!(subj, s)
+    return MatchEngine(pat, subj, sroot, constraints; maxsteps)
+end
+
+"""
+    $TYPEDSIGNATURES
+
+Build a [`MatchEngine`](@ref) for `pat` over a pre-populated `subj` IR —
+the shared-subject constructor for [`RuleWorkspace`](@ref) (REWRITING.md
+§4): the caller owns `subj` and supplies `sroot`; later sites rebind the
+engine to new roots with [`reset!`](@ref).
+"""
+function MatchEngine(
+        pat::Matcher, subj::IRStructure{SymReal}, sroot::Int32,
+        constraints::AbstractVector{Constraint}; maxsteps::Int = typemax(Int)
+    )
     binds = Bindings(pat.nvars)
     trail = Int32[]
     argbuf = BasicSymbolic{SymReal}[]
@@ -432,15 +447,41 @@ function MatchEngine(
         argbuf, segbuf, false, 0,
         maxsteps
     )
+    _init_root!(eng)
+    return eng
+end
 
-    # Leaf roots (a bare slot/literal pattern) are applied inline by
-    # `next_match!` — there is no parent to host the obligation.
-    root_plan = pat.plans[pat.root]
+"Push the root frame for non-leaf root plans (leaf roots run inline in
+`next_match!` — there is no parent to host the obligation)."
+function _init_root!(eng::MatchEngine)
+    root_plan = eng.pat.plans[eng.pat.root]
     isleaf = MData.isa_variant(root_plan, NodePlan.Literal) ||
         MData.isa_variant(root_plan, NodePlan.Slot)
     if !isleaf
-        _push_frame!(eng, _acquire_frame!(eng, root_plan, pat.root, sroot))
+        _push_frame!(
+            eng, _acquire_frame!(eng, root_plan, eng.pat.root, eng.sroot)
+        )
     end
+    return nothing
+end
+
+"""
+    $TYPEDSIGNATURES
+
+Rebind `eng` to a new site (`subj`/`sroot`) for a fresh search: release
+live frames to the pool, unwind all bindings, and re-push the root
+frame. Buffers keep their capacity — this is the per-site reset path of
+[`RuleWorkspace`](@ref) (REWRITING.md §4).
+"""
+function reset!(eng::MatchEngine, subj::IRStructure{SymReal}, sroot::Int32)
+    eng.subj = subj
+    eng.sroot = sroot
+    _pool_release_range!(eng, 1, eng.sp)
+    eng.sp = 0
+    _unwind!(eng, 0)
+    eng.root_done = false
+    eng.steps = 0
+    _init_root!(eng)
     return eng
 end
 
