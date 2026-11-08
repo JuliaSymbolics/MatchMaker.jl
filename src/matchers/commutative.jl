@@ -86,21 +86,26 @@ function _assign_next!(
 end
 
 # Try binding segment var `vid` to the arg positions `sel` selects from
-# `snbs` (arg position i → node snbs[sstart+i-1]).
+# `snbs` (arg position i → node snbs[sstart+i-1]). `used` tracks the
+# selection while it's held; on a failed bind it is restored.
 function _comm_seg_bind!(
         eng::MatchEngine, vid::Int32, @nospecialize(op),
-        snbs, sstart::Int, sel::SmallV{Int32}
+        snbs, sstart::Int, sel::SmallV{Int32}, used::BitVector
     )
     b = eng.binds
     seq = b.seq[vid]
     empty!(seq)
     @inbounds for i in sel
         push!(seq, snbs[sstart + i - 1])
+        used[i] = true
     end
     b.seg_op[vid] = op
     push!(eng.trail, vid)
     if !_ready_constraints!(eng, vid)
         _unwind!(eng, length(eng.trail) - 1)
+        @inbounds for i in sel
+            used[i] = false
+        end
         return SegResult.Longer
     end
     return SegResult.Bound
@@ -165,11 +170,8 @@ function _comm_seg_first!(
     end
     while true
         if _comm_sel_ok(eng, vid, snbs, sstart, sel)
-            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel)
+            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel, used)
             if st === SegResult.Bound
-                @inbounds for i in sel
-                    used[i] = true
-                end
                 owns_bind[j] = true
                 return true
             end
@@ -239,13 +241,8 @@ function _comm_seg_resume!(
         end
         if _comm_sel_ok(eng, vid, snbs, sstart, sel)
             _unwind!(eng, bind_marks[j])
-            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel)
-            if st === SegResult.Bound
-                @inbounds for i in sel
-                    used[i] = true
-                end
-                return length(sel)
-            end
+            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel, used)
+            st === SegResult.Bound && return length(sel)
         end
     end
     return
