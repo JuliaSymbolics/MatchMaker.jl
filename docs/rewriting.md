@@ -80,13 +80,19 @@ end
 abstract type RuleIndex end
 # lookup(ws, idx::RuleIndex, node) -> SmallV{Int32} of candidate rule ids
 
-struct RuleSet
+struct RuleSet{I <: RuleIndex}
     rules::Vector{CompiledRule}
-    index::RuleIndex        # §5 — BucketIndex now, DiscrimNet later
+    index::I                  # §5 — BucketIndex now, DiscrimNet later
 end
 
 compile_rules(rules) -> RuleSet     # build once, share globally, thread-safe
 ```
+
+`RuleSet` is parametric on the index: an abstract `index::RuleIndex`
+field would force dynamic dispatch on every `lookup` — the hot call
+per subject node — while `RuleSet{I}`/`RuleApplier{I}` keep the whole
+dispatch chain concrete (`BucketIndex` and `DiscrimNet` compile to
+distinct applier code).
 
 `RuleIndex` is the dispatch seam, not a concrete layout: Phase 1's
 `BucketIndex` is a small op→rule-ids map plus spill lists; Phase 2's
@@ -104,12 +110,24 @@ binding a `RuleSet` to its task-local workspace — it exists so a
 traversal has a plain `x -> expr′ | nothing` to invoke per node:
 
 ```julia
-(rw::RuleApplier)(x) =
-    for id in lookup(rw.ws, rw.set, x)   # index → candidate rule ids
-        y = apply(rw.ws, rw.set.rules[id], x)
-        y !== nothing && return y      # Chain(rws, true) semantics
-    end; nothing
+struct RuleApplier{I <: RuleIndex}
+    set::RuleSet{I}
+    maxsteps::Int
+end
+
+(rw::RuleApplier)(x) = begin
+    ws = workspace(rw.set)            # task-local, §4
+    for id in lookup(ws, rw.set.index, x)   # index → candidate rule ids
+        y = apply(ws, rw.set.rules[id], x)
+        y !== nothing && return y     # Chain(rws, true) semantics
+    end
+    return nothing
+end
 ```
+
+(`ws` is resolved per call rather than stored: a cached reference
+would pin the wrong task's workspace if the applier crosses tasks.)
+
 
 It is **not** the workspace — it carries no mutable state, only
 `set`, the resolved `ws`, and per-use options (`maxsteps`). The
