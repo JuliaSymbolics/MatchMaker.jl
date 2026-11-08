@@ -23,6 +23,7 @@ using FunctionWrappers: FunctionWrapper
 using Graphs
 using ReadOnlyArrays
 using EnumX: @enumx
+using Preferences: @load_preference
 import Base: match, materialize, eachmatch
 
 include("patternvars.jl")

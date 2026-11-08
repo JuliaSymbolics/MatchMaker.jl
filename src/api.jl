@@ -4,9 +4,11 @@
 ### SubstitutionView (§5.6)
 ###
 
-# Debug staleness flag (§5.6): when true, views verify their step stamp on
-# access and throw on stale reads.
-const _STRICT_VIEWS = Ref{Bool}(false)
+# Debug staleness flag (§5.6): a compile-time preference — enable with
+# `Preferences.set_preferences!(MatchMaker, "strict_views" => true)` and
+# restart. When true, views verify their step stamp on access and throw
+# on stale reads; when false the check folds away entirely.
+const _STRICT_VIEWS = @load_preference("strict_views", false)
 
 """
     SubstitutionView <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
@@ -14,8 +16,8 @@ const _STRICT_VIEWS = Ref{Bool}(false)
 A read-only view of a match's live engine bindings (DESIGN.md §5.6): variable
 `Sym` → bound expression, resolved lazily. Valid only until the next
 `eachmatch`/`iterate` step mutates the bindings — copy with
-[`materialize`](@ref) to keep results. With `_STRICT_VIEWS[] = true` stale
-access throws.
+[`materialize`](@ref) to keep results. With the `strict_views` preference
+enabled, stale access throws.
 """
 struct SubstitutionView <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
     eng::MatchEngine
@@ -23,7 +25,7 @@ struct SubstitutionView <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{Sy
 end
 
 function _check_stale(v::SubstitutionView)
-    _STRICT_VIEWS[] && v.stamp != v.eng.steps && throw(
+    _STRICT_VIEWS && v.stamp != v.eng.steps && throw(
         AssertionError("stale SubstitutionView — engine advanced past this view")
     )
     return nothing

@@ -72,17 +72,16 @@ end
         MarkersMap(a => x, b => y)
     )
 
-    # stale-view debug flag
+    # stale-view debug flag — the `strict_views` preference is
+    # compile-time; when enabled stale access must throw
     eng = MatchEngine(
         compile_pattern(h(slot(a), slot(b))), h(x, y), Constraint[]
     )
     next_match!(eng)
     v = SubstitutionView(eng, eng.steps)
-    _STRICT_VIEWS[] = true
     @test v[a] === x
     next_match!(eng)
-    @test_throws AssertionError v[a]
-    _STRICT_VIEWS[] = false
+    _STRICT_VIEWS && @test_throws AssertionError v[a]
 end
 
 @testset "instantiate" begin
