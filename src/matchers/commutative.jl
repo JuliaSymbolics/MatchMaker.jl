@@ -9,17 +9,17 @@
 ###
 
 # Sorted `pool` of available arg positions; `sel` is the current sorted
-# subset. Advance to the next combination in lexicographic pool order —
-# returns false when `sel` is the last combination of its size.
-function _next_combo!(sel::SmallV{Int32}, pool::Vector{Int32})
-    n = length(pool)
+# subset held as *positions into pool* (1..length(pool)). Advance to the
+# next combination — a pure odometer, no pool lookups — returns false
+# when `sel` is the last combination of its size.
+function _next_combo!(sel::SmallV{Int32}, npool::Int)
     k = length(sel)
     @inbounds for i in k:-1:1
-        sel[i] == pool[n - k + i] && continue
-        idx = searchsortedfirst(pool, sel[i]) + 1
-        sel[i] = pool[idx]
+        sel[i] == npool - k + i && continue
+        ni = sel[i] + oneunit(Int32)
+        sel[i] = ni
         for t in (i + 1):k
-            sel[t] = pool[idx + (t - i)]
+            sel[t] = ni + Int32(t - i)
         end
         return true
     end
@@ -90,12 +90,14 @@ end
 # selection while it's held; on a failed bind it is restored.
 function _comm_seg_bind!(
         eng::MatchEngine, vid::Int32, @nospecialize(op),
-        snbs, sstart::Int, sel::SmallV{Int32}, used::BitVector
+        snbs, sstart::Int, sel::SmallV{Int32}, used::BitVector,
+        pool::Vector{Int32}
     )
     b = eng.binds
     seq = b.seq[vid]
     empty!(seq)
-    @inbounds for i in sel
+    @inbounds for pos in sel
+        i = pool[pos]
         push!(seq, snbs[sstart + i - 1])
         used[i] = true
     end
@@ -103,8 +105,8 @@ function _comm_seg_bind!(
     push!(eng.trail, vid)
     if !_ready_constraints!(eng, vid)
         _unwind!(eng, length(eng.trail) - 1)
-        @inbounds for i in sel
-            used[i] = false
+        @inbounds for pos in sel
+            used[pool[pos]] = false
         end
         return SegResult.Longer
     end
@@ -149,19 +151,20 @@ function _comm_seg_first!(
         length(pool) >= length(bound) || return false
         for e in bound
             found = false
-            for i in pool
-                @inbounds used[i] && continue
-                if @inbounds isequal(eng.subj[e], eng.subj[snbs[sstart + i - 1]])
+            @inbounds for pos in 1:length(pool)
+                i = pool[pos]
+                used[i] && continue
+                if isequal(eng.subj[e], eng.subj[snbs[sstart + i - 1]])
                     used[i] = true
-                    push!(sel, i)
+                    push!(sel, Int32(pos))
                     found = true
                     break
                 end
             end
             if !found
                 # release the partial selection's marks
-                for i in sel
-                    used[i] = false
+                for pos in sel
+                    used[pool[pos]] = false
                 end
                 empty!(sel)
                 return false
@@ -180,11 +183,11 @@ function _comm_seg_first!(
     lo > hi && return false
     empty!(sel)
     @inbounds for t in 1:lo
-        push!(sel, pool[t])
+        push!(sel, Int32(t))
     end
     while true
-        if _comm_sel_ok(eng, vid, snbs, sstart, sel)
-            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel, used)
+        if _comm_sel_ok(eng, vid, snbs, sstart, sel, pool)
+            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel, used, pool)
             if st === SegResult.Bound
                 owns_bind[j] = true
                 return true
@@ -192,11 +195,11 @@ function _comm_seg_first!(
         end
         # advance to the next combination; at the last combo of a size,
         # grow to the next size (the grown selection is tried next pass)
-        if !_next_combo!(sel, pool)
+        if !_next_combo!(sel, length(pool))
             length(sel) == hi && return false
             resize!(sel, length(sel) + 1)
             @inbounds for t in 1:length(sel)
-                sel[t] = pool[t]
+                sel[t] = Int32(t)
             end
         end
     end
@@ -207,19 +210,21 @@ end
 # predicates? An element-predicate failure only kills this selection —
 # other combinations may exclude the failing element.
 function _comm_sel_ok(
-        eng::MatchEngine, vid::Int32, snbs, sstart::Int, sel::SmallV{Int32}
+        eng::MatchEngine, vid::Int32, snbs, sstart::Int,
+        sel::SmallV{Int32}, pool::Vector{Int32}
     )
     (pred, seqpred) = _seg_preds(eng, vid)
     if pred !== nothing
-        @inbounds for i in sel
-            pred(eng.subj[snbs[sstart + i - 1]])::Bool || return false
+        @inbounds for pos in sel
+            pred(eng.subj[snbs[sstart + pool[pos] - 1]])::Bool ||
+                return false
         end
     end
     if seqpred !== nothing
         buf = eng.segbuf
         resize!(buf, length(sel))
-        for (t, i) in enumerate(sel)
-            buf[t] = eng.subj[snbs[sstart + i - 1]]
+        for (t, pos) in enumerate(sel)
+            @inbounds buf[t] = eng.subj[snbs[sstart + pool[pos] - 1]]
         end
         seqpred(buf)::Bool || return false
     end
@@ -239,23 +244,23 @@ function _comm_seg_resume!(
         bind_marks::Vector{Int}
     )
     sel = seg_sel[j]
-    @inbounds for i in sel
-        used[i] = false
+    pool = seg_pool[j]
+    @inbounds for pos in sel
+        used[pool[pos]] = false
     end
     owns_bind[j] || return nothing
-    pool = seg_pool[j]
     hi = min(_seg_max(eng, vid), length(pool) - min_tail[j + 1])
     while true
-        if !_next_combo!(sel, pool)
+        if !_next_combo!(sel, length(pool))
             length(sel) == hi && return nothing
             resize!(sel, length(sel) + 1)
             @inbounds for t in 1:length(sel)
-                sel[t] = pool[t]
+                sel[t] = Int32(t)
             end
         end
-        if _comm_sel_ok(eng, vid, snbs, sstart, sel)
+        if _comm_sel_ok(eng, vid, snbs, sstart, sel, pool)
             _unwind!(eng, bind_marks[j])
-            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel, used)
+            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel, used, pool)
             st === SegResult.Bound && return length(sel)
         end
     end
