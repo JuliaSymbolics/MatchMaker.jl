@@ -145,17 +145,6 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   inside a matched subtree are reported, and result shape (nodes vs
   substitution maps).
 
-- **`matchall` materialize is the throughput ceiling.** Since
-  `perf/segment-path` (fa91b5b — suffix-max bounds force the last
-  segment's capture, pools are predicate-prefiltered, `_next_combo!`
-  is an odometer) the engine costs ~0.2 μs/result on
-  `seg+seg 14-arg` while `matchall` runs ~3 μs/result — the gap is
-  almost entirely per-result `MarkersMap` + `_seg_value` →
-  `add_worker`/hashconsing. `eachmatch`/`SubstitutionView` is the
-  zero-alloc path; document it as the high-throughput API and
-  consider a `matchall` variant returning interned bindings or
-  views.
-
 ## Tests
 
 - Port MatchPy's one_to_one tests into `test/matchpy/` as oracles.

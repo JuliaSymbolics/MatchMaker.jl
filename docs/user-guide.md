@@ -184,6 +184,8 @@ matchall(pat, subj; constraints = [cn])
 | `match(m, s)` | first `MarkersMap` or `nothing` |
 | `matches(m, s)` | lazy iterator of `MarkersMap` |
 | `matchall(m, s)` | `collect(matches(...))` |
+| `boundmatches(m, s)` | lazy iterator of `BoundMatch` |
+| `boundmatchall(m, s)` | `collect(boundmatches(...))` |
 | `eachmatch(f, m, s)` | zero-materialization callback; stops when `f` returns `false` |
 | `instantiate(rhs, subst)` | substitute bindings into a template |
 
@@ -193,10 +195,30 @@ All query entry points accept a pattern expression *or* a compiled
 budget on total engine steps; the iterator simply ends early when it
 runs out, yielding a truncated result set.
 
-`match` and `matches` items are persistent `MarkersMap`s.
-`eachmatch` hands `f` a `SubstitutionView` — a live read-only view
-valid only inside the callback; copy with `materialize(view)` to keep
-a result without paying `MarkersMap` construction per step.
+### Result shapes and throughput
+
+There are three result types, cheapest to most expensive per match:
+
+- **`SubstitutionView`** (`eachmatch` callback argument) — a live,
+  read-only view of the engine's binding state, valid only inside the
+  callback. Zero per-result allocation; nothing is reconstructed.
+  This is the high-throughput path — use it when the consumer folds
+  results into a count/aggregate or exits early.
+- **`BoundMatch`** (`boundmatches`/`boundmatchall`) — a *persistent*
+  snapshot of the engine's index-only bindings plus the subject IR.
+  Variable values resolve on access through the same materialization
+  path (segment terms are reconstructed per read and *not* memoized).
+  Roughly 10× cheaper than `matchall` on enumeration-heavy workloads;
+  use it when collecting many results whose values are inspected
+  sparsely — counting, comparing, or reading a few bound vars.
+- **`MarkersMap`** (`match`/`matches`/`matchall`) — the fully eager
+  result: a plain `Dict` of var → already-constructed `BasicSymbolic`,
+  including `f(captured…)` reconstruction for every segment variable.
+  The right default when every bound value will be used.
+
+`materialize` converts a `SubstitutionView` or `BoundMatch` into a
+persistent `MarkersMap`; materializing every variable of a `BoundMatch`
+costs about the same as `matchall` would have.
 
 Enumeration is **deterministic**: positions dispatch left-to-right
 over raw `arguments` order, and distinct assignments produce distinct

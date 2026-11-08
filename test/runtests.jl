@@ -68,6 +68,10 @@ end
     include("fuzz/generator.jl")
 end
 
+@safetestset "lazy results" begin
+    include("unit/lazy.jl")
+end
+
 @safetestset "JET smoke" begin
     include("jet.jl")
 end
