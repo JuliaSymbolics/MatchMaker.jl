@@ -872,7 +872,7 @@ DiscriminationNet`) `[R5]`. Integration points already in the design:
 - AC nodes map to MatchPy's `CommutativeMatcher` net states (states whose
   `matcher` field is a `CommutativeMatcher` in `many_to_one.py` `[R5]`); our
   `AC` frame machinery is reused per net node rather than rewritten.
-Now scheduled — the full design lives in `docs/rewriting.md` (rule
+Now scheduled — the full design lives in `REWRITING.md` (rule
 objects, SU-combinator contract, phased `RuleIndex` → discrimination
 net, and the bounded shared workspace).
 
