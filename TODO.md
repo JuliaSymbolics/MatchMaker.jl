@@ -145,36 +145,16 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   inside a matched subtree are reported, and result shape (nodes vs
   substitution maps).
 
-- **Segment-materialization perf check.** Profiling
-  `matchall(seg+seg, 13-arg Add)` (8192 results, ~77 ms) and
-  `matchall(h×5 segs, 11-arg)` (1365 results, ~5.7 ms):
-
-  - `seg+seg` splits ~60% engine (`_step_ac!` backtrack loop →
-    `_comm_seg_resume!` subset enumeration: `_next_combo!` SmallV
-    odometer, `used`-bit unmark/remark, `_comm_seg_bind!` seq bind +
-    trail, `_comm_sel_ok` per-combo elementwise symtype checks) and
-    ~28% `materialize` → `_seg_value` → `add_worker` →
-    `Add{SymReal}(coeff, Dict)` + hashconsing (`WeakCacheSet.getkey!`,
-    `isequal_addmuldict`, `searchsortedfirst` insert). ~10% collect.
-  - `h` segs is ~90% materialize → `BSImpl.Term` ctor +
-    `promote_symtype(f, map(symtype, args)...)` per segment per
-    result; `eachmatch` is ~20× faster — materialization *is* the cost.
-
-  Optimization angles: precompute a per-candidate-arg symtype-validity
-  mask at frame init instead of `_comm_sel_ok` rechecking every combo
-  element; avoid the `map(symtype, args)` allocation in `_seg_value`;
-  diff-update `used` from `_next_combo!`'s changed positions rather
-  than full unmark/remark; `@inbounds` the SmallV hot paths. A
-  dirty/master A/B once suggested ~5–13% slower on these cases under
-  concrete frames, but a same-session worktree A/B (5c332f6 vs HEAD)
-  showed parity — treat as drift until reproduced.
-
-- **`matchall` materialize is the throughput ceiling.** On
-  enumeration-heavy workloads the per-result `MarkersMap` (Dict +
-  `_seg_value` term reconstruction per var) costs as much as the
-  search. `eachmatch`/`SubstitutionView` (zero-alloc) is 5–20× faster;
-  document it as the high-throughput API and consider a
-  `matchall`-variant returning interned bindings or views.
+- **`matchall` materialize is the throughput ceiling.** Since
+  `perf/segment-path` (fa91b5b — suffix-max bounds force the last
+  segment's capture, pools are predicate-prefiltered, `_next_combo!`
+  is an odometer) the engine costs ~0.2 μs/result on
+  `seg+seg 14-arg` while `matchall` runs ~3 μs/result — the gap is
+  almost entirely per-result `MarkersMap` + `_seg_value` →
+  `add_worker`/hashconsing. `eachmatch`/`SubstitutionView` is the
+  zero-alloc path; document it as the high-throughput API and
+  consider a `matchall` variant returning interned bindings or
+  views.
 
 ## Tests
 
