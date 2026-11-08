@@ -90,8 +90,9 @@ tasks and calls — all mutable state lives in the workspace (§6). This
 is the "shared global data structure": one `const`-held `RuleSet`,
 compiled once, read by every rewrite pass.
 
-`RuleApplier(ruleset; maxsteps = typemax(Int))` is the callable a
-traversal applies per node:
+`RuleApplier(ruleset; maxsteps = typemax(Int))` is a thin *callable*
+binding a `RuleSet` to its task-local workspace — it exists so a
+traversal has a plain `x -> expr′ | nothing` to invoke per node:
 
 ```julia
 (rw::RuleApplier)(x) =
@@ -101,15 +102,32 @@ traversal applies per node:
     end; nothing
 ```
 
+It is **not** the workspace — it carries no mutable state, only
+`set`, the resolved `ws`, and per-use options (`maxsteps`). The
+alternative shape `(rs::RuleSet)(x)` resolving `workspace(rs)`
+internally is equivalent when no per-use options are needed; the
+wrapper exists so options can vary per call site without touching
+the shared ruleset.
+
 ## 4. `RuleWorkspace` — bounded reuse
 
 ```julia
 mutable struct RuleWorkspace
-    subj::IRStructure{SymReal}          # one per subject, shared by all rules
+    subj::IRStructure{SymReal}          # one per application site, shared
     engines::Vector{Union{Nothing,MatchEngine}}  # per rule id, lazy
-    net_cache::Dict{Tuple{Int32,Int32}, SmallV{Int32}}  # §5 memo, cleared per subject
+    net_cache::Dict{Tuple{Int32,Int32}, SmallV{Int32}}  # Phase-2 only
 end
 ```
+
+The workspace holds **engine state only** — the rules themselves are
+immutable in `RuleSet`. Concretely: one subject `IRStructure`
+populated once per application site and shared by every rule engine;
+a lazily-created `MatchEngine` per rule id (`reset!` between sites,
+not re-allocated); and `net_cache`, used only by Phase 2 — a memo
+`(net_state_id, subj_node) → surviving rule ids`. Because subject IR
+nodes are interned, a DAG-shared subterm evaluates the net once per
+state instead of once per occurrence. Phase 1 leaves `net_cache`
+empty — the bucket `lookup` needs no per-node memo.
 
 One workspace per `RuleSet` **per task**, keyed by the `RuleSet` object
 in `task_local_storage` (project compat is Julia 1.10, so
@@ -160,8 +178,17 @@ Group rules by root-obligation signature at `compile_rules` time:
 
 At a site, one `signature(node)` probe selects the bucket — typically
 1–3 survivors out of ~100 rules; each survivor runs `match` in order.
-This captures most of the win on `simplify`-shaped sets where the vast
-majority of rules die at the root-head check, at ~zero net complexity.
+
+What it eliminates vs. naïvely looping `match(rule_i, x)` per rule,
+which pays three costs **per rule per site**: a fresh `MatchEngine`'s
+buffers, `populate_ir!` (O(|subject|) *every time*), and the match
+itself. Phase 1 removes all three: the IR is populated once per site
+and shared, engines are `reset!` rather than constructed, and the
+bucket probe rejects almost every rule by root head alone — the
+dominant win on `simplify`-shaped rule sets, where only a handful of
+~100 rules can match any given node's head. It is intentionally
+shallow: no shared traversal, no memoization — those are Phase 2,
+behind the same `lookup` interface.
 
 ### Phase 2: discrimination net (DESIGN.md §8)
 
