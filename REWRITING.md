@@ -6,6 +6,16 @@ elaborates DESIGN.md §8 ("many-to-one outlook") and subsumes the
 `eachmatch_at` TODO item — the shared workspace and the net evaluation
 *are* the specialized occurrence-search machinery that item asks for.
 
+**Compatibility constraint: none.** Nothing here is released, so the
+design deliberately reshapes rather than wraps: `MatchEngine`'s
+`const` subject/pattern fields become workspace-provided
+(`reset!` takes an externally-owned `IRStructure`), the rewrite
+traversal is MatchMaker-native rather than SU's `Walk`, rule RHSs are
+compiled template plans instead of dict substitutions, and every name
+in this document is provisional. SU-combinator interoperability is
+kept where it is free (the applier is a plain callable), not where it
+costs.
+
 Sections 1–4 are the near-term deliverable; §5 is the phased
 many-to-one plan; §6–8 cover the shared workspace and growth bounds.
 
@@ -16,9 +26,15 @@ fire", anything else is the rewritten term. MatchMaker rule objects
 satisfy this contract so the existing combinator ecosystem applies
 verbatim.
 
-We **reuse `SymbolicUtils.Rewriters` combinators directly** rather than
-reimplementing them — they are generic over callables and already
-carry the semantics `simplify` depends on. The port surface:
+The **primary traversal is MatchMaker-native** (§6) — it walks the
+workspace `IRStructure` bottom-up and rebuilds only changed subtrees,
+rather than `arguments()`/`maketerm` per node. `SymbolicUtils.
+Rewriters` combinators interoperate for free where the contract is
+already right (`Chain`, `IfElse`, `RestartedChain`, `Fixpoint`,
+`Empty`, `Filter` — generic callables, reusable verbatim); the
+`Walk`/`Postwalk`/`Prewalk` rebuild loop is *not* the foundation —
+it's available through the applier-as-callable when needed. The
+semantic contract we mirror:
 
 | Combinator | Semantics (SU source) |
 |---|---|
@@ -51,11 +67,15 @@ rule = mmrule(lhs => rhs;
 
 - `lhs` is compiled once via `compile_pattern` — segments, optionals,
   non-linear vars, head slots all supported as in one-to-one matching.
-- `rhs` is either a symbolic template (`instantiate`'d per result) or
-  a callable `f(view) -> expr` receiving the result view — stored as
-  `Union{BasicSymbolic{SymReal}, RhsT}` (a `FunctionWrapper`, same
-  convention as `PredT`/`ConstrT` in §3.2), so `apply` union-splits on
-  a 2-member concrete union instead of calling `Any`.
+- `rhs` is a **compiled template plan** (`RhsPlan`) or a callable
+  `f(view) -> expr` — stored as `Union{RhsPlan, RhsT}` (a
+  `FunctionWrapper`, same convention as `PredT`/`ConstrT` in §3.2), so
+  `apply` union-splits on a 2-member concrete union instead of calling
+  `Any`. `RhsPlan` is the rhs expression compiled *against the lhs
+  var ids* at `compile_rules` time — instantiation reads `binds` by
+  index and splices segment captures positionally, bypassing the
+  `Sym → value` dict that `instantiate`/`MarkersMap` would build per
+  rewrite.
 - `constraints` are the existing early-firing `Constraint`s — this is
   where `@rule … where …` guards map; they prune during the match,
   not after.
@@ -82,7 +102,7 @@ const RhsT = FunctionWrapper{
 
 struct CompiledRule
     pat::Matcher
-    rhs::Union{BasicSymbolic{SymReal}, RhsT}   # template or callable
+    rhs::Union{RhsPlan, RhsT}   # compiled template or callable
     name::Symbol
 end
 
@@ -181,9 +201,20 @@ workspace(rs::RuleSet) =
 
 ### `reset!` protocol (the reuse mechanism)
 
-`MatchEngine` gets `reset!(eng, sroot)`:
+Today `MatchEngine` *owns* its subject (`const subj`, `const sroot`,
+populated at construction). In a rewrite pass that is backwards: the
+subject belongs to the workspace, engines borrow it. So the engine
+reshapes — `subj`/`sroot` become workspace-provided fields and
+`reset!` accepts an externally-owned IR:
 
-- `sroot` becomes a mutable field (the only `const` that changes).
+```julia
+reset!(eng::MatchEngine, subj::IRStructure{SymReal}, sroot::Int32)
+```
+
+- `eng.subj = subj; eng.sroot = sroot` (fields no longer `const`).
+
+Every rule engine points at the *same* workspace `IRStructure` —
+`populate_ir!` runs once per site, total.
 - `sp = 0`, `root_done = false`, `steps = 0`, `empty!(trail)`;
   `binds.node .= 0`, `binds.seg_op .= nothing`, `binds.extra .= nothing`,
   `empty!` each `binds.seq`.
@@ -275,13 +306,27 @@ feeding the existing frame machine. Phase 1 is the correctness
 reference for Phase 2's `lookup` results (same survivors, net does it
 in one walk).
 
-## 6. Traversal integration
+## 6. Traversal — native rewrite pass
 
-`Postwalk(RuleApplier(rs))(expr)` is the canonical call: bottom-up, at
-each rebuilt node the index selects candidates and each gets a real
-`match`. `Prewalk`, `PassThrough`, `Fixpoint`, `Filter`, `IfElse`,
-`Chain`, `RestartedChain` compose unchanged — they see a plain
-callable.
+The canonical call is a MatchMaker-native bottom-up pass over the
+workspace IR, not `Postwalk(applier)`:
+
+```julia
+rewrite(rs::RuleSet, expr; order = :post) -> expr′   # bottom-up default
+```
+
+The pass walks `ws.subj`'s dependency graph once: at each node
+`lookup` selects candidates → `apply` → on a changed result, mark the
+node and rebuild only its ancestors (identity-unchanged nodes keep
+their interned nodes). Top-down (`:pre`) applies the same loop in the
+opposite direction before descending. This *is* the net's evaluation
+walk under Phase 2 — one traversal serves the whole rule set, not one
+traversal per candidate.
+
+SU interop stays free: `Postwalk(RuleApplier(rs))(expr)` works
+unmodified because the applier is a plain callable — use it where SU
+combinator composition matters (`instrument`, `threaded`), prefer the
+native pass where it doesn't.
 
 - `IfElse` conditions that are *patterns* become `x -> match(m, x) !== nothing`
   — a `PatternCond` convenience wraps this.
@@ -291,9 +336,9 @@ callable.
 - `maxsteps` budgets per application site, shared across the site's
   candidate rules — not a global rewrite budget (that's a rewriter
   concern: `FixpointNoCycle` exists for termination).
-- `threaded` walks: task-local workspaces make threaded `Walk` safe;
-  document that `RuleApplier` must not be shared with an explicit
-  workspace across tasks.
+- `threaded` walks (SU `Walk` path): task-local workspaces keep it
+  safe; a `RuleApplier` must not be shared with an explicit workspace
+  across tasks — `workspace(rs)` re-resolves per call anyway.
 
 ## 7. Result/binding semantics for rules
 
@@ -301,14 +346,16 @@ callable.
   = engine order — `simplify`-grade determinism.
 - RHS receives `SubstitutionView` (fast path) or `MarkersMap` via
   `materialize` when it needs persistence.
-- `instantiate` already splices segment captures — RHS templates need
-  no new machinery.
+- `RhsPlan` splices segment captures positionally from `binds` —
+  no dict involved; `instantiate` remains for the public template
+  path.
 
 ## 8. Milestones
 
-1. `feat/rule-objects` — `mmrule`, `RuleApplier`, `RuleSet` Phase-1
-   index, `reset!` protocol, task-local workspace. *Tests: SU
-   combinator compatibility (Chain/IfElse/RestartedChain via
+1. `feat/rule-objects` — `mmrule`, `RhsPlan` templates, `RuleApplier`,
+   `RuleSet` Phase-1 index, engine `reset!` (workspace-owned subject),
+   task-local workspace, native `rewrite` pass. *Tests: SU combinator
+   compatibility where reused (Chain/IfElse/RestartedChain via
    SymbolicUtils.Rewriters), workspace reuse invariants.*
 2. `feat/rewrite-bench` — simplify-shaped workload benchmark
    (~50–100 rules × deep subjects) vs SU's `@rule`/`@acrule` path.
