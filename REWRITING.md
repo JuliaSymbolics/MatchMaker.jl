@@ -194,8 +194,16 @@ in `task_local_storage` (project compat is Julia 1.10, so
 
 ```julia
 workspace(rs::RuleSet) =
-    get!(task_local_storage(), rs)::RuleWorkspace
+    get!(() -> RuleWorkspace(rs), task_local_storage(), rs)::RuleWorkspace
 ```
+
+The zero-arg default makes `get!` lazy: the workspace is built **once
+per task per `RuleSet`**, not per call — later calls are a
+task-local-storage dict hit (~ns). (Careful with the alternative
+`get!(tls, rs, RuleWorkspace(rs))` — the positional default evaluates
+eagerly and *would* rebuild every call.) Inside the native rewrite
+pass `ws` is bound once up front; only `RuleApplier(x)` resolves it
+per invocation — appropriate for a callable that may cross tasks.
 
 - Same `RuleSet` across threads → distinct workspaces; no locks.
 - One IR per subject *per pass*: `populate_ir!` runs once per
