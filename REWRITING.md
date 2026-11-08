@@ -262,6 +262,10 @@ struct BucketIndex <: RuleIndex
 end
 ```
 
+Arity bookkeeping treats an `optional` position as consuming 0-or-1
+args — just a wider (min, max); nothing else is needed since
+optionals only occur under AC/A heads (§4.7).
+
 At a site, one `signature(node)` probe selects the bucket — typically
 1–3 survivors out of ~100 rules; each survivor runs `match` in order.
 
@@ -294,6 +298,8 @@ A shared trie over `(rule, pattern_node)` frontier states:
   captures)` to the existing engine — multiset assignment, segment
   backtracking, and constraints run there, unchanged (MatchPy's own
   split: `CommutativeMatcher` states inside `ManyToOneMatcher`).
+  `optional` needs no net edges at all — it only occurs under AC/A
+  heads, which are exactly the subtrees deferred to the engine.
 
 **Pattern-IR sharing and var specs.** The net itself stores
 `(rule, pat_node)` frontier entries pointing into each pattern's own
@@ -409,14 +415,15 @@ ancestors dirty and re-evaluates.
 4. `feat/eachmatch_at` — expose the workspace traversal as the public
    occurrence-search API (TODO item) built on the same machinery.
 
-## 10. Open questions
+## 10. Resolved decisions
 
-- Multi-result rules: SU's `acrule` applies on permutations — for a
-  `match` (first-result) contract the deterministic order may pick a
-  different first match than SU's enumeration; decide whether
-  `mmrule` needs a `try_all` mode emitting all results.
-- Net states for `optional` positions need parallel with/without
-  edges — arity-class accounting gets subtle; confirm against §4.7.
-- Whether `RuleSet` should dedup identical LHS patterns (map one
-  `Matcher` to several RHSs) — cheap at compile time, worth doing in
-  Phase 1.
+- **No multi-result rules** — rules are first-match (`match`); rule
+  and declaration order governs application. `acrule`-style
+  all-permutations application is out of scope.
+- **`optional` needs no net machinery** — §4.7 restricts it to AC/A
+  heads, which the net already defers to the engine; bucket arity
+  bounds count it as 0-or-1 (§5).
+- **No LHS dedup** — identical `Matcher`s mean identical bindings, so
+  the first rule in declaration order always hits and later sharing
+  rules are dead code anyway; a callable rhs that wants fallthrough
+  semantics is better written as one rule with a smarter rhs.
