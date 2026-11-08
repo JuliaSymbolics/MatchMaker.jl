@@ -52,8 +52,10 @@ rule = mmrule(lhs => rhs;
 - `lhs` is compiled once via `compile_pattern` — segments, optionals,
   non-linear vars, head slots all supported as in one-to-one matching.
 - `rhs` is either a symbolic template (`instantiate`'d per result) or
-  a callable `f(result) -> expr` receiving the result dict — which
-  dict (below) is an efficiency choice, not a semantic one.
+  a callable `f(view) -> expr` receiving the result view — stored as
+  `Union{BasicSymbolic{SymReal}, RhsT}` (a `FunctionWrapper`, same
+  convention as `PredT`/`ConstrT` in §3.2), so `apply` union-splits on
+  a 2-member concrete union instead of calling `Any`.
 - `constraints` are the existing early-firing `Constraint`s — this is
   where `@rule … where …` guards map; they prune during the match,
   not after.
@@ -71,11 +73,19 @@ takes the first match and reads all its vars.
 ## 3. `RuleSet` — the shared immutable structure
 
 ```julia
+# Mirrors the stored-callable convention (§3.2: PredT/SeqPredT/ConstrT):
+# a callable RHS gets the result view, returns the rewritten expr —
+# `nothing` signals "matched but produce nothing" (SU rule semantics).
+const RhsT = FunctionWrapper{
+    Union{BasicSymbolic{SymReal}, Nothing}, Tuple{SubstitutionView}
+}
+
 struct CompiledRule
     pat::Matcher
-    rhs::Any                # template expr or callable
+    rhs::Union{BasicSymbolic{SymReal}, RhsT}   # template or callable
     name::Symbol
 end
+```
 
 abstract type RuleIndex end
 # lookup(ws, idx::RuleIndex, node) -> SmallV{Int32} of candidate rule ids
