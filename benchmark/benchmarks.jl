@@ -232,3 +232,188 @@ SUITE["stress"]["ac missing literal fail-fast"] =
 # identity coercion
 SUITE["stress"]["ac singleton coerce x+seg vs p"] =
     @benchmarkable matchall($pat_coerce, $sub_coerce)
+
+# ------------------------------------------------------------------
+# Workload benchmarks — batched passes sized to a few ms per sample,
+# so ratios aren't dominated by timer noise on µs-scale cases.
+#
+# Model: a fixed rule set applied to a corpus of independent subject
+# expressions — the rewrite-pass scenario (apply every rule to every
+# expression, gather all results). Compilation and corpus construction
+# happen once at suite setup; the timed body is one pass over
+# pattern × subject pairs, counting results so nothing is
+# dead-code-eliminated. Each pass exercises engine setup, frame
+# dispatch, and backtracking across every matcher family.
+#
+# The corpus is deterministic — index arithmetic over an 8-symbol
+# pool, no RNG — and mixes hit and miss shapes so a pass pays both
+# fast head-mismatch rejections and deep backtracking:
+#   * canonical Adds of 2–5 terms,
+#   * factored-product sums (the w·y + w·z + rest shape),
+#   * AC f / commutative g calls at arities 2–6,
+#   * duplicate-arg f's (non-linear recheck hits),
+#   * nested f's and g's,
+#   * free-head h calls, including h over Add arguments.
+# ------------------------------------------------------------------
+
+const _WL_SYMS = (p, q, r, x, y, z, a, b)
+_wl_arg(i) = _WL_SYMS[mod1(i, length(_WL_SYMS))]
+
+const _WL_CORPUS = let s = _wl_arg
+    corpus = Any[]
+    for n in 2:5, seed in 1:12
+        push!(corpus, +((s(seed + k * n) for k in 1:n)...))
+    end
+    for i in 1:8, j in 1:8
+        push!(corpus, s(i) * s(j) + s(i) * s(j + 1) + s(3) * s(i + j))
+    end
+    for n in 2:6, seed in 1:8
+        push!(corpus, f((s(seed + k) for k in 1:n)...))
+        push!(corpus, g((s(seed * k + n) for k in 1:n)...))
+    end
+    for i in 1:8
+        push!(corpus, f(s(i), s(i), s(i + 1), s(i + 1)))
+        push!(corpus, f(s(i), s(i + 1), s(i + 2), s(i)))
+    end
+    for i in 1:12
+        push!(corpus, f(s(i), f(s(i + 1), f(s(i + 2), s(i + 3), s(i + 4)))))
+        push!(corpus, f(s(i), f(s(i), s(i + 1))))
+        push!(corpus, g(s(i), g(s(i + 1), s(i + 2))))
+        push!(corpus, g(s(i), g(s(i), s(i))))
+    end
+    for i in 1:8, j in 1:8
+        push!(corpus, h(s(i), s(j)))
+        push!(corpus, h(s(i) + s(j), s(i + 1)))
+    end
+    corpus
+end
+
+const _WL_PATS = (
+    compile_pattern(h(slot(a), slot(b))),
+    compile_pattern(g(slot(a), slot(b), slot(c))),
+    compile_pattern(slot(a) + segment(s)),
+    compile_pattern(slot(w) * slot(y) + slot(w) * slot(z) + segment(s)),
+    compile_pattern(f(slot(a), slot(a), segment(s))),
+    compile_pattern(g(slot(a), g(slot(b), slot(c)))),
+)
+
+function _wl_matchall(pats, corpus)
+    n = 0
+    for pat in pats, subj in corpus
+        n += length(matchall(pat, subj))
+    end
+    return n
+end
+
+function _wl_match(pats, corpus)
+    n = 0
+    for pat in pats, subj in corpus
+        match(pat, subj) === nothing || (n += 1)
+    end
+    return n
+end
+
+function _wl_eachmatch(pats, corpus)
+    n = Ref(0)
+    for pat in pats, subj in corpus
+        eachmatch(b -> (n[] += 1), pat, subj)
+    end
+    return n[]
+end
+
+# --- single-match workloads -----------------------------------------
+# One (pattern, subject) pair whose *search itself* is ms-scale — no
+# batching. Sized empirically to ~3–8 ms per call:
+#
+#   * nl-pair fail: the last two slots must unify; 8 distinct args make
+#     that impossible, so the engine burns the entire P(8,6) injection
+#     space and returns nothing — pure backtracking, zero results.
+#   * 3-seg AC partition: each of n args goes to one of 3 segments →
+#     3^n ordered partitions (2187 / 6561 results).
+#   * factor extraction: 4 non-linear `w·_` terms + rest segment over
+#     7 products sharing a common factor.
+#   * 2-seg AC partition on 10 args → 2^10 = 1024 sub-multiset splits.
+#   * 5 contiguous segments under free head h on 11 args → C(14,4)
+#     splits — the Seq matcher family rather than AC.
+# eachmatch variants isolate engine time from result materialization.
+# --------------------------------------------------------------------
+
+pat_wl_nlpair = compile_pattern(
+    f(slot(a), slot(b), slot(c), slot(d), slot(y), slot(x), slot(s), slot(s))
+)
+sub_wl_nl8 = f(p, q, r, x, y, z, a, b)
+
+pat_wl_sss = compile_pattern(segment(s) + segment(v) + segment(w))
+sub_wl_add7 = p + q + r + x + y + z + a
+sub_wl_add8 = p + q + r + x + y + z + a + b
+
+pat_wl_f4 = compile_pattern(
+    slot(w) * slot(y) + slot(w) * slot(z) + slot(w) * slot(u) +
+        slot(w) * slot(v) + segment(s)
+)
+sub_wl_f4 = p * q + p * r + p * x + p * y + p * z + p * a + p * b
+
+pat_wl_ss = compile_pattern(segment(s) + segment(v))
+sub_wl_add10 = p + q + r + x + y + z + a + b + c + d
+
+pat_wl_h5 = compile_pattern(
+    h(segment(s), segment(v), segment(w), segment(a), segment(b))
+)
+sub_wl_h11 = h(p, q, r, x, y, z, a, b, c, d, u)
+
+function _wl_eachmatch_count(pat, subj)
+    n = Ref(0)
+    eachmatch(b -> (n[] += 1), pat, subj)
+    return n[]
+end
+
+# --- deep tier: the same shapes scaled to ~40–85 ms -----------------
+# Search spaces grow combinatorially in subject arity, so each family
+# gets a second point on the ladder — a constant-factor regression
+# holds its ratio across the two sizes; an algorithmic one grows.
+pat_wl_nl9 = compile_pattern(
+    f(slot(a), slot(b), slot(c), slot(d), slot(y), slot(x), slot(w),
+        slot(s), slot(s))
+)
+sub_wl_nl9 = f(p, q, r, x, y, z, a, b, c)
+
+pat_wl_h6 = compile_pattern(
+    h(segment(s), segment(v), segment(w), segment(a), segment(b), segment(c))
+)
+sub_wl_h13 = h(p, q, r, x, y, z, a, b, c, d, u, v, w)
+
+sub_wl_add13 = p + q + r + x + y + z + a + b + c + d + u + v + w
+sub_wl_f10 = p * q + p * r + p * x + p * y + p * z + p * a + p * b +
+    p * c + p * d + p * u
+
+SUITE["workload"] = BenchmarkGroup()
+SUITE["workload"]["matchall batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
+    @benchmarkable _wl_matchall($_WL_PATS, $_WL_CORPUS)
+SUITE["workload"]["first-match batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
+    @benchmarkable _wl_match($_WL_PATS, $_WL_CORPUS)
+SUITE["workload"]["eachmatch batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
+    @benchmarkable _wl_eachmatch($_WL_PATS, $_WL_CORPUS)
+
+SUITE["workload"]["single ac nl-pair fail (P(8,6) backtrack)"] =
+    @benchmarkable matchall($pat_wl_nlpair, $sub_wl_nl8)
+SUITE["workload"]["single ac 3segs vs 7-arg add (2187)"] =
+    @benchmarkable matchall($pat_wl_sss, $sub_wl_add7)
+SUITE["workload"]["single ac 3segs vs 8-arg eachmatch (6561)"] =
+    @benchmarkable _wl_eachmatch_count($pat_wl_sss, $sub_wl_add8)
+SUITE["workload"]["single ac factor4+rest vs 7 prods"] =
+    @benchmarkable matchall($pat_wl_f4, $sub_wl_f4)
+SUITE["workload"]["single ac seg+seg vs 10-arg add (1024)"] =
+    @benchmarkable matchall($pat_wl_ss, $sub_wl_add10)
+SUITE["workload"]["single free h 5segs vs 11-arg (1365)"] =
+    @benchmarkable matchall($pat_wl_h5, $sub_wl_h11)
+
+SUITE["workload"]["deep ac nl-pair fail 9-arg (P(9,7) backtrack)"] =
+    @benchmarkable matchall($pat_wl_nl9, $sub_wl_nl9)
+SUITE["workload"]["deep ac 3segs vs 10-arg eachmatch (59049)"] =
+    @benchmarkable _wl_eachmatch_count($pat_wl_sss, $sub_wl_add10)
+SUITE["workload"]["deep ac seg+seg vs 13-arg add (8192)"] =
+    @benchmarkable matchall($pat_wl_ss, $sub_wl_add13)
+SUITE["workload"]["deep ac factor4+rest vs 10 prods (5040)"] =
+    @benchmarkable matchall($pat_wl_f4, $sub_wl_f10)
+SUITE["workload"]["deep free h 6segs vs 13-arg (8568)"] =
+    @benchmarkable matchall($pat_wl_h6, $sub_wl_h13)
