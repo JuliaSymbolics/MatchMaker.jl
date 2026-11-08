@@ -581,7 +581,7 @@ function _seg_value(eng::MatchEngine, vid::Int32)
     f = b.seg_op[vid]
     args = ArgsT{SymReal}()
     sizehint!(args, length(b.seq[vid]))
-    for i in b.seq[vid]
+    @inbounds for i in b.seq[vid]
         push!(args, eng.subj[i])
     end
     if f === (+)

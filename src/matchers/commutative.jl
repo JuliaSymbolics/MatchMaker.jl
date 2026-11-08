@@ -14,7 +14,7 @@
 function _next_combo!(sel::SmallV{Int32}, pool::Vector{Int32})
     n = length(pool)
     k = length(sel)
-    for i in k:-1:1
+    @inbounds for i in k:-1:1
         sel[i] == pool[n - k + i] && continue
         idx = searchsortedfirst(pool, sel[i]) + 1
         sel[i] = pool[idx]
@@ -94,7 +94,7 @@ function _comm_seg_bind!(
     b = eng.binds
     seq = b.seq[vid]
     empty!(seq)
-    for i in sel
+    @inbounds for i in sel
         push!(seq, snbs[sstart + i - 1])
     end
     b.seg_op[vid] = op
@@ -117,7 +117,7 @@ function _comm_seg_first!(
         min_tail::Vector{Int}, owns_bind::BitVector
     )
     pool = Int32[]
-    for i in 1:length(used)
+    @inbounds for i in 1:length(used)
         used[i] || push!(pool, i)
     end
     seg_pool[j] = pool
@@ -136,8 +136,8 @@ function _comm_seg_first!(
         for e in bound
             found = false
             for i in pool
-                used[i] && continue
-                if isequal(eng.subj[e], eng.subj[snbs[sstart + i - 1]])
+                @inbounds used[i] && continue
+                if @inbounds isequal(eng.subj[e], eng.subj[snbs[sstart + i - 1]])
                     used[i] = true
                     push!(sel, i)
                     found = true
@@ -160,14 +160,14 @@ function _comm_seg_first!(
     hi = min(_seg_max(eng, vid), length(pool) - min_tail[j + 1])
     lo > hi && return false
     empty!(sel)
-    for t in 1:lo
+    @inbounds for t in 1:lo
         push!(sel, pool[t])
     end
     while true
         if _comm_sel_ok(eng, vid, snbs, sstart, sel)
             st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel)
             if st === SegResult.Bound
-                for i in sel
+                @inbounds for i in sel
                     used[i] = true
                 end
                 owns_bind[j] = true
@@ -179,7 +179,7 @@ function _comm_seg_first!(
         if !_next_combo!(sel, pool)
             length(sel) == hi && return false
             resize!(sel, length(sel) + 1)
-            for t in 1:length(sel)
+            @inbounds for t in 1:length(sel)
                 sel[t] = pool[t]
             end
         end
@@ -195,7 +195,7 @@ function _comm_sel_ok(
     )
     (pred, seqpred) = _seg_preds(eng, vid)
     if pred !== nothing
-        for i in sel
+        @inbounds for i in sel
             pred(eng.subj[snbs[sstart + i - 1]])::Bool || return false
         end
     end
@@ -223,7 +223,7 @@ function _comm_seg_resume!(
         bind_marks::Vector{Int}
     )
     sel = seg_sel[j]
-    for i in sel
+    @inbounds for i in sel
         used[i] = false
     end
     owns_bind[j] || return nothing
@@ -233,7 +233,7 @@ function _comm_seg_resume!(
         if !_next_combo!(sel, pool)
             length(sel) == hi && return nothing
             resize!(sel, length(sel) + 1)
-            for t in 1:length(sel)
+            @inbounds for t in 1:length(sel)
                 sel[t] = pool[t]
             end
         end
@@ -241,7 +241,7 @@ function _comm_seg_resume!(
             _unwind!(eng, bind_marks[j])
             st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel)
             if st === SegResult.Bound
-                for i in sel
+                @inbounds for i in sel
                     used[i] = true
                 end
                 return length(sel)
