@@ -581,7 +581,7 @@ function _seg_value(eng::MatchEngine, vid::Int32)
     f = b.seg_op[vid]
     args = ArgsT{SymReal}()
     sizehint!(args, length(b.seq[vid]))
-    for i in b.seq[vid]
+    @inbounds for i in b.seq[vid]
         push!(args, eng.subj[i])
     end
     if f === (+)
@@ -594,7 +594,10 @@ function _seg_value(eng::MatchEngine, vid::Int32)
         return BSImpl.Term{SymReal}(f, args; type = promote_symtype(f))
     else
         return BSImpl.Term{SymReal}(
-            f, args; type = promote_symtype(f, map(symtype, args)...)
+            f, args;
+            type = promote_symtype(
+                f, ntuple(i -> symtype(args[i]), length(args))...
+            )
         )
     end
 end

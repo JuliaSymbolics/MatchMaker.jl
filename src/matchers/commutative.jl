@@ -9,17 +9,17 @@
 ###
 
 # Sorted `pool` of available arg positions; `sel` is the current sorted
-# subset. Advance to the next combination in lexicographic pool order —
-# returns false when `sel` is the last combination of its size.
-function _next_combo!(sel::SmallV{Int32}, pool::Vector{Int32})
-    n = length(pool)
+# subset held as *positions into pool* (1..length(pool)). Advance to the
+# next combination — a pure odometer, no pool lookups — returns false
+# when `sel` is the last combination of its size.
+function _next_combo!(sel::SmallV{Int32}, npool::Int)
     k = length(sel)
-    for i in k:-1:1
-        sel[i] == pool[n - k + i] && continue
-        idx = searchsortedfirst(pool, sel[i]) + 1
-        sel[i] = pool[idx]
+    @inbounds for i in k:-1:1
+        sel[i] == npool - k + i && continue
+        ni = sel[i] + oneunit(Int32)
+        sel[i] = ni
         for t in (i + 1):k
-            sel[t] = pool[idx + (t - i)]
+            sel[t] = ni + Int32(t - i)
         end
         return true
     end
@@ -86,21 +86,28 @@ function _assign_next!(
 end
 
 # Try binding segment var `vid` to the arg positions `sel` selects from
-# `snbs` (arg position i → node snbs[sstart+i-1]).
+# `snbs` (arg position i → node snbs[sstart+i-1]). `used` tracks the
+# selection while it's held; on a failed bind it is restored.
 function _comm_seg_bind!(
         eng::MatchEngine, vid::Int32, @nospecialize(op),
-        snbs, sstart::Int, sel::SmallV{Int32}
+        snbs, sstart::Int, sel::SmallV{Int32}, used::BitVector,
+        pool::Vector{Int32}
     )
     b = eng.binds
     seq = b.seq[vid]
     empty!(seq)
-    for i in sel
+    @inbounds for pos in sel
+        i = pool[pos]
         push!(seq, snbs[sstart + i - 1])
+        used[i] = true
     end
     b.seg_op[vid] = op
     push!(eng.trail, vid)
     if !_ready_constraints!(eng, vid)
         _unwind!(eng, length(eng.trail) - 1)
+        @inbounds for pos in sel
+            used[pool[pos]] = false
+        end
         return SegResult.Longer
     end
     return SegResult.Bound
@@ -113,12 +120,21 @@ end
 function _comm_seg_first!(
         eng::MatchEngine, vid::Int32, @nospecialize(op), snbs,
         sstart::Int, j::Int, used::BitVector,
+        order::Vector{Int32},
         seg_sel::Vector{SmallV{Int32}}, seg_pool::Vector{Vector{Int32}},
         min_tail::Vector{Int}, owns_bind::BitVector
     )
     pool = Int32[]
-    for i in 1:length(used)
+    @inbounds for i in 1:length(used)
         used[i] || push!(pool, i)
+    end
+    # An arg failing the var's element predicate can never join a
+    # selection — drop it from the pool once, not per combination.
+    (pred, _) = _seg_preds(eng, vid)
+    if pred !== nothing
+        filter!(pool) do i
+            @inbounds pred(eng.subj[snbs[sstart + i - 1]])::Bool
+        end
     end
     seg_pool[j] = pool
     sel = seg_sel[j]
@@ -135,19 +151,20 @@ function _comm_seg_first!(
         length(pool) >= length(bound) || return false
         for e in bound
             found = false
-            for i in pool
+            @inbounds for pos in 1:length(pool)
+                i = pool[pos]
                 used[i] && continue
                 if isequal(eng.subj[e], eng.subj[snbs[sstart + i - 1]])
                     used[i] = true
-                    push!(sel, i)
+                    push!(sel, Int32(pos))
                     found = true
                     break
                 end
             end
             if !found
                 # release the partial selection's marks
-                for i in sel
-                    used[i] = false
+                for pos in sel
+                    used[pool[pos]] = false
                 end
                 empty!(sel)
                 return false
@@ -156,31 +173,33 @@ function _comm_seg_first!(
         owns_bind[j] = false
         return true
     end
-    lo = _seg_min(eng, vid)
+    # Coverage (§4.1 all-used): later positions consume at most
+    # _comm_tail_cap args, so this selection can't leave more behind —
+    # for the last segment position its capture is forced entirely.
+    lo = max(
+        _seg_min(eng, vid), length(pool) - _comm_tail_cap(eng, order, j + 1)
+    )
     hi = min(_seg_max(eng, vid), length(pool) - min_tail[j + 1])
     lo > hi && return false
     empty!(sel)
-    for t in 1:lo
-        push!(sel, pool[t])
+    @inbounds for t in 1:lo
+        push!(sel, Int32(t))
     end
     while true
-        if _comm_sel_ok(eng, vid, snbs, sstart, sel)
-            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel)
+        if _comm_sel_ok(eng, vid, snbs, sstart, sel, pool)
+            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel, used, pool)
             if st === SegResult.Bound
-                for i in sel
-                    used[i] = true
-                end
                 owns_bind[j] = true
                 return true
             end
         end
         # advance to the next combination; at the last combo of a size,
         # grow to the next size (the grown selection is tried next pass)
-        if !_next_combo!(sel, pool)
+        if !_next_combo!(sel, length(pool))
             length(sel) == hi && return false
             resize!(sel, length(sel) + 1)
-            for t in 1:length(sel)
-                sel[t] = pool[t]
+            @inbounds for t in 1:length(sel)
+                sel[t] = Int32(t)
             end
         end
     end
@@ -191,19 +210,21 @@ end
 # predicates? An element-predicate failure only kills this selection —
 # other combinations may exclude the failing element.
 function _comm_sel_ok(
-        eng::MatchEngine, vid::Int32, snbs, sstart::Int, sel::SmallV{Int32}
+        eng::MatchEngine, vid::Int32, snbs, sstart::Int,
+        sel::SmallV{Int32}, pool::Vector{Int32}
     )
     (pred, seqpred) = _seg_preds(eng, vid)
     if pred !== nothing
-        for i in sel
-            pred(eng.subj[snbs[sstart + i - 1]])::Bool || return false
+        @inbounds for pos in sel
+            pred(eng.subj[snbs[sstart + pool[pos] - 1]])::Bool ||
+                return false
         end
     end
     if seqpred !== nothing
         buf = eng.segbuf
         resize!(buf, length(sel))
-        for (t, i) in enumerate(sel)
-            buf[t] = eng.subj[snbs[sstart + i - 1]]
+        for (t, pos) in enumerate(sel)
+            @inbounds buf[t] = eng.subj[snbs[sstart + pool[pos] - 1]]
         end
         seqpred(buf)::Bool || return false
     end
@@ -223,29 +244,24 @@ function _comm_seg_resume!(
         bind_marks::Vector{Int}
     )
     sel = seg_sel[j]
-    for i in sel
-        used[i] = false
+    pool = seg_pool[j]
+    @inbounds for pos in sel
+        used[pool[pos]] = false
     end
     owns_bind[j] || return nothing
-    pool = seg_pool[j]
     hi = min(_seg_max(eng, vid), length(pool) - min_tail[j + 1])
     while true
-        if !_next_combo!(sel, pool)
+        if !_next_combo!(sel, length(pool))
             length(sel) == hi && return nothing
             resize!(sel, length(sel) + 1)
-            for t in 1:length(sel)
-                sel[t] = pool[t]
+            @inbounds for t in 1:length(sel)
+                sel[t] = Int32(t)
             end
         end
-        if _comm_sel_ok(eng, vid, snbs, sstart, sel)
+        if _comm_sel_ok(eng, vid, snbs, sstart, sel, pool)
             _unwind!(eng, bind_marks[j])
-            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel)
-            if st === SegResult.Bound
-                for i in sel
-                    used[i] = true
-                end
-                return length(sel)
-            end
+            st = _comm_seg_bind!(eng, vid, op, snbs, sstart, sel, used, pool)
+            st === SegResult.Bound && return length(sel)
         end
     end
     return
@@ -362,7 +378,7 @@ function _step_comm!(
                 NodePlan.Segment(; var_id) => var_id
             end
             if _comm_seg_first!(
-                    eng, vid, op, snbs, sstart, j, used,
+                    eng, vid, op, snbs, sstart, j, used, order,
                     seg_sel, seg_pool, min_tail, owns_bind
                 )
                 child_pos[] += 1
@@ -409,4 +425,22 @@ function _comm_upper(eng::MatchEngine, order::Vector{Int32})
         u = add > typemax(Int) - u ? typemax(Int) : u + add
     end
     return u
+end
+
+# Maximum subject args positions `from..end` can consume (saturating) —
+# the suffix counterpart of `_comm_min_tail!`. Since a match requires
+# every arg used (§4.1), a segment position j must capture at least
+# `len(pool) - _comm_tail_cap(eng, order, j + 1)`; when its later
+# positions are all unbounded segments this is just `_seg_min`, but the
+# *last* segment position's capture is forced to the whole remainder.
+function _comm_tail_cap(eng::MatchEngine, order::Vector{Int32}, from::Int)
+    cap = 0
+    for k in from:length(order)
+        add = @match eng.pat.plans[order[k]] begin
+            NodePlan.Segment(; var_id) => _seg_max(eng, var_id)
+            _ => 1
+        end
+        cap = add > typemax(Int) - cap ? typemax(Int) : cap + add
+    end
+    return cap
 end

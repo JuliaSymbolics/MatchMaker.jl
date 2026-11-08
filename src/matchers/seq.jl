@@ -56,6 +56,23 @@ function _seq_min_tail!(
     return min_tail
 end
 
+# Maximum subject args positions `from..end` can consume (saturating) —
+# the suffix counterpart of `_seq_min_tail!`. A match must consume every
+# arg, so a segment position j captures at least
+# `navail - _seq_tail_cap(eng, children, j + 1)`; the last segment
+# position's length is forced to the whole remainder.
+function _seq_tail_cap(eng::MatchEngine, children::SmallV{Int32}, from::Int)
+    cap = 0
+    for k in from:length(children)
+        add = @match eng.pat.plans[children[k]] begin
+            NodePlan.Segment(; var_id) => _seg_max(eng, var_id)
+            _ => 1
+        end
+        cap = add > typemax(Int) - cap ? typemax(Int) : cap + add
+    end
+    return cap
+end
+
 ###
 ### Segment obligations (§4.5)
 ###
@@ -444,8 +461,14 @@ function _step_seq!(
                 NodePlan.Segment(; var_id) => var_id
             end
             was_bound = eng.binds.seg_op[vid] !== nothing
+            # Coverage forces a lower bound too: positions j+1.. take at
+            # most _seq_tail_cap args — the last segment takes the rest.
+            first_len = max(
+                _seg_min(eng, vid),
+                length(snbs) - soff + 1 - _seq_tail_cap(eng, children, j + 1)
+            )
             st = _seg_advance!(
-                eng, vid, op, snbs, soff, min_tail[j + 1], _seg_min(eng, vid)
+                eng, vid, op, snbs, soff, min_tail[j + 1], first_len
             )
             if st === SegResult.Bound
                 owns_bind[j] = !was_bound
