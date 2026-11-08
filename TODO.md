@@ -153,6 +153,17 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   inside a matched subtree are reported, and result shape (nodes vs
   substitution maps).
 
+- **Segment-materialization perf check.** The deep-tier workload
+  benchmarks (see `benchmark/benchmarks.jl` `workload/deep …`) showed
+  the concrete-frame + FramePool build ~5–13% *slower* than the old
+  Moshi engine on segment-materialization-heavy cases
+  (`deep ac seg+seg vs 13-arg add` ≈ 1.07×, `single free h 5segs`
+  ≈ 1.13×) while backtracking-heavy cases got faster. Profile the
+  Seq/segment materialization path (`_seg_value`, `segbuf`,
+  `binds.seq` captures) under the new frame representation — suspect
+  per-result allocation or a missed pool-reuse path rather than
+  dispatch overhead.
+
 ## Tests
 
 - Port MatchPy's one_to_one tests into `test/matchpy/` as oracles.
