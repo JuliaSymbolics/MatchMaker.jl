@@ -171,7 +171,8 @@ the shared ruleset.
 mutable struct RuleWorkspace
     subj::IRStructure{SymReal}          # one per application site, shared
     engines::Vector{Union{Nothing,MatchEngine}}  # per rule id, lazy
-    net_cache::Dict{Tuple{Int32,Int32}, SmallV{Int32}}  # Phase-2 only
+    net_cache::Dict{Tuple{Int32,Int32}, SmallV{Int32}}  # Phase-2 only;
+                                                        # persists across iterations (§7)
 end
 ```
 
@@ -182,8 +183,10 @@ a lazily-created `MatchEngine` per rule id (`reset!` between sites,
 not re-allocated); and `net_cache`, used only by Phase 2 — a memo
 `(net_state_id, subj_node) → surviving rule ids`. Because subject IR
 nodes are interned, a DAG-shared subterm evaluates the net once per
-state instead of once per occurrence. Phase 1 leaves `net_cache`
-empty — the bucket `lookup` needs no per-node memo.
+state instead of once per occurrence — and because entries are pure
+functions of structure it also persists across fixpoint iterations
+and `rewrite` calls on the same workspace (§7). Phase 1 leaves
+`net_cache` empty — the bucket `lookup` needs no per-node memo.
 
 One workspace per `RuleSet` **per task**, keyed by the `RuleSet` object
 in `task_local_storage` (project compat is Julia 1.10, so
@@ -340,7 +343,39 @@ native pass where it doesn't.
   safe; a `RuleApplier` must not be shared with an explicit workspace
   across tasks — `workspace(rs)` re-resolves per call anyway.
 
-## 7. Result/binding semantics for rules
+## 7. Fixpoint & incremental rewriting
+
+`Fixpoint(rs)` iterates the rewrite pass until `isequal`-stable — the
+common case changes a small subtree per iteration, so the design
+accumulates rather than restarts:
+
+- **IR accumulation.** `rewrite` iterations repopulate the *same*
+  workspace `IRStructure`: unchanged subtrees are the same interned
+  `BasicSymbolic`s, so `populate_ir!` hits `definition` for them —
+  cost per iteration is the *new* nodes only. Old nodes are never
+  invalidated (terms are immutable); bindings/memos referencing node
+  ids stay correct. Workspace growth is bounded by total distinct
+  terms the pass produces.
+- **Memo persistence.** `net_cache` entries keyed `(state, node)` are
+  pure functions of structure — valid for the workspace's lifetime,
+  not per subject or per iteration. Only nodes created by rewriting
+  evaluate fresh.
+- **Dirty propagation.** A node whose rewrite result changes marks
+  only its ancestors for re-evaluation — iteration k+1 re-runs
+  `lookup`/`apply` on O(Δ·depth) nodes, not the whole tree. (The
+  memoized net makes even a full re-walk cheap; the dirty set makes
+  it precise.)
+- **`FixpointNoCycle` for free.** A rewrite producing a previously
+  seen term hits the same interned node id — cycle detection is
+  `node_id ∈ seen` set membership, no `isequal` walks.
+- **Budget.** A `maxiterations` bound caps the loop; per-iteration
+  `maxsteps` stays per site as before.
+
+The same machinery serves `RestartedChain`: its "restart on change"
+is exactly a one-level fixpoint — restart marks the produced term's
+ancestors dirty and re-evaluates.
+
+## 8. Result/binding semantics for rules
 
 - Determinism: candidate order = declaration order; match enumeration
   = engine order — `simplify`-grade determinism.
@@ -350,13 +385,15 @@ native pass where it doesn't.
   no dict involved; `instantiate` remains for the public template
   path.
 
-## 8. Milestones
+## 9. Milestones
 
 1. `feat/rule-objects` — `mmrule`, `RhsPlan` templates, `RuleApplier`,
    `RuleSet` Phase-1 index, engine `reset!` (workspace-owned subject),
-   task-local workspace, native `rewrite` pass. *Tests: SU combinator
-   compatibility where reused (Chain/IfElse/RestartedChain via
-   SymbolicUtils.Rewriters), workspace reuse invariants.*
+   task-local workspace, native `rewrite` pass, `Fixpoint` with dirty
+   propagation (§7). *Tests: SU combinator compatibility where reused
+   (Chain/IfElse/RestartedChain via SymbolicUtils.Rewriters), workspace
+   reuse invariants, fixpoint incremental-evaluation oracle vs full
+   re-walk.*
 2. `feat/rewrite-bench` — simplify-shaped workload benchmark
    (~50–100 rules × deep subjects) vs SU's `@rule`/`@acrule` path.
 3. `feat/discrim-net` — Phase-2 net + `net_cache`; oracle: `lookup`
@@ -364,7 +401,7 @@ native pass where it doesn't.
 4. `feat/eachmatch_at` — expose the workspace traversal as the public
    occurrence-search API (TODO item) built on the same machinery.
 
-## 9. Open questions
+## 10. Open questions
 
 - Multi-result rules: SU's `acrule` applies on permutations — for a
   `match` (first-result) contract the deterministic order may pick a
