@@ -112,16 +112,16 @@ abstract type RuleIndex end
 struct RuleSet{I <: RuleIndex}
     rules::Vector{CompiledRule}
     index::I                  # §5 — BucketIndex now, DiscrimNet later
+    maxsteps::Int             # per-site search budget
 end
 
-compile_rules(rules) -> RuleSet     # build once, share globally, thread-safe
+compile_rules(rules; maxsteps = typemax(Int)) -> RuleSet
 ```
 
 `RuleSet` is parametric on the index: an abstract `index::RuleIndex`
 field would force dynamic dispatch on every `lookup` — the hot call
-per subject node — while `RuleSet{I}`/`RuleApplier{I}` keep the whole
-dispatch chain concrete (`BucketIndex` and `DiscrimNet` compile to
-distinct applier code).
+per subject node — while `RuleSet{I}` keeps the whole call chain
+concrete (`BucketIndex` and `DiscrimNet` compile to distinct code).
 
 `RuleIndex` is the dispatch seam, not a concrete layout: Phase 1's
 `BucketIndex` is a small op→rule-ids map plus spill lists; Phase 2's
@@ -134,36 +134,28 @@ tasks and calls — all mutable state lives in the workspace (§6). This
 is the "shared global data structure": one `const`-held `RuleSet`,
 compiled once, read by every rewrite pass.
 
-`RuleApplier(ruleset; maxsteps = typemax(Int))` is a thin *callable*
-binding a `RuleSet` to its task-local workspace — it exists so a
-traversal has a plain `x -> expr′ | nothing` to invoke per node:
+**`RuleSet` is itself the callable.** `Postwalk(rs)`,
+`Chain([rs, …])`, `IfElse(…, rs, …)` need a plain
+`x -> expr′ | nothing` — that is the `RuleSet`:
 
 ```julia
-struct RuleApplier{I <: RuleIndex}
-    set::RuleSet{I}
-    maxsteps::Int
-end
-
-(rw::RuleApplier)(x) = begin
-    ws = workspace(rw.set)            # task-local, §4
-    for id in lookup(ws, rw.set.index, x)   # index → candidate rule ids
-        y = apply(ws, rw.set.rules[id], x)
-        y !== nothing && return y     # Chain(rws, true) semantics
+(rs::RuleSet)(x) = begin
+    ws = workspace(rs)                    # task-local, §4
+    for id in lookup(ws, rs.index, x)     # index → candidate rule ids
+        y = apply(ws, rs.rules[id], x)
+        y !== nothing && return y         # first-match semantics
     end
     return nothing
 end
 ```
 
-(`ws` is resolved per call rather than stored: a cached reference
-would pin the wrong task's workspace if the applier crosses tasks.)
-
-
-It is **not** the workspace — it carries no mutable state, only
-`set`, the resolved `ws`, and per-use options (`maxsteps`). The
-alternative shape `(rs::RuleSet)(x)` resolving `workspace(rs)`
-internally is equivalent when no per-use options are needed; the
-wrapper exists so options can vary per call site without touching
-the shared ruleset.
+No separate `RuleApplier` type — a thin wrapper would only re-wrap
+`(rs)(x)`. `ws` is resolved per call rather than stored (a cached
+reference would pin the wrong task's workspace if the call crossed
+tasks), and the per-site budget lives on the `RuleSet`: combinators
+call `rw(x)` with no kwargs anyway, so options must ride on the
+object — a differently-budgeted variant is a second `RuleSet`
+sharing the compiled `rules`/`index`.
 
 ## 4. `RuleWorkspace` — bounded reuse
 
@@ -202,7 +194,7 @@ per task per `RuleSet`**, not per call — later calls are a
 task-local-storage dict hit (~ns). (Careful with the alternative
 `get!(tls, rs, RuleWorkspace(rs))` — the positional default evaluates
 eagerly and *would* rebuild every call.) Inside the native rewrite
-pass `ws` is bound once up front; only `RuleApplier(x)` resolves it
+pass `ws` is bound once up front; only `(rs::RuleSet)(x)` resolves it
 per invocation — appropriate for a callable that may cross tasks.
 
 - Same `RuleSet` across threads → distinct workspaces; no locks.
@@ -334,10 +326,10 @@ opposite direction before descending. This *is* the net's evaluation
 walk under Phase 2 — one traversal serves the whole rule set, not one
 traversal per candidate.
 
-SU interop stays free: `Postwalk(RuleApplier(rs))(expr)` works
-unmodified because the applier is a plain callable — use it where SU
-combinator composition matters (`instrument`, `threaded`), prefer the
-native pass where it doesn't.
+SU interop stays free: `Postwalk(rs)(expr)` works unmodified
+because `rs` is a plain callable — use it where SU combinator
+composition matters (`instrument`, `threaded`), prefer the native
+pass where it doesn't.
 
 - `IfElse` conditions that are *patterns* become `x -> match(m, x) !== nothing`
   — a `PatternCond` convenience wraps this.
@@ -348,8 +340,8 @@ native pass where it doesn't.
   candidate rules — not a global rewrite budget (that's a rewriter
   concern: `FixpointNoCycle` exists for termination).
 - `threaded` walks (SU `Walk` path): task-local workspaces keep it
-  safe; a `RuleApplier` must not be shared with an explicit workspace
-  across tasks — `workspace(rs)` re-resolves per call anyway.
+  safe — `workspace(rs)` re-resolves per call, so `rs` crossing tasks
+  lands on the right workspace.
 
 ## 7. Fixpoint & incremental rewriting
 
@@ -395,8 +387,8 @@ ancestors dirty and re-evaluates.
 
 ## 9. Milestones
 
-1. `feat/rule-objects` — `mmrule`, `RhsPlan` templates, `RuleApplier`,
-   `RuleSet` Phase-1 index, engine `reset!` (workspace-owned subject),
+1. `feat/rule-objects` — `mmrule`, `RhsPlan` templates, callable
+   `RuleSet` + Phase-1 index, engine `reset!` (workspace-owned subject),
    task-local workspace, native `rewrite` pass, `Fixpoint` with dirty
    propagation (§7). *Tests: SU combinator compatibility where reused
    (Chain/IfElse/RestartedChain via SymbolicUtils.Rewriters), workspace
