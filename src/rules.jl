@@ -3,7 +3,7 @@
 # `RuleWorkspace` is the mutable application context and the rewriter
 # callable (`x -> expr′ | nothing`).
 
-using SymbolicUtils: maketerm, metadata
+using SymbolicUtils: maketerm, metadata, ROArgsT
 
 ###
 ### Rule objects (§2)
@@ -470,18 +470,19 @@ function _rewrite_post(
     )
     return get!(memo, x) do
         if iscall(x)
-            args = arguments(x)
-            newargs = ArgsT{SymReal}()
-            sizehint!(newargs, length(args))
-            changed = false
-            for a in args
+            args = arguments(x)::ROArgsT{SymReal}
+            # copy-on-write: only allocate newargs once a child changes
+            for (i, a) in enumerate(args)
                 na = _rewrite_post(ws, a, memo)
-                changed |= na !== a
-                push!(newargs, na)
+                na === a && continue
+                if args isa ROArgsT{SymReal}
+                    args = copy(parent(args))::ArgsT{SymReal}
+                end
+                args[i] = na
             end
-            x = changed ? maketerm(
-                typeof(x), operation(x), newargs, metadata(x)
-            ) : x
+            args isa ArgsT{SymReal} && (
+                x = maketerm(typeof(x), operation(x), args, metadata(x))
+            )
         end
         _apply_site(ws, x)
     end
@@ -493,16 +494,18 @@ function _rewrite_pre(
     return get!(memo, x) do
         x = _apply_site(ws, x)
         iscall(x) || return x
-        args = arguments(x)
-        newargs = ArgsT{SymReal}()
-        sizehint!(newargs, length(args))
-        changed = false
-        for a in args
+        args = arguments(x)::ROArgsT{SymReal}
+        for (i, a) in enumerate(args)
             na = _rewrite_pre(ws, a, memo)
-            changed |= na !== a
-            push!(newargs, na)
+            na === a && continue
+            if args isa ROArgsT{SymReal}
+                args = copy(parent(args))::ArgsT{SymReal}
+            end
+            args[i] = na
         end
-        changed ? maketerm(typeof(x), operation(x), newargs, metadata(x)) : x
+        args isa ArgsT{SymReal} ? maketerm(
+            typeof(x), operation(x), args, metadata(x)
+        ) : x
     end
 end
 

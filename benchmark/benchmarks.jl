@@ -418,3 +418,69 @@ SUITE["workload"]["deep ac factor4+rest vs 11 prods (7920)"] =
     @benchmarkable matchall($pat_wl_f4, $sub_wl_f11)
 SUITE["workload"]["deep free h 6segs vs 14-arg (11628)"] =
     @benchmarkable matchall($pat_wl_h6, $sub_wl_h14)
+
+# ------------------------------------------------------------------
+# Rewrite workloads — MatchMaker RuleSet/RuleWorkspace vs SymbolicUtils'
+# @rule + Rewriters idiom (Postwalk(Chain) ≡ the old RuleSet). SU has
+# no head-slot rules, so the set covers AC +/*, segments, free heads,
+# 3-arg patterns, and literals only.
+# ------------------------------------------------------------------
+import SymbolicUtils.Rewriters
+using SymbolicUtils.Rewriters: Chain, Postwalk, Fixpoint
+
+const RW_MM_RULES = CompiledRule[
+    mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+    mmrule(slot(a) * slot(b) => slot(a) + slot(b)),
+    mmrule(segment(s) + slot(t) => slot(t)),
+    mmrule(segment(s) * slot(t) => slot(t)),
+    mmrule(sin(slot(a)) => slot(a)),
+    mmrule(h(slot(a), slot(b)) => slot(a)),
+    mmrule(slot(a) + slot(b) + slot(c) => slot(a)),
+    mmrule(slot(a) * slot(b) * slot(c) => slot(a)),
+]
+const RW_SU_RULES = [
+    (@rule ~a + ~b => ~a * ~b),
+    (@rule ~a * ~b => ~a + ~b),
+    (@rule ~~s + ~t => ~t),
+    (@rule ~~s * ~t => ~t),
+    (@rule sin(~a) => ~a),
+    (@rule h(~a, ~b) => ~a),
+    (@rule ~a + ~b + ~c => ~a),
+    (@rule ~a * ~b * ~c => ~a),
+]
+const RW_RS = compile_rules(RW_MM_RULES)
+const RW_WS = RuleWorkspace(RW_RS)
+const RW_SU_CHAIN = Chain(RW_SU_RULES)
+const RW_SU_POST = Postwalk(RW_SU_CHAIN)
+
+# single site: rule dispatch on one node — bucket index vs sequential trial
+sub_rw_site = x + y + z
+# traversal: several rules fire across a ~20-node subject
+sub_rw = h(sin(x + y), p * q) + cos(w) * (a + b + c) + sin(p + q)
+# fixpoint subject under the convergent subset (a+b→a*b, sin→id)
+sub_rw_fp = h(sin(x + y), sin(p + q))
+const RW_MM_FP_RULES = CompiledRule[
+    mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+    mmrule(sin(slot(a)) => slot(a)),
+]
+const RW_WS_FP = RuleWorkspace(compile_rules(RW_MM_FP_RULES))
+const RW_SU_FP = Fixpoint(Postwalk(Chain([
+    (@rule ~a + ~b => ~a * ~b),
+    (@rule sin(~a) => ~a),
+])))
+
+SUITE["rewrite"] = BenchmarkGroup()
+SUITE["rewrite"]["site: mm ws(x)"] =
+    @benchmarkable $RW_WS($sub_rw_site)
+SUITE["rewrite"]["site: su Chain(x)"] =
+    @benchmarkable $RW_SU_CHAIN($sub_rw_site)
+SUITE["rewrite"]["walk: mm rewrite(ws, x)"] =
+    @benchmarkable rewrite($RW_WS, $sub_rw)
+SUITE["rewrite"]["walk: mm Postwalk(ws)(x)"] =
+    @benchmarkable ($RW_SU_POST === nothing ? nothing : Postwalk($RW_WS))($sub_rw)
+SUITE["rewrite"]["walk: su Postwalk(Chain)(x)"] =
+    @benchmarkable $RW_SU_POST($sub_rw)
+SUITE["rewrite"]["fixp: mm fixrewrite(ws, x)"] =
+    @benchmarkable fixrewrite($RW_WS_FP, $sub_rw_fp)
+SUITE["rewrite"]["fixp: su Fixpoint∘Postwalk(x)"] =
+    @benchmarkable $RW_SU_FP($sub_rw_fp)
