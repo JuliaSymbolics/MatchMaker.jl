@@ -13,7 +13,7 @@ design deliberately reshapes rather than wraps: `MatchEngine`'s
 traversal is MatchMaker-native rather than SU's `Walk`, rule RHSs are
 compiled template plans instead of dict substitutions, and every name
 in this document is provisional. SU-combinator interoperability is
-kept where it is free (the applier is a plain callable), not where it
+kept where it is free (a workspace is a plain callable), not where it
 costs.
 
 Sections 1–4 are the near-term deliverable; §5 is the phased
@@ -33,7 +33,7 @@ Rewriters` combinators interoperate for free where the contract is
 already right (`Chain`, `IfElse`, `RestartedChain`, `Fixpoint`,
 `Empty`, `Filter` — generic callables, reusable verbatim); the
 `Walk`/`Postwalk`/`Prewalk` rebuild loop is *not* the foundation —
-it's available through the applier-as-callable when needed. The
+it's available through the workspace-as-callable when needed. The
 semantic contract we mirror:
 
 | Combinator | Semantics (SU source) |
@@ -318,7 +318,7 @@ in one walk).
 ## 6. Traversal — native rewrite pass
 
 The canonical call is a MatchMaker-native bottom-up pass over the
-workspace IR, not `Postwalk(applier)`:
+workspace IR, not `Postwalk(RuleWorkspace(rs))`:
 
 ```julia
 rewrite(ws::RuleWorkspace, expr; order = :post) -> expr′   # bottom-up
