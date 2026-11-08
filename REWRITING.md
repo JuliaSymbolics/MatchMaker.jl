@@ -112,10 +112,9 @@ abstract type RuleIndex end
 struct RuleSet{I <: RuleIndex}
     rules::Vector{CompiledRule}
     index::I                  # §5 — BucketIndex now, DiscrimNet later
-    maxsteps::Int             # per-site search budget
 end
 
-compile_rules(rules; maxsteps = typemax(Int)) -> RuleSet
+compile_rules(rules) -> RuleSet     # build once, share globally, thread-safe
 ```
 
 `RuleSet` is parametric on the index: an abstract `index::RuleIndex`
@@ -139,16 +138,16 @@ applying rules requires mutable state (engines, memo cache) that an
 immutable shared artifact shouldn't smuggle through a global. The
 `x -> expr′ | nothing` callable a traversal needs is the workspace
 (§4): `Postwalk(RuleWorkspace(rs))` makes the state being created
-visible at the call site. Per-site `maxsteps` lives on the `RuleSet`
-because combinators call `rw(x)` with no kwargs — options must ride
-on an object, and a differently-budgeted variant is a second
-`RuleSet` sharing the compiled `rules`/`index`.
+visible at the call site. Per-site options like `maxsteps` live on
+the *workspace* — they're runtime configuration, not part of the
+compiled artifact.
 
 ## 4. `RuleWorkspace` — bounded reuse
 
 ```julia
 mutable struct RuleWorkspace
     set::RuleSet                        # the ruleset it serves
+    maxsteps::Int                       # per-site search budget
     subj::IRStructure{SymReal}          # one per application site, shared
     engines::Vector{Union{Nothing,MatchEngine}}  # per rule id, lazy
     net_cache::Dict{Tuple{Int32,Int32}, SmallV{Int32}}  # Phase-2 only;
@@ -177,7 +176,9 @@ artifact; `RuleWorkspace` is the mutable application context — *and*
 the rewriter callable. `const ws = RuleWorkspace(rs)` is the
 global-shared-engine answer: one long-lived workspace per ruleset,
 reset-and-reused, bounded in size; users who want per-task instances
-create them (or TLS-wrap their own), users who don't, don't.
+create them (or TLS-wrap their own), users who don't, don't. The
+per-site budget is a mutable field — `ws.maxsteps` can be tuned
+between passes without recompiling anything.
 
 The workspace holds **engine state only** — the rules themselves are
 immutable in `RuleSet`. Concretely: one subject `IRStructure`
@@ -191,8 +192,8 @@ functions of structure it also persists across fixpoint iterations
 and `rewrite` calls on the same workspace (§7). Phase 1 leaves
 `net_cache` empty — the bucket `lookup` needs no per-node memo.
 
-Workspaces are **explicitly created**: `RuleWorkspace(rs)` is a plain
-constructor — call it inline per pass (`Postwalk(RuleWorkspace(rs))`),
+Workspaces are **explicitly created**: `RuleWorkspace(rs;
+maxsteps = typemax(Int))` is a plain constructor — call it inline per pass (`Postwalk(RuleWorkspace(rs))`),
 hold one in a `const` for a long-lived global, hand one out per task,
 or wrap it in `TaskLocalValue`/`ScopedValues` yourself if you want
 task-local pooling. No hidden task-local default exists to resolve —
@@ -342,9 +343,10 @@ the native pass where it doesn't.
 - `RestartedChain`/`Fixpoint` resubjection: the produced term is a new
   subject → the workspace repopulates its IR per application site
   (cheap; interned terms dedup inside `populate_ir!`).
-- `maxsteps` budgets per application site, shared across the site's
-  candidate rules — not a global rewrite budget (that's a rewriter
-  concern: `FixpointNoCycle` exists for termination).
+- `maxsteps` (on the workspace) budgets each application site,
+  shared across the site's candidate rules — not a global rewrite
+  budget (that's a rewriter concern: `FixpointNoCycle` exists for
+  termination).
 - `threaded` walks (SU `Walk` path): give each task its own
   `RuleWorkspace` — the callable is the workspace, so thread-safety
   is literally which `ws` object the task holds.
