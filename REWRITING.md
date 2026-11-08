@@ -255,6 +255,22 @@ A shared trie over `(rule, pattern_node)` frontier states:
   backtracking, and constraints run there, unchanged (MatchPy's own
   split: `CommutativeMatcher` states inside `ManyToOneMatcher`).
 
+**Pattern-IR sharing and var specs.** The net itself stores
+`(rule, pat_node)` frontier entries pointing into each pattern's own
+IR — a shared pattern `IRStructure` is an *optional* further dedup
+(identical subtrees across rules collapse to one node and share
+frontier work), never a requirement. Either way, `VarSpec` semantics
+stay **per-rule**: `CompiledRule.pat` keeps its own `var_of`/
+`var_specs` tables, so a shared `slot(x)` node dedupes the *term*
+only. A slot-edge transition for that node produces one capture *per
+surviving rule*, each bound to that rule's own var id and checked
+against that rule's spec — `slot(x)` with a predicate in rule A and
+`slot(x)` without in rule B coexist cleanly: same structural node,
+two semantic captures, two spec lookups. The trap to avoid is
+attaching specs to shared nodes — the design never does; all
+binding-state resolution goes through `(rule, node) → rule's var
+tables`.
+
 The net is never the whole matcher — it is a subject-structure filter
 feeding the existing frame machine. Phase 1 is the correctness
 reference for Phase 2's `lookup` results (same survivors, net does it
