@@ -145,15 +145,6 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   inside a matched subtree are reported, and result shape (nodes vs
   substitution maps).
 
-- **Throughput APIs need documenting.** `matchall` materializes a
-  `MarkersMap` per result (~3 μs vs ~0.2 μs of search on
-  `seg+seg 14-arg`). Two faster results shapes now exist:
-  `eachmatch`/`SubstitutionView` (zero-alloc, valid only inside the
-  callback) and `boundmatches`/`boundmatchall` (`BoundMatch` snapshots
-  — persistent, per-var lazy reconstruction, ~10× cheaper than
-  `matchall` on segment-heavy cases). User-facing docs should steer
-  high-throughput code to them.
-
 ## Tests
 
 - Port MatchPy's one_to_one tests into `test/matchpy/` as oracles.

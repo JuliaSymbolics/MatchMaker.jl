@@ -27,6 +27,7 @@ m = compile_pattern(slot(a) + slot(b) * sin(slot(c));
                     vars = Dict(c => slotspec(predicate = iszero)))
 match(m, expr)
 matches(m, expr)        # lazy, resumable
+boundmatches(m, expr)   # persistent lazy snapshots — cheap to collect
 eachmatch(f, m, expr)   # zero-allocation iteration
 instantiate(rhs, subst)
 ```
