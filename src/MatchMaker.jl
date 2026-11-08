@@ -46,7 +46,7 @@ export slot, segment, optional,
     OperationTraitsCtx, OperationTraits, set_operation_traits,
     Matcher, NodePlan, compile_pattern,
     Constraint, MatchEngine, MatchFrame, next_match!,
-    SubstitutionView, MatchIterator, matches, matchall, eachmatch,
+    SubstitutionView, MatchIterator, BoundMatch, matches, matchall, eachmatch,
     instantiate,
     FrameStatus,
     @slots, @segments

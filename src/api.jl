@@ -81,20 +81,125 @@ function Base.materialize(v::SubstitutionView)
 end
 
 ###
+### BoundMatch — persistent lazy result
+###
+
+# Freeze the engine's index-only binding state for a produced match.
+# Per-var `seq` vectors are copied so later search steps can't mutate
+# the snapshot.
+function _snapshot_binds(b::Bindings)
+    seq = Vector{SmallV{Int32}}(undef, length(b.seq))
+    for i in eachindex(seq)
+        seq[i] = copy(b.seq[i])
+    end
+    return Bindings(copy(b.node), seq, copy(b.seg_op), copy(b.extra))
+end
+
+"""
+    BoundMatch <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
+
+A persistent match result that shares no mutable state with the engine
+that produced it: it stores the pattern, the subject IR, and a frozen
+copy of the index-only [`Bindings`](@ref). Variable values are resolved
+on access — segment vars pay `_seg_value` reconstruction per read (the
+value is *not* memoized), so a [`BoundMatch`](@ref) is cheap to collect
+but costs roughly the same as a [`MarkersMap`](@ref) if every variable
+is materialized anyway. Copy into a [`MarkersMap`](@ref) with
+[`materialize`](@ref).
+
+Returned by `matches`/`matchall` with `lazy = true` — the fast way to
+collect many results when the consumer only inspects a few bound
+values (or just counts/compares matches).
+"""
+struct BoundMatch <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
+    pat::Matcher
+    subj::IRStructure{SymReal}
+    "symtype of the subject root (identity reconstruction)."
+    sty::DataType
+    binds::Bindings
+end
+
+function _bm_value(m::BoundMatch, vid::Int32)
+    b = m.binds
+    is_bound_extra(b, vid) && return Const{SymReal}(b.extra[vid])
+    b.seg_op[vid] !== nothing &&
+        return _seg_value(m.subj, m.sty, b.seg_op[vid], b.seq[vid])
+    is_bound_node(b, vid) || error(lazy"var $vid is not bound")
+    return m.subj[b.node[vid]]
+end
+
+_bm_bound(m::BoundMatch, vid::Int32) = begin
+    b = m.binds
+    is_bound_node(b, vid) || b.seg_op[vid] !== nothing ||
+        is_bound_extra(b, vid)
+end
+
+Base.getindex(m::BoundMatch, k::BasicSymbolic{SymReal}) = begin
+    ks = unwrap_varspec(k)
+    vid = m.pat.var_of[ks]
+    _bm_bound(m, vid) || throw(KeyError(ks))
+    return _bm_value(m, vid)
+end
+Base.haskey(m::BoundMatch, k::BasicSymbolic{SymReal}) = begin
+    ks = unwrap_varspec(k)
+    haskey(m.pat.var_of, ks) || return false
+    return _bm_bound(m, m.pat.var_of[ks])
+end
+function Base.iterate(m::BoundMatch, state = 1)
+    nvars = m.pat.nvars
+    i = state
+    while i <= nvars && !_bm_bound(m, Int32(i))
+        i += 1
+    end
+    i > nvars && return nothing
+    return (m.pat.var_syms[i] => _bm_value(m, Int32(i))), i + 1
+end
+Base.length(m::BoundMatch) = begin
+    count(vid -> _bm_bound(m, Int32(vid)), 1:m.pat.nvars)
+end
+
+"""
+    $TYPEDSIGNATURES
+
+Copy a [`BoundMatch`](@ref) into a persistent [`MarkersMap`](@ref).
+"""
+function Base.materialize(m::BoundMatch)
+    d = _MarkersMapDict()
+    for vid in Int32(1):Int32(m.pat.nvars)
+        _bm_bound(m, vid) || continue
+        d[m.pat.var_syms[vid]] = _bm_value(m, vid)
+    end
+    return MarkersMap(d)
+end
+
+###
 ### Public API (§5.6)
 ###
 
 """
     MatchIterator
 
-Lazy iterator over successive matches — one [`MarkersMap`](@ref) per state.
+Lazy iterator over successive matches — one result per state. Results
+are [`MarkersMap`](@ref)s, or [`BoundMatch`](@ref) snapshots when
+constructed with `lazy = true`.
 """
 struct MatchIterator
     eng::MatchEngine
+    lazy::Bool
 end
 Base.IteratorSize(::Type{MatchIterator}) = Base.SizeUnknown()
 function Base.iterate(it::MatchIterator, state = nothing)
     next_match!(it.eng) || return nothing
+    if it.lazy
+        return (
+            BoundMatch(
+                it.eng.pat, it.eng.subj,
+                symtype(it.eng.subj[it.eng.sroot]),
+                _snapshot_binds(it.eng.binds)
+            ),
+            nothing,
+        )
+    end
     return materialize(SubstitutionView(it.eng, it.eng.steps)), nothing
 end
 
@@ -121,20 +226,25 @@ match(
     $TYPEDSIGNATURES
 
 Lazy iterator of all matches of `m` against `s`; each item is a
-[`MarkersMap`](@ref). `maxsteps` bounds total search steps — the iterator
-ends when the budget is exhausted (a truncated result set).
+[`MarkersMap`](@ref), or a [`BoundMatch`](@ref) with `lazy = true`.
+`maxsteps` bounds total search steps — the iterator ends when the
+budget is exhausted (a truncated result set).
 """
 matches(
     m::Matcher, s::BasicSymbolic{SymReal};
-    constraints = Constraint[], maxsteps::Int = typemax(Int)
-) = MatchIterator(MatchEngine(m, s, constraints; maxsteps))
+    constraints = Constraint[], maxsteps::Int = typemax(Int),
+    lazy::Bool = false
+) = MatchIterator(MatchEngine(m, s, constraints; maxsteps), lazy)
 matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     matches(compile_pattern(p), s; kwargs...)
 
 """
     $TYPEDSIGNATURES
 
-`collect(matches(m, s))` — all matches as a `Vector{MarkersMap}`.
+`collect(matches(m, s))` — all matches as a `Vector{MarkersMap}`, or a
+`Vector{BoundMatch}` with `lazy = true` (much cheaper per result: a
+frozen binding snapshot that reconstructs segment terms on access
+instead of eagerly materializing every variable).
 """
 matchall(m, s; kwargs...) = collect(matches(m, s; kwargs...))
 

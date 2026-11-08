@@ -575,21 +575,30 @@ end
 # Reconstruct `f(captured…)` for a segment binding (§5.6). Built with
 # BSImpl.Term directly (no `term`/`promote_*` dispatch); note this produces a
 # `Term` even for canonical `+`/`*` heads — Add/Mul reconstruction lands with
-# segment binds in a later milestone.
+# segment binds in a later milestone. Takes the subject IR and its root
+# symtype directly so [`BoundMatch`](@ref) snapshots can materialize
+# without an engine.
 function _seg_value(eng::MatchEngine, vid::Int32)
     b = eng.binds
-    f = b.seg_op[vid]
+    return _seg_value(
+        eng.subj, symtype(eng.subj[eng.sroot]), b.seg_op[vid], b.seq[vid]
+    )
+end
+
+function _seg_value(
+        subj::IRStructure{SymReal}, sty, @nospecialize(f), seq::SmallV{Int32}
+    )
     args = ArgsT{SymReal}()
-    sizehint!(args, length(b.seq[vid]))
-    @inbounds for i in b.seq[vid]
-        push!(args, eng.subj[i])
+    sizehint!(args, length(seq))
+    @inbounds for i in seq
+        push!(args, subj[i])
     end
     if f === (+)
         return SymbolicUtils.add_worker(SymReal, args)
     elseif f === (*)
         return SymbolicUtils.mul_worker(SymReal, args)
     elseif isempty(args)
-        e = _identity_el(f, symtype(eng.subj[eng.sroot]))
+        e = _identity_el(f, sty)
         e !== nothing && return Const{SymReal}(e)
         return BSImpl.Term{SymReal}(f, args; type = promote_symtype(f))
     else
