@@ -211,7 +211,7 @@ function _step_ac!(
                 NodePlan.Segment(; var_id) => var_id
             end
             produced = _comm_seg_first!(
-                eng, vid, op, snbs, sstart, j, used,
+                eng, vid, op, snbs, sstart, j, used, order,
                 seg_sel, seg_pool, min_tail, owns_bind
             )
         else
