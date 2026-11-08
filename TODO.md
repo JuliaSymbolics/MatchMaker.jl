@@ -117,7 +117,12 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   Skipped cases live in `test/sympy/match.jl`.
 
 - **First/all occurrences of a pattern *within* a subject (§4's
-  `eachmatch_at` seam).** "Where does `p` match inside `s`?" is the
+  `eachmatch_at` seam).** Subsumed by `docs/rewriting.md` §4–6 — the
+  RuleWorkspace engine-reset protocol and the Phase-2 net evaluation
+  are this machinery; milestone 4 exposes it as the public API. Kept
+  here for the semantic decisions still open below.
+
+  "Where does `p` match inside `s`?" is the
   common rewriter query — today it means descending the subject and
   calling `match` at every node, paying full `MatchEngine` setup
   (bindings, frame stack, pool) per attempt. A dedicated design should
