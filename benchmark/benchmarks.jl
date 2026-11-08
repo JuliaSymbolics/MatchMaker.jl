@@ -345,16 +345,17 @@ sub_wl_nl8 = f(p, q, r, x, y, z, a, b)
 
 pat_wl_sss = compile_pattern(segment(s) + segment(v) + segment(w))
 sub_wl_add7 = p + q + r + x + y + z + a
-sub_wl_add8 = p + q + r + x + y + z + a + b
+sub_wl_add9 = p + q + r + x + y + z + a + b + c
 
 pat_wl_f4 = compile_pattern(
     slot(w) * slot(y) + slot(w) * slot(z) + slot(w) * slot(u) +
         slot(w) * slot(v) + segment(s)
 )
-sub_wl_f4 = p * q + p * r + p * x + p * y + p * z + p * a + p * b
+sub_wl_f8 = p * q + p * r + p * x + p * y + p * z + p * a +
+    p * b + p * c
 
 pat_wl_ss = compile_pattern(segment(s) + segment(v))
-sub_wl_add10 = p + q + r + x + y + z + a + b + c + d
+sub_wl_add11 = p + q + r + x + y + z + a + b + c + d + u
 
 pat_wl_h5 = compile_pattern(
     h(segment(s), segment(v), segment(w), segment(a), segment(b))
@@ -380,11 +381,11 @@ sub_wl_nl9 = f(p, q, r, x, y, z, a, b, c)
 pat_wl_h6 = compile_pattern(
     h(segment(s), segment(v), segment(w), segment(a), segment(b), segment(c))
 )
-sub_wl_h13 = h(p, q, r, x, y, z, a, b, c, d, u, v, w)
+sub_wl_h14 = h(p, q, r, x, y, z, a, b, c, d, u, v, w, s)
 
-sub_wl_add13 = p + q + r + x + y + z + a + b + c + d + u + v + w
-sub_wl_f10 = p * q + p * r + p * x + p * y + p * z + p * a + p * b +
-    p * c + p * d + p * u
+sub_wl_add14 = p + q + r + x + y + z + a + b + c + d + u + v + w + s
+sub_wl_f11 = p * q + p * r + p * x + p * y + p * z + p * a + p * b +
+    p * c + p * d + p * u + p * v
 
 SUITE["workload"] = BenchmarkGroup()
 SUITE["workload"]["matchall batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
@@ -398,22 +399,22 @@ SUITE["workload"]["single ac nl-pair fail (P(8,6) backtrack)"] =
     @benchmarkable matchall($pat_wl_nlpair, $sub_wl_nl8)
 SUITE["workload"]["single ac 3segs vs 7-arg add (2187)"] =
     @benchmarkable matchall($pat_wl_sss, $sub_wl_add7)
-SUITE["workload"]["single ac 3segs vs 8-arg eachmatch (6561)"] =
-    @benchmarkable _wl_eachmatch_count($pat_wl_sss, $sub_wl_add8)
-SUITE["workload"]["single ac factor4+rest vs 7 prods"] =
-    @benchmarkable matchall($pat_wl_f4, $sub_wl_f4)
-SUITE["workload"]["single ac seg+seg vs 10-arg add (1024)"] =
-    @benchmarkable matchall($pat_wl_ss, $sub_wl_add10)
+SUITE["workload"]["single ac 3segs vs 9-arg eachmatch (19683)"] =
+    @benchmarkable _wl_eachmatch_count($pat_wl_sss, $sub_wl_add9)
+SUITE["workload"]["single ac factor4+rest vs 8 prods"] =
+    @benchmarkable matchall($pat_wl_f4, $sub_wl_f8)
+SUITE["workload"]["single ac seg+seg vs 11-arg add (2048)"] =
+    @benchmarkable matchall($pat_wl_ss, $sub_wl_add11)
 SUITE["workload"]["single free h 5segs vs 11-arg (1365)"] =
     @benchmarkable matchall($pat_wl_h5, $sub_wl_h11)
 
 SUITE["workload"]["deep ac nl-pair fail 9-arg (P(9,7) backtrack)"] =
     @benchmarkable matchall($pat_wl_nl9, $sub_wl_nl9)
-SUITE["workload"]["deep ac 3segs vs 10-arg eachmatch (59049)"] =
-    @benchmarkable _wl_eachmatch_count($pat_wl_sss, $sub_wl_add10)
-SUITE["workload"]["deep ac seg+seg vs 13-arg add (8192)"] =
-    @benchmarkable matchall($pat_wl_ss, $sub_wl_add13)
-SUITE["workload"]["deep ac factor4+rest vs 10 prods (5040)"] =
-    @benchmarkable matchall($pat_wl_f4, $sub_wl_f10)
-SUITE["workload"]["deep free h 6segs vs 13-arg (8568)"] =
-    @benchmarkable matchall($pat_wl_h6, $sub_wl_h13)
+SUITE["workload"]["deep ac 3segs vs 11-arg eachmatch (177147)"] =
+    @benchmarkable _wl_eachmatch_count($pat_wl_sss, $sub_wl_add11)
+SUITE["workload"]["deep ac seg+seg vs 14-arg add (16384)"] =
+    @benchmarkable matchall($pat_wl_ss, $sub_wl_add14)
+SUITE["workload"]["deep ac factor4+rest vs 11 prods (7920)"] =
+    @benchmarkable matchall($pat_wl_f4, $sub_wl_f11)
+SUITE["workload"]["deep free h 6segs vs 14-arg (11628)"] =
+    @benchmarkable matchall($pat_wl_h6, $sub_wl_h14)
