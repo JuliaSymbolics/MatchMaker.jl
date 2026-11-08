@@ -37,8 +37,9 @@ struct RhsPlan
     root::Int32
     "template node -> pattern var id (`0` = not a marker node)."
     vid_of::Vector{Int32}
-    "template node -> is a segment marker (splices on eval)."
-    is_seg::BitVector
+    "template node -> subtree contains a marker — only `needs` nodes
+    get rebuilt on eval; everything else keeps `ir[i]`."
+    needs::BitVector
 end
 
 """
@@ -51,21 +52,26 @@ term in `rhs` must be a pattern variable — unknown vars throw
 function _compile_rhs(rhs::BasicSymbolic{SymReal}, pat::Matcher)
     ir = IRStructure{SymReal}()
     root = populate_ir!(ir, rhs)
-    n = length(ir.symbols)
+    n = length(ir)
     vid_of = zeros(Int32, n)
-    is_seg = falses(n)
+    needs = falses(n)
+    g = ir.dependency_graph
     for i in 1:n
         t = ir[i]
-        is_marker_term(t) || continue
-        sym = varsym(t)
-        vid = get(pat.var_of, sym, zero(Int32))
-        vid == 0 && throw(
-            ArgumentError(lazy"rhs variable $sym is not a pattern variable")
-        )
-        vid_of[i] = vid
-        is_seg[i] = _is_segment_term(t)
+        if is_marker_term(t)
+            sym = varsym(t)
+            vid = get(pat.var_of, sym, zero(Int32))
+            vid == 0 && throw(
+                ArgumentError(lazy"rhs variable $sym is not a pattern variable")
+            )
+            vid_of[i] = vid
+        end
+        # `symbols` is postorder — a node needs work iff it's a marker or
+        # any already-visited dependency does.
+        needs[i] = vid_of[i] != 0 ||
+            any(j -> needs[j], Graphs.outneighbors(g, i))
     end
-    return RhsPlan(ir, root, vid_of, is_seg)
+    return RhsPlan(ir, root, vid_of, needs)
 end
 
 """
@@ -79,11 +85,10 @@ struct CompiledRule
     pat::Matcher
     constraints::Vector{Constraint}
     rhs::Union{RhsPlan, RhsT}
-    name::Symbol
 end
 
 """
-    mmrule(lhs => rhs; vars = Dict(), constraints = Constraint[], name)
+    mmrule(lhs => rhs; vars = Dict(), constraints = Constraint[])
 
 Build a [`CompiledRule`](@ref): `lhs` is compiled via
 [`compile_pattern`](@ref); `rhs` is either a symbolic template (compiled
@@ -93,16 +98,15 @@ pattern variables to [`VarSpec`](@ref)s; `constraints` are early-firing
 cross-variable checks (§4.9).
 """
 function mmrule(
-        lhs::Pair{<:BasicSymbolic{SymReal}};
+        lhs::Pair{BasicSymbolic{SymReal}, T};
         vars::AbstractDict{BasicSymbolic{SymReal}, VarSpecT} =
             Dict{BasicSymbolic{SymReal}, VarSpecT}(),
         constraints = Constraint[],
-        name::Symbol = Symbol("")
-    )
+    ) where T
     (l, rhs) = lhs
     pat = compile_pattern(l; vars)
     r = rhs isa BasicSymbolic{SymReal} ? _compile_rhs(rhs, pat) : RhsT(rhs)
-    return CompiledRule(pat, Constraint[constraints...], r, name)
+    return CompiledRule(pat, Constraint[constraints...], r)
 end
 
 # The rule application: template evals by var id, callable gets the view.
@@ -114,53 +118,52 @@ end
 
 # Evaluate a compiled template against the live engine — `instantiate`'s
 # postorder walk with `binds`-indexed marker resolution instead of a dict.
+# Only `needs` nodes are rebuilt; subtrees with no markers keep `ir[i]`.
 function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
     ir = plan.ir
     g = ir.dependency_graph
-    n = length(ir.symbols)
+    n = length(ir)
     out = Vector{BasicSymbolic{SymReal}}(undef, n)
     vid_of = plan.vid_of
-    is_seg = plan.is_seg
+    needs = plan.needs
+    specs = eng.pat.var_specs
     for i in 1:n
+        needs[i] || (out[i] = ir[i]; continue)
         vid = vid_of[i]
         if vid != 0
             out[i] = _bound_value(eng, vid)
             continue
         end
         t = ir[i]
-        if !iscall(t)
-            out[i] = t
-            continue
-        end
         nbs = Graphs.outneighbors(g, i)
         op = operation(t)
         argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
         newop = op
         if argstart == 2 && vid_of[nbs[1]] != 0
-            bound = out[nbs[1]]
             # a head bound via extras materializes as Const(op); unwrap
-            newop = @match bound begin
-                BSImpl.Const(; val) => val
-                _ => bound
-            end
+            newop = unwrap_const(out[nbs[1]])
         end
+        # +/* get free splicing + identity-Const elision from
+        # add_worker/mul_worker; other heads need it explicit (g(g(x))
+        # is not g(x)).
+        canon = newop === (+) || newop === (*)
+        id = canon ? nothing : _identity_el(newop, symtype(t))
         newargs = ArgsT{SymReal}()
         sizehint!(newargs, length(nbs) - argstart + 1)
         for j in argstart:length(nbs)
             cexpr = out[nbs[j]]
-            if is_seg[nbs[j]]
+            c_vid = vid_of[nbs[j]]
+            if c_vid != 0 && !canon &&
+                    MData.isa_variant(specs[c_vid], VarSpec.Segment)
                 if iscall(cexpr) && operation(cexpr) === newop
                     for ca in arguments(cexpr)
                         push!(newargs, ca)
                     end
-                elseif isconst(cexpr)
-                    # a Const binding equal to the head's identity
-                    # contributes zero args (§5.6); any other Const is a
-                    # one-element literal capture (canonical +(2) ≡ 2)
-                    id = _identity_el(newop, symtype(t))
-                    id === nothing || !isequal(unwrap_const(cexpr), id) ||
-                        continue
-                    push!(newargs, cexpr)
+                elseif isconst(cexpr) && id !== nothing &&
+                        isequal(unwrap_const(cexpr), id)
+                    # Const identity capture under this head: zero args
+                    # (§5.6); any other Const is a one-element literal.
+                    continue
                 else
                     push!(newargs, cexpr)
                 end
@@ -422,10 +425,17 @@ each surviving rule's engine to the shared subject IR, first match wins.
 A callable rhs returning `nothing` falls through to the next candidate.
 """
 function (ws::RuleWorkspace)(x::BasicSymbolic{SymReal})
+    return _apply_site!(ws, x, populate_ir!(ws.subj, x))
+end
+
+# The ws() body with a precomputed root — IR-driven passes already know
+# the node index and skip `populate_ir!` entirely for interned nodes.
+function _apply_site!(
+        ws::RuleWorkspace, x::BasicSymbolic{SymReal}, sroot::Int32
+    )
     rs = ws.set
     ids = lookup!(rs.index, ws.candbuf, x)
     isempty(ids) && return nothing
-    sroot = populate_ir!(ws.subj, x)
     @inbounds for i in eachindex(ids)
         id = ids[i]
         eng = _engine_for!(ws, id, sroot)
@@ -442,71 +452,123 @@ end
 
 # Apply the workspace at one site; `nothing` keeps `x`, a result is
 # Const-wrapped (callable rhs's may return non-symbolic values).
-@inline function _apply_site(ws::RuleWorkspace, x::BasicSymbolic{SymReal})
-    y = ws(x)
+@inline function _apply_site(
+        ws::RuleWorkspace, x::BasicSymbolic{SymReal}, sroot::Int32
+    )
+    y = _apply_site!(ws, x, sroot)
     return y === nothing ? x : Const{SymReal}(y)
 end
+@inline _apply_site(ws::RuleWorkspace, x::BasicSymbolic{SymReal}) =
+    _apply_site(ws, x, populate_ir!(ws.subj, x))
 
 """
     $TYPEDSIGNATURES
 
-The MatchMaker-native bottom-up (default) or top-down rewrite pass over
-`expr` (REWRITING.md §6): walks the DAG once with an identity-keyed
-memo (hash-consed nodes dedup shared subterms), rebuilds only nodes
-whose children changed, and applies the workspace at every node.
+The MatchMaker-native rewrite pass (REWRITING.md §6). `order = :post`
+(the default) sweeps `ws.subj` postorder — `populate_ir!` interning
+dedups shared subterms for free, `maketerm` rebuilds only nodes whose
+children changed, and the workspace applies at every node — linear in
+IR size, no call-stack, no memo dict. `order = :pre` applies the
+workspace before descending into the result (same semantics as
+`Rewriters.Prewalk`), driven by an explicit worklist.
 """
 function rewrite(
         ws::RuleWorkspace, expr::BasicSymbolic{SymReal};
         order::Symbol = :post
     )
-    memo = IdDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}()
-    order === :post && return _rewrite_post(ws, expr, memo)
-    order === :pre && return _rewrite_pre(ws, expr, memo)
+    order === :post && return _rewrite_post(ws, expr)
+    order === :pre && return _rewrite_pre(ws, expr)
     throw(ArgumentError(lazy"order must be :pre or :post, got: $order"))
 end
 
-function _rewrite_post(
-        ws::RuleWorkspace, x::BasicSymbolic{SymReal}, memo::IdDict
-    )
-    return get!(memo, x) do
-        if iscall(x)
-            args = arguments(x)::ROArgsT{SymReal}
-            # copy-on-write: only allocate newargs once a child changes
-            for (i, a) in enumerate(args)
-                na = _rewrite_post(ws, a, memo)
-                na === a && continue
-                if args isa ROArgsT{SymReal}
-                    args = copy(parent(args))::ArgsT{SymReal}
-                end
-                args[i] = na
+# Linear postorder sweep over ws.subj — `symbols` indexes children
+# before parents, interning dedups shared subterms, and `ws(x)`
+# populating new terms appends beyond `n` (next-iteration nodes).
+function _rewrite_post(ws::RuleWorkspace, expr::BasicSymbolic{SymReal})
+    subj = ws.subj
+    sroot = populate_ir!(subj, expr)
+    n = length(subj)
+    g = subj.dependency_graph
+    out = Vector{BasicSymbolic{SymReal}}(undef, n)
+    for i in Int32(1):Int32(n)
+        t = subj[i]
+        iscall(t) || (out[i] = _apply_site(ws, t); continue)
+        nbs = Graphs.outneighbors(g, i)
+        op = operation(t)
+        argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
+        newop = argstart == 2 ? unwrap_const(out[nbs[1]]) : op
+        args = arguments(t)::ROArgsT{SymReal}
+        newargs = nothing
+        for (k, j) in enumerate(argstart:length(nbs))
+            na = out[nbs[j]]
+            na === args[k] && continue
+            if newargs === nothing
+                newargs = copy(parent(args))::ArgsT{SymReal}
             end
-            args isa ArgsT{SymReal} && (
-                x = maketerm(typeof(x), operation(x), args, metadata(x))
-            )
+            newargs[k] = na
         end
-        _apply_site(ws, x)
+        if newargs === nothing && newop === op
+            # unchanged — the node is already interned at index i
+            out[i] = _apply_site(ws, t, i)
+        else
+            newargs === nothing && (newargs = copy(parent(args)))
+            x = maketerm(typeof(t), newop, newargs, metadata(t))
+            out[i] = _apply_site(ws, x, populate_ir!(subj, x))
+        end
     end
+    return out[sroot]
 end
 
-function _rewrite_pre(
-        ws::RuleWorkspace, x::BasicSymbolic{SymReal}, memo::IdDict
-    )
-    return get!(memo, x) do
-        x = _apply_site(ws, x)
-        iscall(x) || return x
-        args = arguments(x)::ROArgsT{SymReal}
-        for (i, a) in enumerate(args)
-            na = _rewrite_pre(ws, a, memo)
-            na === a && continue
-            if args isa ROArgsT{SymReal}
-                args = copy(parent(args))::ArgsT{SymReal}
+# Pre-order: apply ws at a node, then descend into the result — frames
+# hold (orig, ws-result, next-child-idx); `out` collects rewritten
+# children for the parent's rebuild; `memo` dedups shared subterms.
+function _rewrite_pre(ws::RuleWorkspace, x::BasicSymbolic{SymReal})
+    out = BasicSymbolic{SymReal}[]
+    stk = Tuple{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}, Int}[
+        (x, x, 0)]
+    memo = IdDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}()
+    while !isempty(stk)
+        (orig, cur, i) = stk[end]
+        if i == 0
+            if haskey(memo, orig)
+                pop!(stk)
+                push!(out, memo[orig])
+                continue
             end
-            args[i] = na
+            cur = _apply_site(ws, orig)
+            if iscall(cur)
+                stk[end] = (orig, cur, 1)
+            else
+                pop!(stk)
+                memo[orig] = cur
+                push!(out, cur)
+            end
+            continue
         end
-        args isa ArgsT{SymReal} ? maketerm(
-            typeof(x), operation(x), args, metadata(x)
-        ) : x
+        args = arguments(cur)
+        if i <= length(args)
+            stk[end] = (orig, cur, i + 1)
+            push!(stk, (args[i], args[i], 0))
+            continue
+        end
+        nargs = length(args)
+        newargs = nothing
+        for k in 1:nargs
+            na = out[end - nargs + k]
+            na === args[k] && continue
+            if newargs === nothing
+                newargs = copy(parent(args))::ArgsT{SymReal}
+            end
+            newargs[k] = na
+        end
+        resize!(out, length(out) - nargs)
+        y = newargs === nothing ? cur : maketerm(
+            typeof(cur), operation(cur), newargs, metadata(cur))
+        pop!(stk)
+        memo[orig] = y
+        push!(out, y)
     end
+    return out[1]
 end
 
 """

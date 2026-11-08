@@ -46,19 +46,21 @@ const CS = SymbolicUtils.Const{SymReal}
     rs3 = compile_rules(CompiledRule[
         mmrule(slot(a) + slot(b) => slot(b)),
     ])
+    pat_ab = compile_pattern(slot(a) + slot(b))
     ws3 = RuleWorkspace(rs3)
-    @test isequal(ws3(x + y), y)       # b=y
-    @test isequal(ws3(p + q), q)       # reset: b=q, not a stale y
+    # canonical Add arg order is process-dependent — compare against the
+    # matcher's own first result rather than a literal argument
+    @test isequal(ws3(x + y), match(pat_ab, x + y)[b])
+    @test isequal(ws3(p + q), match(pat_ab, p + q)[b])
 
     # reset! clears the prior match's bindings before re-searching
-    pat_ab = compile_pattern(slot(a) + slot(b))
     eng = MatchEngine(pat_ab, x + y, Constraint[])
     @test next_match!(eng)
     @test any(v -> v != 0, eng.binds.node)         # match leaves binds
     reset!(eng, eng.subj, populate_ir!(eng.subj, p + q))
     @test all(v -> v == 0, eng.binds.node)         # cleared by reset
     @test next_match!(eng)                          # fresh search re-binds
-    @test isequal(eng.subj[eng.binds.node[pat_ab.var_of[b]]], q)
+    @test isequal(eng.subj[eng.binds.node[pat_ab.var_of[b]]], match(pat_ab, p + q)[b])
 
     # workspace bounded reuse: buffer plateaus, no per-site engine alloc
     ws3(x + y); ws3(p + q)
@@ -70,7 +72,7 @@ const CS = SymbolicUtils.Const{SymReal}
     ws4 = RuleWorkspace(rs3; maxsteps = 0)
     @test ws4(x + y) === nothing
     ws4.maxsteps = typemax(Int)
-    @test isequal(ws4(x + y), y)
+    @test isequal(ws4(x + y), match(pat_ab, x + y)[b])
 end
 
 @testset "bucket index" begin
