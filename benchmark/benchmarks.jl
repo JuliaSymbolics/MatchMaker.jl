@@ -367,6 +367,25 @@ function _wl_eachmatch_count(pat, subj)
     return n[]
 end
 
+# --- deep tier: the same shapes scaled to ~40–85 ms -----------------
+# Search spaces grow combinatorially in subject arity, so each family
+# gets a second point on the ladder — a constant-factor regression
+# holds its ratio across the two sizes; an algorithmic one grows.
+pat_wl_nl9 = compile_pattern(
+    f(slot(a), slot(b), slot(c), slot(d), slot(y), slot(x), slot(w),
+        slot(s), slot(s))
+)
+sub_wl_nl9 = f(p, q, r, x, y, z, a, b, c)
+
+pat_wl_h6 = compile_pattern(
+    h(segment(s), segment(v), segment(w), segment(a), segment(b), segment(c))
+)
+sub_wl_h13 = h(p, q, r, x, y, z, a, b, c, d, u, v, w)
+
+sub_wl_add13 = p + q + r + x + y + z + a + b + c + d + u + v + w
+sub_wl_f10 = p * q + p * r + p * x + p * y + p * z + p * a + p * b +
+    p * c + p * d + p * u
+
 SUITE["workload"] = BenchmarkGroup()
 SUITE["workload"]["matchall batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
     @benchmarkable _wl_matchall($_WL_PATS, $_WL_CORPUS)
@@ -387,3 +406,14 @@ SUITE["workload"]["single ac seg+seg vs 10-arg add (1024)"] =
     @benchmarkable matchall($pat_wl_ss, $sub_wl_add10)
 SUITE["workload"]["single free h 5segs vs 11-arg (1365)"] =
     @benchmarkable matchall($pat_wl_h5, $sub_wl_h11)
+
+SUITE["workload"]["deep ac nl-pair fail 9-arg (P(9,7) backtrack)"] =
+    @benchmarkable matchall($pat_wl_nl9, $sub_wl_nl9)
+SUITE["workload"]["deep ac 3segs vs 10-arg eachmatch (59049)"] =
+    @benchmarkable _wl_eachmatch_count($pat_wl_sss, $sub_wl_add10)
+SUITE["workload"]["deep ac seg+seg vs 13-arg add (8192)"] =
+    @benchmarkable matchall($pat_wl_ss, $sub_wl_add13)
+SUITE["workload"]["deep ac factor4+rest vs 10 prods (5040)"] =
+    @benchmarkable matchall($pat_wl_f4, $sub_wl_f10)
+SUITE["workload"]["deep free h 6segs vs 13-arg (8568)"] =
+    @benchmarkable matchall($pat_wl_h6, $sub_wl_h13)
