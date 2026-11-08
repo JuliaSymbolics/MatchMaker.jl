@@ -109,9 +109,9 @@ but costs roughly the same as a [`MarkersMap`](@ref) if every variable
 is materialized anyway. Copy into a [`MarkersMap`](@ref) with
 [`materialize`](@ref).
 
-Returned by `matches`/`matchall` with `lazy = true` — the fast way to
-collect many results when the consumer only inspects a few bound
-values (or just counts/compares matches).
+Returned by [`boundmatches`](@ref) and [`boundmatchall`](@ref) — the
+fast way to collect many results when the consumer only inspects a few
+bound values (or just counts/compares matches).
 """
 struct BoundMatch <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
     pat::Matcher
@@ -181,28 +181,39 @@ end
 """
     MatchIterator
 
-Lazy iterator over successive matches — one result per state. Results
-are [`MarkersMap`](@ref)s, or [`BoundMatch`](@ref) snapshots when
-constructed with `lazy = true`.
+Lazy iterator over successive matches — one [`MarkersMap`](@ref) per state.
 """
 struct MatchIterator
     eng::MatchEngine
-    lazy::Bool
 end
 Base.IteratorSize(::Type{MatchIterator}) = Base.SizeUnknown()
 function Base.iterate(it::MatchIterator, state = nothing)
     next_match!(it.eng) || return nothing
-    if it.lazy
-        return (
-            BoundMatch(
-                it.eng.pat, it.eng.subj,
-                symtype(it.eng.subj[it.eng.sroot]),
-                _snapshot_binds(it.eng.binds)
-            ),
-            nothing,
-        )
-    end
     return materialize(SubstitutionView(it.eng, it.eng.steps)), nothing
+end
+
+"""
+    BoundMatchIterator
+
+Lazy iterator over successive matches — one [`BoundMatch`](@ref)
+snapshot per state. Much cheaper per result than [`MatchIterator`](@ref)
+(frozen binding state, no term reconstruction); materialize individual
+results with [`materialize`](@ref).
+"""
+struct BoundMatchIterator
+    eng::MatchEngine
+end
+Base.IteratorSize(::Type{BoundMatchIterator}) = Base.SizeUnknown()
+function Base.iterate(it::BoundMatchIterator, state = nothing)
+    next_match!(it.eng) || return nothing
+    return (
+        BoundMatch(
+            it.eng.pat, it.eng.subj,
+            symtype(it.eng.subj[it.eng.sroot]),
+            _snapshot_binds(it.eng.binds)
+        ),
+        nothing,
+    )
 end
 
 """
@@ -228,27 +239,49 @@ match(
     $TYPEDSIGNATURES
 
 Lazy iterator of all matches of `m` against `s`; each item is a
-[`MarkersMap`](@ref), or a [`BoundMatch`](@ref) with `lazy = true`.
-`maxsteps` bounds total search steps — the iterator ends when the
-budget is exhausted (a truncated result set).
+[`MarkersMap`](@ref). `maxsteps` bounds total search steps — the iterator
+ends when the budget is exhausted (a truncated result set).
 """
 matches(
     m::Matcher, s::BasicSymbolic{SymReal};
-    constraints = Constraint[], maxsteps::Int = typemax(Int),
-    lazy::Bool = false
-) = MatchIterator(MatchEngine(m, s, constraints; maxsteps), lazy)
+    constraints = Constraint[], maxsteps::Int = typemax(Int)
+) = MatchIterator(MatchEngine(m, s, constraints; maxsteps))
 matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     matches(compile_pattern(p), s; kwargs...)
 
 """
     $TYPEDSIGNATURES
 
-`collect(matches(m, s))` — all matches as a `Vector{MarkersMap}`, or a
-`Vector{BoundMatch}` with `lazy = true` (much cheaper per result: a
-frozen binding snapshot that reconstructs segment terms on access
-instead of eagerly materializing every variable).
+`collect(matches(m, s))` — all matches as a `Vector{MarkersMap}`.
 """
 matchall(m, s; kwargs...) = collect(matches(m, s; kwargs...))
+
+"""
+    $TYPEDSIGNATURES
+
+Lazy iterator of all matches of `m` against `s` like [`matches`](@ref),
+but each item is a [`BoundMatch`](@ref): a persistent snapshot of the
+index-only binding state that reconstructs segment terms on access.
+Far cheaper per result than materializing a [`MarkersMap`](@ref) —
+use it when collecting many results, or when the consumer reads only
+a few bound values per match.
+"""
+boundmatches(
+    m::Matcher, s::BasicSymbolic{SymReal};
+    constraints = Constraint[], maxsteps::Int = typemax(Int)
+) = BoundMatchIterator(MatchEngine(m, s, constraints; maxsteps))
+boundmatches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
+    boundmatches(compile_pattern(p), s; kwargs...)
+
+"""
+    $TYPEDSIGNATURES
+
+`collect(boundmatches(m, s))` — all matches as a `Vector{BoundMatch}`.
+The cheap `matchall` for enumeration-heavy workloads (~10× faster on
+segment-heavy cases); [`materialize`](@ref) individual results to get
+the same `MarkersMap`s `matchall` returns.
+"""
+boundmatchall(m, s; kwargs...) = collect(boundmatches(m, s; kwargs...))
 
 """
     $TYPEDSIGNATURES

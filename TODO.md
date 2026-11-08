@@ -145,16 +145,14 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   inside a matched subtree are reported, and result shape (nodes vs
   substitution maps).
 
-- **`matchall` materialize is the throughput ceiling.** Since
-  `perf/segment-path` (fa91b5b — suffix-max bounds force the last
-  segment's capture, pools are predicate-prefiltered, `_next_combo!`
-  is an odometer) the engine costs ~0.2 μs/result on
-  `seg+seg 14-arg` while `matchall` runs ~3 μs/result — the gap is
-  almost entirely per-result `MarkersMap` + `_seg_value` →
-  `add_worker`/hashconsing. `eachmatch`/`SubstitutionView` is the
-  zero-alloc path; document it as the high-throughput API and
-  consider a `matchall` variant returning interned bindings or
-  views.
+- **Throughput APIs need documenting.** `matchall` materializes a
+  `MarkersMap` per result (~3 μs vs ~0.2 μs of search on
+  `seg+seg 14-arg`). Two faster results shapes now exist:
+  `eachmatch`/`SubstitutionView` (zero-alloc, valid only inside the
+  callback) and `boundmatches`/`boundmatchall` (`BoundMatch` snapshots
+  — persistent, per-var lazy reconstruction, ~10× cheaper than
+  `matchall` on segment-heavy cases). User-facing docs should steer
+  high-throughput code to them.
 
 ## Tests
 
