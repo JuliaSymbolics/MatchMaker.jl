@@ -85,7 +85,6 @@ struct CompiledRule
     rhs::Union{BasicSymbolic{SymReal}, RhsT}   # template or callable
     name::Symbol
 end
-```
 
 abstract type RuleIndex end
 # lookup(ws, idx::RuleIndex, node) -> SmallV{Int32} of candidate rule ids
