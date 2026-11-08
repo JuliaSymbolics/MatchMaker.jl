@@ -321,6 +321,52 @@ function _wl_eachmatch(pats, corpus)
     return n[]
 end
 
+# --- single-match workloads -----------------------------------------
+# One (pattern, subject) pair whose *search itself* is ms-scale — no
+# batching. Sized empirically to ~3–8 ms per call:
+#
+#   * nl-pair fail: the last two slots must unify; 8 distinct args make
+#     that impossible, so the engine burns the entire P(8,6) injection
+#     space and returns nothing — pure backtracking, zero results.
+#   * 3-seg AC partition: each of n args goes to one of 3 segments →
+#     3^n ordered partitions (2187 / 6561 results).
+#   * factor extraction: 4 non-linear `w·_` terms + rest segment over
+#     7 products sharing a common factor.
+#   * 2-seg AC partition on 10 args → 2^10 = 1024 sub-multiset splits.
+#   * 5 contiguous segments under free head h on 11 args → C(14,4)
+#     splits — the Seq matcher family rather than AC.
+# eachmatch variants isolate engine time from result materialization.
+# --------------------------------------------------------------------
+
+pat_wl_nlpair = compile_pattern(
+    f(slot(a), slot(b), slot(c), slot(d), slot(y), slot(x), slot(s), slot(s))
+)
+sub_wl_nl8 = f(p, q, r, x, y, z, a, b)
+
+pat_wl_sss = compile_pattern(segment(s) + segment(v) + segment(w))
+sub_wl_add7 = p + q + r + x + y + z + a
+sub_wl_add8 = p + q + r + x + y + z + a + b
+
+pat_wl_f4 = compile_pattern(
+    slot(w) * slot(y) + slot(w) * slot(z) + slot(w) * slot(u) +
+        slot(w) * slot(v) + segment(s)
+)
+sub_wl_f4 = p * q + p * r + p * x + p * y + p * z + p * a + p * b
+
+pat_wl_ss = compile_pattern(segment(s) + segment(v))
+sub_wl_add10 = p + q + r + x + y + z + a + b + c + d
+
+pat_wl_h5 = compile_pattern(
+    h(segment(s), segment(v), segment(w), segment(a), segment(b))
+)
+sub_wl_h11 = h(p, q, r, x, y, z, a, b, c, d, u)
+
+function _wl_eachmatch_count(pat, subj)
+    n = Ref(0)
+    eachmatch(b -> (n[] += 1), pat, subj)
+    return n[]
+end
+
 SUITE["workload"] = BenchmarkGroup()
 SUITE["workload"]["matchall batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
     @benchmarkable _wl_matchall($_WL_PATS, $_WL_CORPUS)
@@ -328,3 +374,16 @@ SUITE["workload"]["first-match batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
     @benchmarkable _wl_match($_WL_PATS, $_WL_CORPUS)
 SUITE["workload"]["eachmatch batch (6 pats × $(length(_WL_CORPUS)) exprs)"] =
     @benchmarkable _wl_eachmatch($_WL_PATS, $_WL_CORPUS)
+
+SUITE["workload"]["single ac nl-pair fail (P(8,6) backtrack)"] =
+    @benchmarkable matchall($pat_wl_nlpair, $sub_wl_nl8)
+SUITE["workload"]["single ac 3segs vs 7-arg add (2187)"] =
+    @benchmarkable matchall($pat_wl_sss, $sub_wl_add7)
+SUITE["workload"]["single ac 3segs vs 8-arg eachmatch (6561)"] =
+    @benchmarkable _wl_eachmatch_count($pat_wl_sss, $sub_wl_add8)
+SUITE["workload"]["single ac factor4+rest vs 7 prods"] =
+    @benchmarkable matchall($pat_wl_f4, $sub_wl_f4)
+SUITE["workload"]["single ac seg+seg vs 10-arg add (1024)"] =
+    @benchmarkable matchall($pat_wl_ss, $sub_wl_add10)
+SUITE["workload"]["single free h 5segs vs 11-arg (1365)"] =
+    @benchmarkable matchall($pat_wl_h5, $sub_wl_h11)
