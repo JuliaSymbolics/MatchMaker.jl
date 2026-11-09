@@ -12,12 +12,14 @@ Moshi = "2e0e35c7-a2e4-4343-998d-7ef72827ed2d"
 Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 ReadOnlyArrays = "988b38a3-91fc-5605-94a2-ee2116b3bd83"
 SymbolicUtils = "d1185830-fcd6-423d-90d6-eec64667417b"
+TermInterface = "8ea1fca8-c5ef-4a55-8b96-4e9afe9c9a3c"
 
 [sources]
 SymbolicUtils = {path = "../SymbolicUtils.jl"}
 
 [compat]
 Preferences = "1"
+SciMLTesting = "2.4"
 Aqua = "0.8"
 DocStringExtensions = "0.9"
 EnumX = "1.0.7"
@@ -28,14 +30,16 @@ Moshi = "0.3.6 - 0.3.9, 0.3.13"
 ReadOnlyArrays = "0.2"
 SafeTestsets = "0.1"
 SymbolicUtils = "4.53"
+TermInterface = "2.0"
 Test = "1"
 julia = "1.10"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "JET", "SafeTestsets", "Test"]
+test = ["SciMLTesting", "JET", "SafeTestsets", "Test"]

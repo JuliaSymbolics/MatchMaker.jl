@@ -3,8 +3,6 @@
 # `RuleWorkspace` is the mutable application context and the rewriter
 # callable (`x -> expr′ | nothing`).
 
-using SymbolicUtils: maketerm, metadata, ROArgsT
-
 ###
 ### Rule objects (§2)
 ###

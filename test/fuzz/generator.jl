@@ -8,7 +8,7 @@ using SymbolicUtils
 using SymbolicUtils: Sym, SymReal, FnType, Const
 using Random: Xoshiro, seed!
 
-include(joinpath(@__DIR__, "..", "oracle.jl"))
+include(joinpath(@__DIR__, "..", "shared", "oracle.jl"))
 
 # Reuse the normalizer from crosscheck (copied to keep the fuzz file
 # self-contained — the include graph here is one file deep).
