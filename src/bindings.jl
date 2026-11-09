@@ -7,23 +7,28 @@
 """
     Bindings
 
-Engine binding state (DESIGN.md §5.3). All values are *subject IR indices*,
-never expressions — materialization happens only at `MarkersMap` time.
+Engine binding state (DESIGN.md §5.3). Slot binds are *subject IR indices*
+— materialization happens only at `MarkersMap` time. Segment binds store
+the captured argument list itself (`ArgsT`), head-neutral: a non-linear
+segment re-checked under a different head compares the same arg list, and
+`_rhs_eval` splices it without materializing a term first.
 """
 struct Bindings
     "var_id -> bound subject node (`0` = unbound)."
     node::Vector{Int32}
-    "var_id -> captured subject nodes for segment vars."
-    seq::Vector{SmallV{Int32}}
+    "var_id -> captured arg terms for segment vars."
+    seq::Vector{ArgsT{SymReal}}
     "var_id -> the head a segment var captured under."
     seg_op::Vector{Any}
+    "var_id -> memoized `f(captured…)` for segment vars (lazily filled)."
+    segval::Vector{Any}
     "var_id -> non-node bound value (e.g. a head-slot var bound to a raw op)."
     extra::Vector{Any}
 end
 
 Bindings(nvars::Integer) = Bindings(
-    zeros(Int32, nvars), [SmallV{Int32}() for _ in 1:nvars],
-    fill(nothing, nvars), fill(nothing, nvars)
+    zeros(Int32, nvars), [ArgsT{SymReal}() for _ in 1:nvars],
+    fill(nothing, nvars), fill(nothing, nvars), fill(nothing, nvars)
 )
 
 is_bound_node(b::Bindings, vid::Int32) = b.node[vid] != 0

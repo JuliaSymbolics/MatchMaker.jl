@@ -131,7 +131,11 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
     for i in plan.updates
         vid = vid_of[i]
         if vid != 0
-            out[i] = _bound_value(eng, vid)
+            # segment markers keep the `ir[i]` placeholder — the parent's
+            # arg loop splices `b.seq[vid]` directly and only materializes
+            # on a head mismatch; a bare root is handled at the return.
+            MData.isa_variant(specs[vid], VarSpec.Segment) ||
+                (out[i] = _bound_value(eng, vid))
             continue
         end
         t = ir[i]
@@ -151,22 +155,25 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
         newargs = ArgsT{SymReal}()
         sizehint!(newargs, length(nbs) - argstart + 1)
         for j in argstart:length(nbs)
-            cexpr = out[nbs[j]]
             c_vid = vid_of[nbs[j]]
-            if c_vid != 0 && !canon &&
+            if c_vid != 0 &&
                     MData.isa_variant(specs[c_vid], VarSpec.Segment)
-                if iscall(cexpr) && operation(cexpr) === newop
-                    append!(newargs, arguments(cexpr))
-                elseif isconst(cexpr) && id !== nothing &&
+                if eng.binds.seg_op[c_vid] === newop
+                    # same head — splice the captured arg list; the term
+                    # is never materialized
+                    append!(newargs, eng.binds.seq[c_vid])
+                    continue
+                end
+                cexpr = _bound_value(eng, c_vid)
+                if !canon && isconst(cexpr) && id !== nothing &&
                         isequal(unwrap_const(cexpr), id)::Bool
                     # Const identity capture under this head: zero args
                     # (§5.6); any other Const is a one-element literal.
                     continue
-                else
-                    push!(newargs, cexpr)
                 end
-            else
                 push!(newargs, cexpr)
+            else
+                push!(newargs, out[nbs[j]])
             end
         end
         if newop === (+)
@@ -179,7 +186,12 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
             )
         end
     end
-    return out[plan.root]
+    r = plan.root
+    rv = vid_of[r]
+    if rv != 0 && MData.isa_variant(specs[rv], VarSpec.Segment)
+        return _bound_value(eng, rv)
+    end
+    return out[r]
 end
 
 ###
@@ -501,13 +513,20 @@ function _rewrite_post(ws::RuleWorkspace, expr::BasicSymbolic{SymReal})
         op = operation(t)
         argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
         newop = argstart == 2 ? unwrap_const(out[nbs[1]]) : op
-        args = arguments(t)::ROArgsT{SymReal}
+        # `outneighbors` are `arguments()` order (IRStructure invariant)
+        # and children are interned — compare/rebuild against
+        # `subj[nbs[j]]` directly rather than paying `arguments(t)`
+        # (on AddMul that rebuilds Mul/^ terms per dict entry).
         newargs = nothing
         for (k, j) in enumerate(argstart:length(nbs))
             na = out[nbs[j]]
-            na === args[k] && continue
+            na === subj[nbs[j]] && continue
             if newargs === nothing
-                newargs = copy(parent(args))::ArgsT{SymReal}
+                newargs = ArgsT{SymReal}()
+                sizehint!(newargs, length(nbs) - argstart + 1)
+                for jj in argstart:length(nbs)
+                    push!(newargs, subj[nbs[jj]])
+                end
             end
             newargs[k] = na
         end
@@ -516,7 +535,11 @@ function _rewrite_post(ws::RuleWorkspace, expr::BasicSymbolic{SymReal})
             out[i] = _apply_site(ws, t, i)
         else
             if newargs === nothing
-                newargs = copy(parent(args))
+                newargs = ArgsT{SymReal}()
+                sizehint!(newargs, length(nbs) - argstart + 1)
+                for jj in argstart:length(nbs)
+                    push!(newargs, subj[nbs[jj]])
+                end
             end
             x = maketerm(typeof(t), newop, newargs, metadata(t))
             out[i] = _apply_site(ws, x, populate_ir!(subj, x))

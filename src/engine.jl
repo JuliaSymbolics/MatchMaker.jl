@@ -569,6 +569,7 @@ function _unwind!(eng::MatchEngine, mark::Int)
         b = eng.binds
         b.node[vid] = 0
         b.seg_op[vid] = nothing
+        b.segval[vid] = nothing
         b.extra[vid] = nothing
         for ci in eng.var_constrs[vid]
             eng.constr_fired[ci] = false
@@ -608,43 +609,45 @@ end
 function _bound_value(eng::MatchEngine, vid::Int32)
     is_bound_extra(eng.binds, vid) && return Const{SymReal}(eng.binds.extra[vid])
     b = eng.binds
-    b.seg_op[vid] !== nothing && return _seg_value(eng, vid)
+    if b.seg_op[vid] !== nothing
+        v = b.segval[vid]
+        v === nothing && (v = b.segval[vid] = _seg_value(eng, vid))
+        return v
+    end
     is_bound_node(b, vid) || error(lazy"var $vid is not bound")
     return eng.subj[b.node[vid]]
 end
 
-# Reconstruct `f(captured…)` for a segment binding (§5.6). Built with
-# BSImpl.Term directly (no `term`/`promote_*` dispatch); note this produces a
-# `Term` even for canonical `+`/`*` heads — Add/Mul reconstruction lands with
-# segment binds in a later milestone. Takes the subject IR and its root
-# symtype directly so [`BoundMatch`](@ref) snapshots can materialize
-# without an engine.
+# Reconstruct `f(captured…)` for a segment binding (§5.6) — `add_worker`/
+# `mul_worker` canonicalize `+`/`*` captures, `BSImpl.Term` builds the
+# rest (copying the arg list — the term must not alias the binding).
+# Takes the subject root symtype directly so [`BoundMatch`](@ref)
+# snapshots can materialize without an engine.
 function _seg_value(eng::MatchEngine, vid::Int32)
     b = eng.binds
     return _seg_value(
-        eng.subj, symtype(eng.subj[eng.sroot]), b.seg_op[vid], b.seq[vid]
+        symtype(eng.subj[eng.sroot]), b.seg_op[vid], b.seq[vid]
     )
 end
 
-function _seg_value(
-        subj::IRStructure{SymReal}, sty, @nospecialize(f), seq::SmallV{Int32}
-    )
-    args = ArgsT{SymReal}()
-    sizehint!(args, length(seq))
-    @inbounds for i in seq
-        push!(args, subj[i])
-    end
+function _seg_value(sty, @nospecialize(f), args::ArgsT{SymReal})
+    # singleton captures materialize to the arg itself under +/* —
+    # skipping the whole worker-buffer/ctor/hashcons protocol
     if f === (+)
+        length(args) == 1 && return args[1]
         return SymbolicUtils.add_worker(SymReal, args)
     elseif f === (*)
+        length(args) == 1 && return args[1]
         return SymbolicUtils.mul_worker(SymReal, args)
     elseif isempty(args)
         e = _identity_el(f, sty)
         e !== nothing && return Const{SymReal}(e)
-        return BSImpl.Term{SymReal}(f, args; type = promote_symtype(f))
+        return BSImpl.Term{SymReal}(
+            f, ArgsT{SymReal}(); type = promote_symtype(f)
+        )
     else
         return BSImpl.Term{SymReal}(
-            f, args;
+            f, copy(args);
             type = promote_symtype(
                 f, ntuple(i -> symtype(args[i]), length(args))...
             )

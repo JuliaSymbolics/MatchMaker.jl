@@ -86,15 +86,16 @@ end
 ### BoundMatch — persistent lazy result
 ###
 
-# Freeze the engine's index-only binding state for a produced match.
-# Per-var `seq` vectors are copied so later search steps can't mutate
-# the snapshot.
+# Freeze the engine's binding state for a produced match. Per-var `seq`
+# arg lists are copied so later search steps can't mutate the snapshot.
 function _snapshot_binds(b::Bindings)
-    seq = Vector{SmallV{Int32}}(undef, length(b.seq))
+    seq = Vector{ArgsT{SymReal}}(undef, length(b.seq))
     for i in eachindex(seq)
         seq[i] = copy(b.seq[i])
     end
-    return Bindings(copy(b.node), seq, copy(b.seg_op), copy(b.extra))
+    return Bindings(
+        copy(b.node), seq, copy(b.seg_op), copy(b.segval), copy(b.extra)
+    )
 end
 
 """
@@ -102,11 +103,11 @@ end
 
 A persistent match result that shares no mutable state with the engine
 that produced it: it stores the pattern, the subject IR, and a frozen
-copy of the index-only [`Bindings`](@ref). Variable values are resolved
-on access — segment vars pay `_seg_value` reconstruction per read (the
-value is *not* memoized), so a [`BoundMatch`](@ref) is cheap to collect
-but costs roughly the same as a [`MarkersMap`](@ref) if every variable
-is materialized anyway. Copy into a [`MarkersMap`](@ref) with
+copy of the [`Bindings`](@ref). Variable values are resolved
+on access — segment vars pay `_seg_value` reconstruction once (memoized
+into the snapshot), so a [`BoundMatch`](@ref) is cheap to collect and
+stays cheaper than a [`MarkersMap`](@ref) when only a few variables are
+materialized. Copy into a [`MarkersMap`](@ref) with
 [`materialize`](@ref).
 
 Returned by [`boundmatches`](@ref) and [`boundmatchall`](@ref) — the
@@ -124,8 +125,13 @@ end
 function _bm_value(m::BoundMatch, vid::Int32)
     b = m.binds
     is_bound_extra(b, vid) && return Const{SymReal}(b.extra[vid])
-    b.seg_op[vid] !== nothing &&
-        return _seg_value(m.subj, m.sty, b.seg_op[vid], b.seq[vid])
+    if b.seg_op[vid] !== nothing
+        v = b.segval[vid]
+        v === nothing && (
+            v = b.segval[vid] = _seg_value(m.sty, b.seg_op[vid], b.seq[vid])
+        )
+        return v
+    end
     is_bound_node(b, vid) || error(lazy"var $vid is not bound")
     return m.subj[b.node[vid]]
 end
