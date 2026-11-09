@@ -20,15 +20,13 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   bound lets the engine specialize on memory layout and cut allocations.
   Enforce at `compile_pattern` with a clear error.
 
-- **Cache `_seg_value` materialization in `SubstitutionView`.** If segment
-  values were cached, views could serve every lookup without allocating —
-  explore whether `MarkersMap` materialization can then be skipped
-  entirely for repeated `eachmatch`-style consumers.
-
 - **`_identity_el` fallback may allocate / is not inferrable.** It returns
   `Any`; only called on segment materialization (cold).
 
-- **Memoize `(pat_node, subj_node) -> outcome`?** Identical pairs recur
+- **Memoize `(pat_node, subj_node) -> outcome`?** (Site-level version
+  exists: `RuleWorkspace.net_cache` memoizes `(net_state, subj_node)`
+  across DiscrimNet evaluations — this item is the *engine-internal*
+  version, still open.) Identical pairs recur
   in two places: sibling positions (shared *subject* nodes — a shared
   subexpr is one IR node, so e.g. `h(f(u), f(u))` vs `h(g(v), g(v))`
   puts `(f(u), g(v))` in both `kids[1]` and `kids[2]`) and across
@@ -96,8 +94,13 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   produced or failed. Revisit if pattern depth or AC-phase structure
   demands it.
 
-- **Optional sequence wildcards (`oa__`/`oa___`, leftover-absorbing
-  `oa_` under A/AC).** Capture-wise a `min = 0` segment; the deltas are
+- **Optional wildcards outside AC/A, plus optional sequences.** Done:
+  optional *slots* under associative/AC heads (MatchPy `oa_` cases
+  ported). Open: optional slots under free (`f`) and comm-only heads
+  (the compile restriction — `SeqCall`/`_step_comm!` already have the
+  consume-or-default machinery, the delta is lifting the gate); and
+  optional sequence wildcards (`oa__`/`oa___`, leftover-absorbing
+  `oa_` under A/AC) — capture-wise a `min = 0` segment; the deltas are
   a spec `default`, a bind-default-on-empty branch, and
   materialization. Per-case work/perf breakdown:
   `docs/optional-segments.md`.
@@ -116,43 +119,4 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   sign/divisor-literal slice — it's what makes `x - p` match `x - 2`.
   Skipped cases live in `test/sympy/match.jl`.
 
-- **First/all occurrences of a pattern *within* a subject (§4's
-  `eachmatch_at` seam).** Subsumed by `REWRITING.md` §4–6 — the
-  RuleWorkspace engine-reset protocol and the Phase-2 net evaluation
-  are this machinery; milestone 4 exposes it as the public API. Kept
-  here for the semantic decisions still open below.
-
-  "Where does `p` match inside `s`?" is the
-  common rewriter query — today it means descending the subject and
-  calling `match` at every node, paying full `MatchEngine` setup
-  (bindings, frame stack, pool) per attempt. A dedicated design should
-  beat naive descend-and-match on several fronts:
-
-  - **Compiled prefilter.** The pattern root's head, arity bounds, and
-    literal structure are known at compile time — most subject nodes
-    can be rejected by a cheap discriminator without entering the
-    engine at all.
-  - **DAG dedup.** Subject IR is interned — each root attempt starts
-    from empty bindings, so `(root_plan, subj_node) -> results` is
-    memoizable per node. Naive descent pays per *occurrence*; the
-    specialized version pays per *node*. (Same key shape as the
-    memoization item above, but safe by construction at root
-    attempts — no live bindings to key on.)
-  - **Engine reuse.** One `MatchEngine` (or its buffers) reset per
-    candidate node instead of allocating fresh per attempt.
-  - **Bottom-up marking (further out).** Propagating "which pattern
-    nodes can this subject node match" up the subject DAG —
-    tree-automaton style — would make occurrence search O(|subj
-    nodes|) instead of per-node engine runs.
-
-  Semantics to fix first: traversal order for "first" (preorder DFS?
-  leftmost-outermost like rewriting systems?), whether nested matches
-  inside a matched subtree are reported, and result shape (nodes vs
-  substitution maps).
-
 ## Tests
-
-- Port MatchPy's one_to_one tests into `test/matchpy/` as oracles.
-  (`test/fuzz/` exists — the naive oracle in `test/oracle.jl` +
-  `crosscheck.jl`/`generator.jl` cross-validate `matchall` result
-  multisets on fixed and generated cases.)
