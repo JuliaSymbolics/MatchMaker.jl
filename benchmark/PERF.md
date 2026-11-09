@@ -58,6 +58,29 @@ persists across fixpoint iterations and DAG-shared subterms evaluate
 once, which is what the incremental fixpoint (dirty propagation, §7)
 stands on.
 
+### DiscrimNet at scale (`discrimnet` group)
+
+48-rule set: 40 literal-distinguished rules (`h(a,k)`, `h(k,b)`,
+`sin(k)`, `g(k,b)` for k=1..10) plus 8 general rules — the shape a real
+simplifier has (many specialized rules + few general ones). The
+bucket's `(op, arity)` filter cannot separate rules differing only in
+literals, so every candidate pays `reset!`+`next_match!`; the net's
+literal edges prune before engines run:
+
+| case | BucketIndex | DiscrimNet | ratio |
+|---|---|---|---|
+| site: `ws(h(x,7))` | 750 ns / 112 B | **83 ns / 80 B** | **~9×** |
+| walk: ~60-node subject | 38.0 μs / 16.7 KiB | **27.0 μs / 13.0 KiB** | **~1.4×** |
+| fixpoint (repeated subterms) | 31.0 μs / 13.1 KiB | **20.1 μs / 11.9 KiB** | **~1.5×** |
+
+- The site case is the mechanism exposed: ~10 `h`-2-ary rules survive
+  the bucket → ~10 engine runs failing on the literal child; the net
+  keeps ~2 survivors.
+- The walk compounds the per-site win across every node.
+- Fixpoint gains twice over: the site win plus `net_cache` persistence
+  across iterations — a subject whose subterms are unchanged re-evaluates
+  only newly created nodes.
+
 ## Engine vs naive oracle (`matchall` workloads)
 
 | workload | engine | oracle | ratio |
