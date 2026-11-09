@@ -327,6 +327,16 @@ end
 ### DiscrimNet (§5, Phase 2)
 ###
 
+# (op, arity) key for deterministic call-head edges. `isequal`/`hash`
+# make it a `Dict` key; ops are interned so `===` suffices.
+struct NetOp
+    op::Any
+    arity::Int
+end
+
+Base.isequal(a::NetOp, b::NetOp) = a.op === b.op && a.arity == b.arity
+Base.hash(k::NetOp, h::UInt) = hash(k.arity, hash(k.op, h))
+
 # One deferred-subtree edge: `SeqCall`/`CommCall`/`ACCall` confirm
 # `iscall` + `op` (`nothing` = head-marker, any op) + `lo <= arity <=
 # hi`, then the engine does the real match under that head.
@@ -353,7 +363,7 @@ shared by all patterns whose preorder label prefixes reach it.
 - `finals`: rule ids whose label sequence ends here.
 """
 mutable struct NetState
-    ops::Dict{Tuple{Any, Int}, Int32}
+    ops::Dict{NetOp, Int32}
     opwilds::Dict{Int, Int32}
     lits::Dict{BasicSymbolic{SymReal}, Int32}
     defers::Vector{NetDefer}
@@ -362,7 +372,7 @@ mutable struct NetState
 end
 
 NetState() = NetState(
-    Dict{Tuple{Any, Int}, Int32}(), Dict{Int, Int32}(),
+    Dict{NetOp, Int32}(), Dict{Int, Int32}(),
     Dict{BasicSymbolic{SymReal}, Int32}(),
     NetDefer[], Int32(0), SmallV{Int32}()
 )
@@ -417,7 +427,8 @@ function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
         NodePlan.Call(; op, head, children) => begin
             σ = head != 0 && is_marker_term(op) ?
                 _net_next!(net, net.states[σ].opwilds, length(children)) :
-                _net_next!(net, net.states[σ].ops, (op, length(children)))
+                _net_next!(net, net.states[σ].ops,
+                    NetOp(op, length(children)))
             for c in children
                 σ = _net_insert!(net, pat, c, σ)
             end
@@ -611,21 +622,18 @@ function _net_go(
         op = operation(t)
         argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
         arity = length(nbs) - argstart + 1
-        for ((o, k), σ2) in st.ops
-            (o === op && k == arity) || continue
-            _net_descend!(out, net, ws, σ2, nbs, argstart)
-        end
-        for (k, σ2) in st.opwilds
-            k == arity && _net_descend!(out, net, ws, σ2, nbs, argstart)
-        end
+        # the subject fixes the exact keys — direct gets, not edge scans
+        σ2 = get(st.ops, NetOp(op, arity), Int32(0))
+        σ2 != 0 && _net_descend!(out, net, ws, σ2, nbs, argstart)
+        σ2 = get(st.opwilds, arity, Int32(0))
+        σ2 != 0 && _net_descend!(out, net, ws, σ2, nbs, argstart)
         for d in st.defers
             (d.op === nothing || d.op === op) && d.lo <= arity <= d.hi &&
                 push!(out, d.next)
         end
     else
-        for (e, σ2) in st.lits
-            isequal(t, e)::Bool && push!(out, σ2)
-        end
+        σ2 = get(st.lits, t, Int32(0))
+        σ2 != 0 && push!(out, σ2)
     end
     st.wild != 0 && push!(out, st.wild)
     return ws.net_cache[key] = out
