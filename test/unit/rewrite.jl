@@ -197,7 +197,7 @@ end
         mmrule(CS(3) => CS(4)),
     ]
     rs_b = compile_rules(rules)
-    rs_n = compile_rules(rules; index = DiscrimNet)
+    rs_n = compile_rules(rules, DiscrimNet)
     @test rs_n.index isa DiscrimNet
 
     ws_b = RuleWorkspace(rs_b)
@@ -239,7 +239,7 @@ end
         mmrule(sin(slot(a)) => slot(a))]))
     ws2n = RuleWorkspace(compile_rules(CompiledRule[
         mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-        mmrule(sin(slot(a)) => slot(a))]; index = DiscrimNet))
+        mmrule(sin(slot(a)) => slot(a))], DiscrimNet))
     @test isequal(
         fixpoint_rewrite(ws2b, h(sin(x + y), sin(p + q))),
         fixpoint_rewrite(ws2n, h(sin(x + y), sin(p + q))))
@@ -247,7 +247,7 @@ end
     # net_cache: a DAG-shared subterm evaluates once — h(x+y, x+y)
     # visits the same interned node from two trie states' descents
     ws3 = RuleWorkspace(compile_rules(CompiledRule[
-        mmrule(h(slot(a), slot(a)) => slot(a))]; index = DiscrimNet))
+        mmrule(h(slot(a), slot(a)) => slot(a))], DiscrimNet))
     ws3(h(x + y, x + y))
     @test length(ws3.net_cache) > 0
     nbefore = length(ws3.net_cache)
@@ -306,7 +306,7 @@ end
         end
         isempty(rules) && continue
         rs_b = compile_rules(rules)
-        rs_n = compile_rules(rules; index = DiscrimNet)
+        rs_n = compile_rules(rules, DiscrimNet)
         ws_b, ws_n = RuleWorkspace(rs_b), RuleWorkspace(rs_n)
         for _ in 1:8
             t = rand_term(rng, 3)

@@ -469,9 +469,9 @@ const RW_SU_FP = Fixpoint(Postwalk(Chain([
     (@rule sin(~a) => ~a),
 ])))
 # Phase-2: the same workloads through the DiscrimNet index
-const RW_WS_NET = RuleWorkspace(compile_rules(RW_MM_RULES; index = DiscrimNet))
+const RW_WS_NET = RuleWorkspace(compile_rules(RW_MM_RULES, DiscrimNet))
 const RW_WS_NET_FP =
-    RuleWorkspace(compile_rules(RW_MM_FP_RULES; index = DiscrimNet))
+    RuleWorkspace(compile_rules(RW_MM_FP_RULES, DiscrimNet))
 
 SUITE["rewrite"] = BenchmarkGroup()
 SUITE["rewrite"]["site: mm ws(x)"] =
@@ -524,9 +524,9 @@ const DN_MM_RULES = CompiledRule[
     mmrule(h(slot(a), sin(slot(b))) => slot(a)),
 ]
 const DN_WS_B = RuleWorkspace(compile_rules(DN_MM_RULES))
-const DN_WS_N = RuleWorkspace(compile_rules(DN_MM_RULES; index = DiscrimNet))
+const DN_WS_N = RuleWorkspace(compile_rules(DN_MM_RULES, DiscrimNet))
 const DN_WS_B2 = RuleWorkspace(compile_rules(DN_MM_RULES))
-const DN_WS_N2 = RuleWorkspace(compile_rules(DN_MM_RULES; index = DiscrimNet))
+const DN_WS_N2 = RuleWorkspace(compile_rules(DN_MM_RULES, DiscrimNet))
 
 # single site: h(x,7) — bucket: ~10 same-op candidates pay engine runs;
 # net: literal edge prunes to ~2

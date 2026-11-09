@@ -493,14 +493,14 @@ end
 
 Compile a collection of [`CompiledRule`](@ref)s (from [`mmrule`](@ref))
 into a [`RuleSet`](@ref) — builds the dispatch index once, shareable
-globally. `index` selects the [`RuleIndex`](@ref) implementation:
-[`BucketIndex`](@ref) (default, Phase 1) or [`DiscrimNet`](@ref)
-(Phase 2).
+globally. The optional second argument selects the [`RuleIndex`](@ref)
+implementation: [`BucketIndex`](@ref) (default, Phase 1) or
+[`DiscrimNet`](@ref) (Phase 2).
 """
 function compile_rules(
-        rules::AbstractVector{CompiledRule};
-        index::Type{I} = BucketIndex,
-    ) where {I <: RuleIndex}
+        rules::AbstractVector{CompiledRule},
+        ::Type{index} = BucketIndex,
+    ) where {index <: RuleIndex}
     rs = collect(CompiledRule, rules)
     return RuleSet(rs, _make_index(index, rs))
 end
