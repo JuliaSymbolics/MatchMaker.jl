@@ -14,26 +14,26 @@ ReadOnlyArrays = "988b38a3-91fc-5605-94a2-ee2116b3bd83"
 SymbolicUtils = "d1185830-fcd6-423d-90d6-eec64667417b"
 TermInterface = "8ea1fca8-c5ef-4a55-8b96-4e9afe9c9a3c"
 
-
 [compat]
-Preferences = "1"
-SciMLTesting = "2.4"
 DocStringExtensions = "0.9"
 EnumX = "1.0.7"
 FunctionWrappers = "1.1"
 Graphs = "1.13.4"
 Moshi = "0.3.6 - 0.3.9, 0.3.13"
+Preferences = "1"
 ReadOnlyArrays = "0.2"
 SafeTestsets = "0.1"
+SciMLTesting = "2.4"
 SymbolicUtils = "4.53"
 TermInterface = "2.0"
 Test = "1"
 julia = "1.10"
 
 [extras]
-SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SafeTestsets = "1bc83da4-3b8d-516f-aca4-4fe02f6d838f"
+SciMLTesting = "09d9d899-5365-40a9-917a-5f67fddea283"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["SciMLTesting", "SafeTestsets", "Test"]
+test = ["SciMLTesting", "SafeTestsets", "Test", "Random"]
