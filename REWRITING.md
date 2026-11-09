@@ -185,7 +185,8 @@ immutable in `RuleSet`. Concretely: one subject `IRStructure`
 populated once per application site and shared by every rule engine;
 a lazily-created `MatchEngine` per rule id (`reset!` between sites,
 not re-allocated); and `net_cache`, used only by Phase 2 — a memo
-`(net_state_id, subj_node) → surviving rule ids`. Because subject IR
+`(net_state_id, subj_node) → next-state set` (survivors =
+the union of `finals` over returned states at the root). Because subject IR
 nodes are interned, a DAG-shared subterm evaluates the net once per
 state instead of once per occurrence — and because entries are pure
 functions of structure it also persists across fixpoint iterations
@@ -289,8 +290,9 @@ A shared trie over `(rule, pattern_node)` frontier states:
 - **Transitions** keyed by subject-node features: `(variant, op,
   arity-class)`, `literal`, wildcard-catch-all (slot edges record
   `vid → node` captures into the frontier).
-- **Memoization**: `(state, node)` → surviving rule set in
-  `ws.net_cache`. Subject IR interning means DAG-shared subterms
+- **Memoization**: `(state, node)` → next-state set in
+  `ws.net_cache` (survivors = `finals` of states returned by the
+  root evaluation). Subject IR interning means DAG-shared subterms
   evaluate once — this is the `eachmatch_at` item's "DAG dedup" and
   "bottom-up marking" folded into the net evaluation.
 - **AC/segment/optional subtrees**: the net confirms *deterministic

@@ -323,27 +323,133 @@ function _build_index(rules::Vector{CompiledRule})
     return idx
 end
 
-# Append candidate rule ids for subject `x`: root-head bucket ∪ spills,
-# arity-filtered. `buf` is caller-owned scratch.
-function lookup!(
-        idx::BucketIndex, buf::SmallV{Int32}, x::BasicSymbolic{SymReal}
-    )
-    empty!(buf)
-    n = iscall(x) ? length(arguments(x)) : 0
-    if iscall(x)
-        ids = get(idx.by_op, operation(x), _NO_RULES)
-        for id in ids
-            (lo, hi) = idx.arity[id]
-            lo <= n <= hi && push!(buf, id)
+###
+### DiscrimNet (§5, Phase 2)
+###
+
+"""
+    NetState
+
+One trie node of a [`DiscrimNet`](@ref) — the continuation frontier
+shared by all patterns whose preorder label prefixes reach it.
+
+- `ops`: `(op, arity)` → next — deterministic call-head transition.
+- `opwilds`: `arity` → next — head-marker call (`slot(f)(…)`) — any op.
+- `lits`: literal leaf expr → next.
+- `defers`: `(op, lo, hi, next)` tuples — `SeqCall`/`CommCall`/`ACCall`
+  subtrees confirm `iscall` + `op` (`nothing` = head-marker, any op) +
+  arity bounds, then hand the whole subtree to the engine.
+- `wild`: slot transition — fires on any subject node (`0` = none).
+- `finals`: rule ids whose label sequence ends here.
+"""
+mutable struct NetState
+    ops::Dict{Tuple{Any, Int}, Int32}
+    opwilds::Dict{Int, Int32}
+    lits::Dict{BasicSymbolic{SymReal}, Int32}
+    defers::Vector{Tuple{Any, Int, Int, Int32}}
+    wild::Int32
+    finals::SmallV{Int32}
+end
+
+NetState() = NetState(
+    Dict{Tuple{Any, Int}, Int32}(), Dict{Int, Int32}(),
+    Dict{BasicSymbolic{SymReal}, Int32}(),
+    Tuple{Any, Int, Int, Int32}[], Int32(0), SmallV{Int32}()
+)
+
+"""
+    DiscrimNet <: RuleIndex
+
+Phase-2 index (REWRITING.md §5): a trie over every pattern's *preorder
+obligation sequence*. `Call` children descend positionally; slot
+obligations are wildcard edges (predicates, `want_type`s and
+non-linearity are left to the engine — the net over-approximates
+survivors); `SeqCall`/`CommCall`/`ACCall` subtrees only confirm
+deterministic structure (op + arity bounds) and defer to the engine —
+`optional`/`segment` labels never reach the net.
+
+Evaluation is NFA simulation over `ws.subj`, memoized per
+`(state, subj_node)` in `ws.net_cache`: subject-IR interning makes a
+DAG-shared subterm evaluate once, and fixpoint iterations re-evaluate
+only newly created nodes.
+"""
+struct DiscrimNet <: RuleIndex
+    states::Vector{NetState}
+end
+
+DiscrimNet() = DiscrimNet(NetState[NetState()])
+
+# Allocate a state and return its id.
+function _net_new!(net::DiscrimNet)
+    push!(net.states, NetState())
+    return Int32(length(net.states))
+end
+
+# Edge `key` out of `d` (a per-state transition map), creating the
+# target on demand.
+function _net_next!(net::DiscrimNet, d::Dict{K, Int32}, key::K) where {K}
+    return get!(() -> _net_new!(net), d, key)
+end
+
+# Insert pattern node `i`'s obligations starting at state `σ`; returns
+# the state where the node's continuation begins (for `Call`, after all
+# children are consumed).
+function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
+    plan = pat.plans[i]
+    return @match plan begin
+        NodePlan.Literal() =>
+            _net_next!(net, net.states[σ].lits, pat.ir[i])
+        NodePlan.Slot(;) => begin
+            st = net.states[σ]
+            st.wild == 0 && (st.wild = _net_new!(net))
+            st.wild
         end
-    else
-        append!(buf, idx.leaf_rules)
+        NodePlan.Call(; op, head, children) => begin
+            σ = head != 0 && is_marker_term(op) ?
+                _net_next!(net, net.states[σ].opwilds, length(children)) :
+                _net_next!(net, net.states[σ].ops, (op, length(children)))
+            for c in children
+                σ = _net_insert!(net, pat, c, σ)
+            end
+            σ
+        end
+        NodePlan.SeqCall(; op, head) =>
+            _net_defer!(net, σ, pat, plan, op, head)
+        NodePlan.CommCall(; op, head) =>
+            _net_defer!(net, σ, pat, plan, op, head)
+        NodePlan.ACCall(; op, head) =>
+            _net_defer!(net, σ, pat, plan, op, head)
+        NodePlan.Segment(;) =>
+            error("unreachable: segment obligation reached the discrim net")
     end
-    for id in idx.any_head
-        (lo, hi) = idx.arity[id]
-        lo <= n <= hi && push!(buf, id)
+end
+
+# Defer edge: deterministic confirm = `iscall` + op (head-marker →
+# `nothing` = any op) + subject-arity bounds from `_root_arity`.
+# Identical edges out of `σ` share the target.
+function _net_defer!(
+        net::DiscrimNet, σ::Int32, pat::Matcher,
+        plan::NodePlanT, @nospecialize(op), head::Int32
+    )
+    (lo, hi) = _root_arity(pat, plan)
+    o = op isa BasicSymbolic{SymReal} && is_marker_term(op) ? nothing : op
+    ds = net.states[σ].defers
+    for d in ds
+        d[1] === o && d[2] == lo && d[3] == hi && return d[4]
     end
-    return buf
+    σ2 = _net_new!(net)
+    push!(ds, (o, lo, hi, σ2))
+    return σ2
+end
+
+function _build_net(rules::Vector{CompiledRule})
+    net = DiscrimNet()
+    for rid in Int32(1):Int32(length(rules))
+        pat = rules[rid].pat
+        σ = _net_insert!(net, pat, pat.root, Int32(1))
+        push!(net.states[σ].finals, rid)
+    end
+    return net
 end
 
 """
@@ -365,13 +471,21 @@ end
     $TYPEDSIGNATURES
 
 Compile a collection of [`CompiledRule`](@ref)s (from [`mmrule`](@ref))
-into a [`RuleSet`](@ref) — builds the `BucketIndex` once, shareable
-globally.
+into a [`RuleSet`](@ref) — builds the dispatch index once, shareable
+globally. `index` selects the [`RuleIndex`](@ref) implementation:
+[`BucketIndex`](@ref) (default, Phase 1) or [`DiscrimNet`](@ref)
+(Phase 2).
 """
-function compile_rules(rules::AbstractVector{CompiledRule})
+function compile_rules(
+        rules::AbstractVector{CompiledRule};
+        index::Type{<:RuleIndex} = BucketIndex,
+    )
     rs = collect(CompiledRule, rules)
-    return RuleSet(rs, _build_index(rs))
+    return RuleSet(rs, _make_index(index, rs))
 end
+
+_make_index(::Type{BucketIndex}, rs) = _build_index(rs)
+_make_index(::Type{DiscrimNet}, rs) = _build_net(rs)
 
 ###
 ### RuleWorkspace (§4)
@@ -403,7 +517,7 @@ mutable struct RuleWorkspace
     engines::Vector{Union{Nothing, MatchEngine}}
     "Candidate buffer for `lookup!`."
     candbuf::SmallV{Int32}
-    "Phase-2 memo: (net_state, subj_node) -> surviving rule ids (§7 —
+    "Phase-2 memo: (net_state, subj_node) -> next-state set (§7 —
     persists across iterations; unused under `BucketIndex`)."
     net_cache::Dict{Tuple{Int32, Int32}, SmallV{Int32}}
 end
@@ -415,6 +529,111 @@ function RuleWorkspace(rs::RuleSet; maxsteps::Int = typemax(Int))
         SmallV{Int32}(), Dict{Tuple{Int32, Int32}, SmallV{Int32}}()
     )
 end
+
+# Append candidate rule ids for subject `x` (`sroot` is its node in
+# `ws.subj`): root-head bucket ∪ spills, arity-filtered. `buf` is
+# caller-owned scratch.
+function lookup!(
+        idx::BucketIndex, buf::SmallV{Int32}, ws::RuleWorkspace,
+        x::BasicSymbolic{SymReal}, sroot::Int32
+    )
+    empty!(buf)
+    n = iscall(x) ? length(arguments(x)) : 0
+    if iscall(x)
+        ids = get(idx.by_op, operation(x), _NO_RULES)
+        for id in ids
+            (lo, hi) = idx.arity[id]
+            lo <= n <= hi && push!(buf, id)
+        end
+    else
+        append!(buf, idx.leaf_rules)
+    end
+    for id in idx.any_head
+        (lo, hi) = idx.arity[id]
+        lo <= n <= hi && push!(buf, id)
+    end
+    # buckets append by kind — restore declaration order for apply
+    sort!(buf)
+    return buf
+end
+
+###
+### Net evaluation — go(σ, s) = NFA states after consuming subject node s
+###
+
+# Fold `s`'s call children through `go` starting from `σ`: the Op/
+# OpWild head transition consumed `s`; each child subtree advances the
+# frontier one label.
+function _net_descend!(
+        out::SmallV{Int32}, net::DiscrimNet, ws::RuleWorkspace,
+        σ::Int32, nbs, argstart::Int
+    )
+    states = SmallV{Int32}()
+    push!(states, σ)
+    for j in argstart:length(nbs)
+        isempty(states) && return out
+        next = SmallV{Int32}()
+        for σc in states
+            for σn in _net_go(net, ws, σc, nbs[j])
+                σn in next || push!(next, σn)
+            end
+        end
+        states = next
+    end
+    for σn in states
+        σn in out || push!(out, σn)
+    end
+    return out
+end
+
+function _net_go(
+        net::DiscrimNet, ws::RuleWorkspace, σ::Int32, s::Int32
+    )
+    key = (σ, s)
+    cached = get(ws.net_cache, key, nothing)
+    cached !== nothing && return cached
+    subj = ws.subj
+    t = subj[s]
+    st = net.states[σ]
+    out = SmallV{Int32}()
+    if iscall(t)
+        nbs = Graphs.outneighbors(subj.dependency_graph, s)
+        op = operation(t)
+        argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
+        arity = length(nbs) - argstart + 1
+        for ((o, k), σ2) in st.ops
+            (o === op && k == arity) || continue
+            _net_descend!(out, net, ws, σ2, nbs, argstart)
+        end
+        for (k, σ2) in st.opwilds
+            k == arity && _net_descend!(out, net, ws, σ2, nbs, argstart)
+        end
+        for (o, lo, hi, σ2) in st.defers
+            (o === nothing || o === op) && lo <= arity <= hi &&
+                push!(out, σ2)
+        end
+    else
+        for (e, σ2) in st.lits
+            isequal(t, e)::Bool && push!(out, σ2)
+        end
+    end
+    st.wild != 0 && push!(out, st.wild)
+    return ws.net_cache[key] = out
+end
+
+function lookup!(
+        idx::DiscrimNet, buf::SmallV{Int32}, ws::RuleWorkspace,
+        x::BasicSymbolic{SymReal}, sroot::Int32
+    )
+    empty!(buf)
+    for σ in _net_go(idx, ws, Int32(1), sroot)
+        append!(buf, idx.states[σ].finals)
+    end
+    # finals are disjoint across states; declaration order for apply
+    sort!(buf)
+    return buf
+end
+
 
 # Lazily create / reset the engine for rule `id` at `sroot`.
 function _engine_for!(ws::RuleWorkspace, id::Int32, sroot::Int32)
@@ -450,7 +669,7 @@ function _apply_site!(
         ws::RuleWorkspace, x::BasicSymbolic{SymReal}, sroot::Int32
     )
     rs = ws.set
-    ids = lookup!(rs.index, ws.candbuf, x)
+    ids = lookup!(rs.index, ws.candbuf, ws, x, sroot)
     isempty(ids) && return nothing
     @inbounds for i in eachindex(ids)
         id = ids[i]

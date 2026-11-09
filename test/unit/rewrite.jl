@@ -1,7 +1,7 @@
 using Test
 using MatchMaker
 using SymbolicUtils
-using SymbolicUtils: Sym, SymReal, FnType
+using SymbolicUtils: Sym, SymReal, FnType, BasicSymbolic, issym
 import SymbolicUtils.Rewriters
 using SymbolicUtils.Rewriters:
     Chain, RestartedChain, IfElse, Postwalk, Prewalk, Fixpoint, Empty
@@ -90,17 +90,19 @@ end
     @test length(idx.leaf_rules) == 1            # literal rule
 
     buf = SymbolicUtils.SmallV{Int32}()
-    MatchMaker.lookup!(idx, buf, x + y)
+    ws = RuleWorkspace(rs)
+    sr(t) = populate_ir!(ws.subj, t)
+    MatchMaker.lookup!(idx, buf, ws, x + y, sr(x + y))
     @test Set(collect(buf)) == Set(Int32[1, 3])  # + bucket + any_head
-    MatchMaker.lookup!(idx, buf, x * y)
+    MatchMaker.lookup!(idx, buf, ws, x * y, sr(x * y))
     @test Set(collect(buf)) == Set(Int32[2, 3])  # * bucket + any_head
-    MatchMaker.lookup!(idx, buf, CS(3))
+    MatchMaker.lookup!(idx, buf, ws, CS(3), sr(CS(3)))
     @test Set(collect(buf)) == Set(Int32[3, 4])  # leaf + any_head
 
     # arity filters candidates: a+b needs exactly 2 args
-    MatchMaker.lookup!(idx, buf, x + y + z)
+    MatchMaker.lookup!(idx, buf, ws, x + y + z, sr(x + y + z))
     @test collect(buf) == Int32[3]               # only any_head survives
-    MatchMaker.lookup!(idx, buf, x * y * z)
+    MatchMaker.lookup!(idx, buf, ws, x * y * z, sr(x * y * z))
     @test collect(buf) == Int32[3]               # a*b is 2-factor — filtered
 
     # head-slot pattern lands in any_head
@@ -174,4 +176,150 @@ end
     @test Rewriters.If(v -> iscall(v), ws)(x) === nothing
     # Empty never fires
     @test Empty()(x + y) === nothing
+end
+
+@testset "discrim net" begin
+    @syms x y z a b s t w p q c
+    h = Sym{SymReal}(:h; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    fh = Sym{SymReal}(:fh; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+
+    rules = CompiledRule[
+        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+        mmrule(segment(s) + slot(t) => segment(s)),
+        mmrule(slot(a) * CS(2) => slot(a) + slot(a)),
+        mmrule(CS(1) + slot(a) => slot(a)),
+        mmrule(h(slot(a), slot(b)) => slot(a)),
+        mmrule(h(slot(a), CS(1)) => CS(0)),
+        mmrule(sin(slot(a)) => slot(a)),
+        mmrule(slot(fh)(slot(a), slot(b)) => slot(a);
+            vars = Dict(fh => slotspec())),
+        mmrule(slot(a) * CS(1) => slot(a)),   # a*1 canonicalizes → bare slot
+        mmrule(CS(3) => CS(4)),
+    ]
+    rs_b = compile_rules(rules)
+    rs_n = compile_rules(rules; index = DiscrimNet)
+    @test rs_n.index isa DiscrimNet
+
+    ws_b = RuleWorkspace(rs_b)
+    ws_n = RuleWorkspace(rs_n)
+    buf = SymbolicUtils.SmallV{Int32}()
+    surv(ws, t) = begin
+        sr = populate_ir!(ws.subj, t)
+        MatchMaker.lookup!(ws.set.index, buf, ws, t, sr)
+        collect(buf)
+    end
+
+    # net is stricter than the root-only bucket check, never looser —
+    # and both agree on what apply produces
+    terms = [x + y, x + y + z, x * y, 2x * y, h(x, y), h(x, CS(1)),
+        sin(x), fh(x, y), CS(3), x, CS(1) + x, CS(3) * y]
+    for t in terms
+        sb, sn = surv(ws_b, t), surv(ws_n, t)
+        @test issorted(sn)
+        @test sn ⊆ sb
+        rb, rn = ws_b(t), ws_n(t)
+        @test isequal(something(rb, t), something(rn, t))
+    end
+
+    # net confirms deterministic structure the bucket can't see:
+    # literal children and leaf literals prune candidates
+    @test surv(ws_n, h(x, y)) == [5, 8, 9]  # head-slot + bare slot ok,
+    @test 6 ∉ surv(ws_n, h(x, y))           # but h(a,1) rejected at child
+    @test 10 ∉ surv(ws_n, x)                # literal 3 vs leaf x
+
+    # declaration order preserved across index kinds on a leaf:
+    # `a*1` (canonicalized to a bare slot) applies before `3→4`
+    @test isequal(ws_n(CS(3)), CS(3)) && isequal(ws_b(CS(3)), CS(3))
+
+    # rewrite + fixpoint parity
+    sub = h(sin(x + y), p * q) + cos(w) * (a + b + c) + sin(p + q)
+    @test isequal(rewrite(ws_b, sub), rewrite(ws_n, sub))
+    ws2b = RuleWorkspace(compile_rules(CompiledRule[
+        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+        mmrule(sin(slot(a)) => slot(a))]))
+    ws2n = RuleWorkspace(compile_rules(CompiledRule[
+        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+        mmrule(sin(slot(a)) => slot(a))]; index = DiscrimNet))
+    @test isequal(
+        fixpoint_rewrite(ws2b, h(sin(x + y), sin(p + q))),
+        fixpoint_rewrite(ws2n, h(sin(x + y), sin(p + q))))
+
+    # net_cache: a DAG-shared subterm evaluates once — h(x+y, x+y)
+    # visits the same interned node from two trie states' descents
+    ws3 = RuleWorkspace(compile_rules(CompiledRule[
+        mmrule(h(slot(a), slot(a)) => slot(a))]; index = DiscrimNet))
+    ws3(h(x + y, x + y))
+    @test length(ws3.net_cache) > 0
+    nbefore = length(ws3.net_cache)
+    ws3(h(x + y, x + y))
+    @test length(ws3.net_cache) == nbefore   # all memo hits
+end
+
+@testset "discrim net fuzz oracle" begin
+    # REWRITING.md §9 milestone-3 oracle: net survivors ⊆ bucket
+    # survivors (the net is strictly deeper), and `ws` apply results
+    # identical, over randomized rule sets.
+    @syms x y z a b s t w p q c u v
+    using Random: Xoshiro
+    h = Sym{SymReal}(:h; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    g = Sym{SymReal}(:g; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    ATOMS = BasicSymbolic{SymReal}[x, y, z, CS(0), CS(1), CS(2), CS(3)]
+    SLOTS = (a, b, c)
+    HEADS = (+, *, h, g, sin, cos)
+    subj_atoms = BasicSymbolic{SymReal}[x, y, z, CS(0), CS(1), CS(2), CS(3)]
+
+    nargs(rng, op) = op === sin || op === cos ? 1 : rand(rng, 1:3)
+    function rand_term(rng, depth)
+        (depth <= 0 || rand(rng) < 0.3) && return rand(rng, subj_atoms)
+        op = rand(rng, HEADS)
+        args = BasicSymbolic{SymReal}[rand_term(rng, depth - 1)
+                                    for _ in 1:nargs(rng, op)]
+        return op === (+) ? SymbolicUtils.add_worker(SymReal, args) :
+            op === (*) ? SymbolicUtils.mul_worker(SymReal, args) : op(args...)
+    end
+    function rand_pat(rng, depth, vars)
+        r = rand(rng)
+        if depth <= 0 || r < 0.35
+            return rand(rng, ATOMS)
+        elseif r < 0.65
+            vs = rand(rng, SLOTS)
+            vars[vs] = get!(vars, vs, VarSpec.Slot(nothing, nothing))
+            return slot(vs)
+        else
+            op = rand(rng, HEADS)
+            args = BasicSymbolic{SymReal}[rand_pat(rng, depth - 1, vars)
+                                          for _ in 1:nargs(rng, op)]
+            return op === (+) ? +(args...) :
+                op === (*) ? *(args...) : op(args...)
+        end
+    end
+
+    buf = SymbolicUtils.SmallV{Int32}()
+    for seed in 1:25
+        rng = Xoshiro(seed)
+        rules = CompiledRule[]
+        for _ in 1:6
+            vars = Dict{BasicSymbolic{SymReal}, VarSpec.Type}()
+            pat = rand_pat(rng, 3, vars)
+            iscall(pat) || issym(pat) || continue
+            push!(rules, mmrule(pat => pat; vars))
+        end
+        isempty(rules) && continue
+        rs_b = compile_rules(rules)
+        rs_n = compile_rules(rules; index = DiscrimNet)
+        ws_b, ws_n = RuleWorkspace(rs_b), RuleWorkspace(rs_n)
+        for _ in 1:8
+            t = rand_term(rng, 3)
+            sr_b = populate_ir!(ws_b.subj, t)
+            MatchMaker.lookup!(rs_b.index, buf, ws_b, t, sr_b)
+            sb = collect(buf)
+            sr_n = populate_ir!(ws_n.subj, t)
+            MatchMaker.lookup!(rs_n.index, buf, ws_n, t, sr_n)
+            sn = collect(buf)
+            @test issorted(sn)
+            @test sn ⊆ sb
+            rb, rn = ws_b(t), ws_n(t)
+            @test isequal(something(rb, t), something(rn, t))
+        end
+    end
 end
