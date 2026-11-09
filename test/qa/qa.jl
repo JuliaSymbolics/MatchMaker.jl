@@ -54,3 +54,7 @@ run_qa(
     ),
     reexports_allow = REEXPORTED_API,
 )
+
+# Per-signature JET coverage — run_qa's jet check is whole-package
+# (`mode = :typo`); this file carries the curated call-site list.
+include(joinpath(@__DIR__, "jet.jl"))
