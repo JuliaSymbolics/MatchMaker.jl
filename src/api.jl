@@ -339,3 +339,70 @@ function eachmatch_at(
 end
 eachmatch_at(f, p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     eachmatch_at(f, compile_pattern(p), s; kwargs...)
+
+"""
+    BoundMatchAtIterator
+
+Lazy iterator over match sites — yields `(BoundMatch, t)` pairs: a
+frozen binding snapshot and the matched subterm, one per
+(pattern-match, node) in postorder. The iterator form of
+[`eachmatch_at`](@ref); `materialize(bm)` a pair's first element for
+a `MarkersMap`.
+"""
+struct BoundMatchAtIterator
+    eng::MatchEngine
+end
+Base.IteratorSize(::Type{BoundMatchAtIterator}) = Base.SizeUnknown()
+
+# Continue the inner enumeration at the bound site, else reset! onward
+# to the next node producing a match; returns the node's index or 0.
+function _next_hit_site!(eng::MatchEngine, j::Int32)
+    subj = eng.subj
+    n = Int32(length(subj))
+    while j <= n
+        reset!(eng, subj, j)
+        next_match!(eng) && return j
+        j += Int32(1)
+    end
+    return Int32(0)
+end
+
+function Base.iterate(it::BoundMatchAtIterator, i::Int32 = Int32(0))
+    eng = it.eng
+    if i == 0
+        i = _next_hit_site!(eng, Int32(1))
+    elseif !next_match!(eng)
+        i = _next_hit_site!(eng, i + Int32(1))
+    end
+    i == 0 && return nothing
+    bm = BoundMatch(
+        eng.pat, eng.subj, symtype(eng.subj[i]),
+        _snapshot_binds(eng.binds)
+    )
+    return ((bm, eng.subj[i]), i)
+end
+
+"""
+    $TYPEDSIGNATURES
+
+Lazy `(BoundMatch, t)` pairs for each match of `m` at each node of
+`s` — the iterator counterpart of [`eachmatch_at`](@ref), in the
+[`boundmatches`](@ref) idiom. Sites deduplicated by `===`-identity.
+"""
+boundmatches_at(
+    m::Matcher, s::BasicSymbolic{SymReal};
+    constraints = Constraint[], maxsteps::Int = typemax(Int)
+) = BoundMatchAtIterator(MatchEngine(m, s, constraints; maxsteps))
+boundmatches_at(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
+    boundmatches_at(compile_pattern(p), s; kwargs...)
+
+"""
+    $TYPEDSIGNATURES
+
+Lazy `(MarkersMap, t)` pairs for each match of `m` at each node of
+`s` — the materializing variant of [`boundmatches_at`](@ref).
+"""
+matches_at(m::Matcher, s::BasicSymbolic{SymReal}; kwargs...) =
+    Iterators.map(t -> (materialize(t[1]), t[2]), boundmatches_at(m, s; kwargs...))
+matches_at(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
+    matches_at(compile_pattern(p), s; kwargs...)

@@ -120,7 +120,7 @@ end
 end
 
 @testset "eachmatch_at" begin
-    @syms x y a b p q
+    @syms x y a b s t p q
     h = Sym{SymReal}(:h; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
     sub = h(x + y, sin(p + q)) + sin(x + y)
 
@@ -171,4 +171,27 @@ end
         # eachmatch enumerates every binding per site — oracle checks sites
         @test isequal(unique(got), naive_sites(pat, sub))
     end
+
+    # iterator API — same hits as the callback form, no closure
+    r = collect(boundmatches_at(sin(slot(a)), sub))
+    @test length(r) == 2
+    @test all(bm isa BoundMatch for (bm, t) in r)
+    @test isequal(r[1][1][a], p + q)
+    @test isequal(r[1][2], sin(p + q))
+    @test isequal(r[2][1][a], x + y)
+
+    r2 = collect(matches_at(sin(slot(a)), sub))
+    @test isequal(
+        r2,
+        [(MarkersMap(a => p + q), sin(p + q)),
+            (MarkersMap(a => x + y), sin(x + y))])
+
+    # laziness: first() pays one site
+    @test isequal(first(boundmatches_at(sin(slot(a)), sub))[2], sin(p + q))
+    # multi-hit per site: AC pattern yields multiple bindings at x+y+p
+    @test length(collect(boundmatches_at(segment(s) + slot(t), x + y + p))) > 1
+    # empty result
+    @test isempty(collect(boundmatches_at(sin(x), sub)))
+    # take() respects laziness across empty nodes
+    @test length(collect(Iterators.take(boundmatches_at(slot(a), sub), 3))) == 3
 end
