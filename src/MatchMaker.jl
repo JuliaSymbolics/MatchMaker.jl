@@ -52,7 +52,7 @@ export slot, segment, optional,
     matches, matchall, boundmatches, boundmatchall, eachmatch,
     instantiate,
     mmrule, CompiledRule, RhsPlan, RhsT,
-    RuleSet, RuleIndex, BucketIndex, RuleWorkspace, compile_rules,
+    RuleSet, RuleIndex, BucketIndex, DiscrimNet, RuleWorkspace, compile_rules,
     rewrite, fixpoint_rewrite,
     FrameStatus,
     @slots, @segments

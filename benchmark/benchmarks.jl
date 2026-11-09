@@ -468,19 +468,88 @@ const RW_SU_FP = Fixpoint(Postwalk(Chain([
     (@rule ~a + ~b => ~a * ~b),
     (@rule sin(~a) => ~a),
 ])))
+# Phase-2: the same workloads through the DiscrimNet index
+const RW_WS_NET = RuleWorkspace(compile_rules(RW_MM_RULES, DiscrimNet))
+const RW_WS_NET_FP =
+    RuleWorkspace(compile_rules(RW_MM_FP_RULES, DiscrimNet))
 
 SUITE["rewrite"] = BenchmarkGroup()
 SUITE["rewrite"]["site: mm ws(x)"] =
     @benchmarkable $RW_WS($sub_rw_site)
+SUITE["rewrite"]["site: mm ws(x) net"] =
+    @benchmarkable $RW_WS_NET($sub_rw_site)
 SUITE["rewrite"]["site: su Chain(x)"] =
     @benchmarkable $RW_SU_CHAIN($sub_rw_site)
 SUITE["rewrite"]["walk: mm rewrite(ws, x)"] =
     @benchmarkable rewrite($RW_WS, $sub_rw)
+SUITE["rewrite"]["walk: mm rewrite(ws, x) net"] =
+    @benchmarkable rewrite($RW_WS_NET, $sub_rw)
 SUITE["rewrite"]["walk: mm Postwalk(ws)(x)"] =
     @benchmarkable ($RW_SU_POST === nothing ? nothing : Postwalk($RW_WS))($sub_rw)
 SUITE["rewrite"]["walk: su Postwalk(Chain)(x)"] =
     @benchmarkable $RW_SU_POST($sub_rw)
 SUITE["rewrite"]["fixp: mm fixpoint_rewrite(ws, x)"] =
     @benchmarkable fixpoint_rewrite($RW_WS_FP, $sub_rw_fp)
+SUITE["rewrite"]["fixp: mm fixpoint net"] =
+    @benchmarkable fixpoint_rewrite($RW_WS_NET_FP, $sub_rw_fp)
 SUITE["rewrite"]["fixp: su Fixpoint∘Postwalk(x)"] =
     @benchmarkable $RW_SU_FP($sub_rw_fp)
+
+# ------------------------------------------------------------------
+# DiscrimNet vs BucketIndex at scale — the cases that exercise the
+# net's leverage: many same-(op,arity) rules distinguished only by
+# literals/deeper structure (each bucket candidate pays an engine
+# reset+match; the net's literal edges prune before engines run),
+# DAG-shared subterms (net_cache dedup), and fixpoint iterations
+# (memo persistence across re-evaluation).
+# ------------------------------------------------------------------
+const CS = Const{SymReal}
+const DN_MM_RULES = CompiledRule[
+    # 40 literal-distinguished rules — bucket can't separate them by
+    # (op, arity); the net's literal edges keep ~1 survivor
+    [mmrule(h(slot(a), CS(k)) => CS(k)) for k in 1:10]...,
+    [mmrule(h(CS(k), slot(b)) => CS(k)) for k in 1:10]...,
+    [mmrule(sin(CS(k)) => CS(k)) for k in 1:10]...,
+    [mmrule(g(CS(k), slot(b)) => slot(b)) for k in 1:10]...,
+    # general rules every matcher has — structural checks only
+    mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+    mmrule(segment(s) + slot(t) => slot(t)),
+    mmrule(slot(a) * CS(1) => slot(a)),
+    mmrule(slot(a) + CS(0) => slot(a)),
+    mmrule(h(slot(a), slot(b)) => slot(a) + slot(b)),
+    mmrule(g(slot(a), slot(b)) => slot(a)),
+    mmrule(g(h(slot(a), slot(b)), slot(c)) => slot(c)),
+    mmrule(sin(slot(a)) => slot(a)),
+    mmrule(h(sin(slot(a)), slot(b)) => slot(b)),
+    mmrule(h(slot(a), sin(slot(b))) => slot(a)),
+]
+const DN_WS_B = RuleWorkspace(compile_rules(DN_MM_RULES))
+const DN_WS_N = RuleWorkspace(compile_rules(DN_MM_RULES, DiscrimNet))
+const DN_WS_B2 = RuleWorkspace(compile_rules(DN_MM_RULES))
+const DN_WS_N2 = RuleWorkspace(compile_rules(DN_MM_RULES, DiscrimNet))
+
+# single site: h(x,7) — bucket: ~10 same-op candidates pay engine runs;
+# net: literal edge prunes to ~2
+sub_dn_site = h(x, CS(7))
+# deep subject ~60 nodes with many literal-bearing call nodes
+sub_dn_walk = h(sin(CS(3)), h(x + y, CS(5))) +
+    g(CS(4), h(p, q)) * (a + b + c) +
+    sin(CS(7)) + g(CS(9), sin(x)) +
+    h(x * y, CS(2)) + h(CS(6), p + q) +
+    g(h(x, y), z) + sin(w + CS(1))
+# fixpoint: convergent pair over a subject with repeated subterms
+sub_dn_fp = h(sin(x + y), sin(p + q)) + sin(CS(3)) + sin(x + y)
+
+SUITE["discrimnet"] = BenchmarkGroup()
+SUITE["discrimnet"]["site: ws(h(x,7)) bucket"] =
+    @benchmarkable $DN_WS_B($sub_dn_site)
+SUITE["discrimnet"]["site: ws(h(x,7)) net"] =
+    @benchmarkable $DN_WS_N($sub_dn_site)
+SUITE["discrimnet"]["walk: rewrite bucket"] =
+    @benchmarkable rewrite($DN_WS_B, $sub_dn_walk)
+SUITE["discrimnet"]["walk: rewrite net"] =
+    @benchmarkable rewrite($DN_WS_N, $sub_dn_walk)
+SUITE["discrimnet"]["fixp: fixpoint bucket"] =
+    @benchmarkable fixpoint_rewrite($DN_WS_B2, $sub_dn_fp)
+SUITE["discrimnet"]["fixp: fixpoint net"] =
+    @benchmarkable fixpoint_rewrite($DN_WS_N2, $sub_dn_fp)
