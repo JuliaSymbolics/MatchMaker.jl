@@ -310,44 +310,17 @@ eachmatch(f, p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     eachmatch(f, compile_pattern(p), s; kwargs...)
 
 """
-    $TYPEDSIGNATURES
-
-Occurrence search — call `f(::SubstitutionView, t)` on each match of `m`
-at each node of `s`, in postorder (bottom-up): the view is the
-[`SubstitutionView`](@ref) for the current match, `t` the subterm of `s`
-at that site. Stop when `f` returns `false`.
-
-The subject is interned once into the engine's shared IR, so a
-structurally shared subterm is one node and yields one hit — sites are
-deduplicated by `===`-identity, not by syntactic position (REWRITING.md
-milestone 4). The view is only valid inside `f` — `materialize` to keep.
-"""
-function eachmatch_at(
-        f::F, m::Matcher, s::BasicSymbolic{SymReal};
-        constraints = Constraint[], maxsteps::Int = typemax(Int)
-    ) where {F}
-    eng = MatchEngine(m, s, constraints; maxsteps)
-    subj = eng.subj
-    for i in Int32(1):Int32(length(subj))
-        reset!(eng, subj, i)
-        t = subj[i]
-        while next_match!(eng)
-            f(SubstitutionView(eng, eng.steps), t) === false && return nothing
-        end
-    end
-    return nothing
-end
-eachmatch_at(f, p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
-    eachmatch_at(f, compile_pattern(p), s; kwargs...)
-
-"""
     BoundMatchAtIterator
 
 Lazy iterator over match sites — yields `(BoundMatch, t)` pairs: a
 frozen binding snapshot and the matched subterm, one per
-(pattern-match, node) in postorder. The iterator form of
-[`eachmatch_at`](@ref); `materialize(bm)` a pair's first element for
-a `MarkersMap`.
+(pattern-match, node) in postorder. `materialize(bm)` a pair's first
+element for a `MarkersMap`.
+
+The subject is interned once into the engine's shared IR, so a
+structurally shared subterm is one node and yields one hit — sites are
+deduplicated by `===`-identity, not by syntactic position (REWRITING.md
+milestone 4).
 """
 struct BoundMatchAtIterator
     eng::MatchEngine
@@ -386,8 +359,8 @@ end
     $TYPEDSIGNATURES
 
 Lazy `(BoundMatch, t)` pairs for each match of `m` at each node of
-`s` — the iterator counterpart of [`eachmatch_at`](@ref), in the
-[`boundmatches`](@ref) idiom. Sites deduplicated by `===`-identity.
+`s` — occurrence search in the [`boundmatches`](@ref) idiom. Sites
+deduplicated by `===`-identity; postorder (bottom-up) traversal.
 """
 boundmatches_at(
     m::Matcher, s::BasicSymbolic{SymReal};

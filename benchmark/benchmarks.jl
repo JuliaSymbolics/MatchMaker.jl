@@ -510,8 +510,8 @@ function _naive_occ(pat, s)
     end
     return n
 end
-SUITE["rewrite"]["occ: eachmatch_at"] =
-    @benchmarkable eachmatch_at((v, t) -> true, $pat_occ, $sub_occ)
+SUITE["rewrite"]["occ: boundmatches_at"] =
+    @benchmarkable foreach(x -> nothing, boundmatches_at($pat_occ, $sub_occ))
 SUITE["rewrite"]["occ: descend+match"] =
     @benchmarkable _naive_occ($pat_occ, $sub_occ)
 

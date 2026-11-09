@@ -33,7 +33,6 @@ _rw_ws = RuleWorkspace(compile_rules(CompiledRule[_rw]))
             (match, Tuple{_BS, _BS}),
             (matchall, Tuple{_BS, _BS}),
             (matches, Tuple{Matcher, _BS}),
-            (eachmatch_at, Tuple{Function, Matcher, _BS}),
             (boundmatches_at, Tuple{Matcher, _BS}),
             (matches_at, Tuple{Matcher, _BS}),
             (MatchMaker._next_hit_site!, Tuple{MatchEngine, Int32}),
