@@ -335,7 +335,7 @@ struct NetOp
 end
 
 Base.isequal(a::NetOp, b::NetOp) = a.op === b.op && a.arity == b.arity
-Base.hash(k::NetOp, h::UInt) = hash(k.arity, hash(k.op, h))
+Base.hash(k::NetOp, h::UInt) = hash(k.arity, hash(k.op, h)::UInt)
 
 # One deferred-subtree edge: `SeqCall`/`CommCall`/`ACCall` confirm
 # `iscall` + `op` (`nothing` = head-marker, any op) + `lo <= arity <=
