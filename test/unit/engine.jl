@@ -148,8 +148,10 @@ end
     function naive_sites(pat, s)
         eng_subj = SymbolicUtils.IRStructure{SymReal}()
         SymbolicUtils.populate_ir!(eng_subj, s)
-        return [eng_subj[i] for i in 1:length(eng_subj)
-                if match(pat, eng_subj[i]) !== nothing]
+        return [
+            eng_subj[i] for i in 1:length(eng_subj)
+                if match(pat, eng_subj[i]) !== nothing
+        ]
     end
     for pat in (sin(slot(a)), slot(a) + slot(b), h(slot(a), slot(b)))
         got = [t for (bm, t) in boundmatches_at(pat, sub)]
@@ -168,8 +170,11 @@ end
     r2 = collect(matches_at(sin(slot(a)), sub))
     @test isequal(
         r2,
-        [(MarkersMap(a => p + q), sin(p + q)),
-            (MarkersMap(a => x + y), sin(x + y))])
+        [
+            (MarkersMap(a => p + q), sin(p + q)),
+            (MarkersMap(a => x + y), sin(x + y)),
+        ]
+    )
 
     # laziness: first() pays one site
     @test isequal(first(boundmatches_at(sin(slot(a)), sub))[2], sin(p + q))

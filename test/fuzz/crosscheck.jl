@@ -17,7 +17,7 @@ function _norm_result(d)
     pairs = sort!(
         [
             string(k) => (v isa BasicSymbolic{SymReal} ? v : Const{SymReal}(v))
-            for (k, v) in d
+                for (k, v) in d
         ]; by = first
     )
     return join(

@@ -124,10 +124,12 @@ let
         g2 = Sym{SymReal}(:g2; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
         @syms c
         @test isequal(
-            only(matchall(
-                g2(slot(a), g(ha(slot(b), segment(s)), slot(c))),
-                g2(x, g(h(y), ha(y)))
-            )),
+            only(
+                matchall(
+                    g2(slot(a), g(ha(slot(b), segment(s)), slot(c))),
+                    g2(x, g(h(y), ha(y)))
+                )
+            ),
             MarkersMap(a => x, b => y, c => h(y), s => ha())
         )
     end

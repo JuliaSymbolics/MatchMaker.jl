@@ -373,8 +373,10 @@ end
 # gets a second point on the ladder — a constant-factor regression
 # holds its ratio across the two sizes; an algorithmic one grows.
 pat_wl_nl9 = compile_pattern(
-    f(slot(a), slot(b), slot(c), slot(d), slot(y), slot(x), slot(w),
-        slot(s), slot(s))
+    f(
+        slot(a), slot(b), slot(c), slot(d), slot(y), slot(x), slot(w),
+        slot(s), slot(s)
+    )
 )
 sub_wl_nl9 = f(p, q, r, x, y, z, a, b, c)
 
@@ -464,10 +466,16 @@ const RW_MM_FP_RULES = CompiledRule[
     mmrule(sin(slot(a)) => slot(a)),
 ]
 const RW_WS_FP = RuleWorkspace(compile_rules(RW_MM_FP_RULES))
-const RW_SU_FP = Fixpoint(Postwalk(Chain([
-    (@rule ~a + ~b => ~a * ~b),
-    (@rule sin(~a) => ~a),
-])))
+const RW_SU_FP = Fixpoint(
+    Postwalk(
+        Chain(
+            [
+                (@rule ~a + ~b => ~a * ~b),
+                (@rule sin(~a) => ~a),
+            ]
+        )
+    )
+)
 # Phase-2: the same workloads through the DiscrimNet index
 const RW_WS_NET = RuleWorkspace(compile_rules(RW_MM_RULES, DiscrimNet))
 const RW_WS_NET_FP =
