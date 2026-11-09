@@ -7,16 +7,9 @@
 """
     FrameStatus
 
-Result of one [`step!`](@ref) call on a [`MatchFrame`](@ref) (DESIGN.md §5.4).
-
-- `Produced` — the frame finished one complete alternative for its subtree:
-  that alternative's bindings are on `eng.trail`, and the frame stays live —
-  the next `step!` resumes the search for further alternatives.
-- `Matched` — the frame's obligation is fully satisfied and it produced no
-  resumable alternatives; the engine pops it. (Reserved for single-shot
-  frames; `Call` frames never return it.)
-- `Failed` — the frame is exhausted: no more alternatives exist. Its
-  bindings were already unwound to its trail mark; the engine pops it.
+Result of one [`step!`](@ref) call on a [`MatchFrame`](@ref): `Produced`
+(one complete alternative, frame stays live for more), `Matched`
+(obligation satisfied, no resumable alternatives), `Failed` (exhausted).
 """
 @enumx FrameStatus Produced Matched Failed
 const FrameStatusT = FrameStatus.T
@@ -28,12 +21,13 @@ const FrameStatusT = FrameStatus.T
 """
     MatchFrame
 
-Mutable state for one in-progress node match — a frame (DESIGN.md §5.4).
-Julia has no cheap coroutines, so instead of a generator that yields each
-alternative, a frame *is* the suspended enumeration: it remembers where the
-search left off, and [`step!`](@ref) advances it to the next alternative.
-Each call frame owns per-position child frames, so a parent's state survives
-backtracking — `eng.root` therefore only ever holds the root.
+Mutable state for one in-progress node match. A frame *is* the
+suspended enumeration (Julia has no cheap coroutines): it remembers
+where the search left off, and [`step!`](@ref) advances it to the next
+alternative. Each call frame owns per-position child frames, so a
+parent's state survives backtracking.
+
+# Extended help
 
 `Call(pat_node, subj_node, child_pos, trail_mark, kids)` — the frame for a
 `NodePlan.Call` (free head, positional children): `child_pos` is the
@@ -142,10 +136,14 @@ mutable struct ACFrame
     owns_bind::BitVector
 end
 
-"""A match frame — the union of the concrete per-variant structs; `step!`
-dispatches on the concrete type directly (small-union dispatch is a tag
-check + jump)."""
 const MatchFrameT = Union{CallFrame, SeqFrame, CommFrame, ACFrame}
+
+"""
+    MatchFrame
+
+A match frame — the union of the concrete per-variant structs.
+[`step!`](@ref) dispatches on the concrete type directly.
+"""
 const MatchFrame = MatchFrameT
 
 
@@ -341,10 +339,9 @@ end
 """
     MatchEngine
 
-A defunctionalized backtracking machine (DESIGN.md §5.4). `root` is the
-live root frame (`nothing` for leaf roots, which `next_match!` applies
-inline); `binds`/`trail` hold index-only binding state; `argbuf` is a
-reusable argument buffer for constraint evaluation. `steps` meters work.
+A defunctionalized backtracking machine: drives a [`Matcher`](@ref)
+against a subject by advancing [`MatchFrame`](@ref)s via [`step!`](@ref)
+— see [`next_match!`](@ref) and [`reset!`](@ref).
 """
 mutable struct MatchEngine
     "Compiled pattern."
@@ -743,6 +740,13 @@ end
 # chain rather than method dispatch: the 5-type stk element union
 # exceeds Julia's union-split limit, so method dispatch on it costs a
 # generic call per step — `isa` folds to a tag check + jump instead.
+"""
+    $TYPEDSIGNATURES
+
+Advance frame `f` to its next alternative — the engine's dispatch seam,
+called by [`next_match!`](@ref). See [`FrameStatus`](@ref) for the
+return contract.
+"""
 @inline function step!(eng::MatchEngine, f::MatchFrameT)
     return if f isa ACFrame
         _step_ac!(

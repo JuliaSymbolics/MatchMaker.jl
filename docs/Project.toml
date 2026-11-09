@@ -1,0 +1,10 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+MatchMaker = "a3da1e36-6513-4d47-b86d-5347c7de0145"
+SymbolicUtils = "d1185830-fcd6-423d-90d6-eec64667417b"
+
+[sources.MatchMaker]
+path = ".."
+
+[sources.SymbolicUtils]
+path = "../../SymbolicUtils.jl"

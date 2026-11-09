@@ -1,3 +1,7 @@
+```@meta
+CurrentModule = MatchMaker
+```
+
 # Optional sequence wildcards — support analysis
 
 MatchPy's `Optional(wildcard, default)` wraps any wildcard; ours supports
