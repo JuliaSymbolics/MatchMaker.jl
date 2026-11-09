@@ -943,9 +943,7 @@ function _fixpoint_post(
         # next sweep: stale ∪ halted chain head ∪ new nodes — `stale` is
         # a BitSet, so appending it yields `dirty` sorted + deduped
         sroot <= n_known && push!(stale, sroot)
-        for i in (n_known + 1):Int32(length(subj))
-            push!(stale, i)
-        end
+        union!(stale, (n_known + 1):length(subj))
         append!(dirty, stale)
     end
     return out[sroot]
