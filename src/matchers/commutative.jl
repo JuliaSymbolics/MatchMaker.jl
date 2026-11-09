@@ -98,7 +98,7 @@ function _comm_seg_bind!(
     empty!(seq)
     @inbounds for pos in sel
         i = pool[pos]
-        push!(seq, snbs[sstart + i - 1])
+        push!(seq, eng.subj[snbs[sstart + i - 1]])
         used[i] = true
     end
     b.seg_op[vid] = op
@@ -154,7 +154,7 @@ function _comm_seg_first!(
             @inbounds for pos in 1:length(pool)
                 i = pool[pos]
                 used[i] && continue
-                if isequal(eng.subj[e], eng.subj[snbs[sstart + i - 1]])
+                if isequal(e, eng.subj[snbs[sstart + i - 1]])
                     used[i] = true
                     push!(sel, Int32(pos))
                     found = true

@@ -613,27 +613,19 @@ function _bound_value(eng::MatchEngine, vid::Int32)
     return eng.subj[b.node[vid]]
 end
 
-# Reconstruct `f(captured…)` for a segment binding (§5.6). Built with
-# BSImpl.Term directly (no `term`/`promote_*` dispatch); note this produces a
-# `Term` even for canonical `+`/`*` heads — Add/Mul reconstruction lands with
-# segment binds in a later milestone. Takes the subject IR and its root
-# symtype directly so [`BoundMatch`](@ref) snapshots can materialize
-# without an engine.
+# Reconstruct `f(captured…)` for a segment binding (§5.6) — `add_worker`/
+# `mul_worker` canonicalize `+`/`*` captures, `BSImpl.Term` builds the
+# rest (copying the arg list — the term must not alias the binding).
+# Takes the subject root symtype directly so [`BoundMatch`](@ref)
+# snapshots can materialize without an engine.
 function _seg_value(eng::MatchEngine, vid::Int32)
     b = eng.binds
     return _seg_value(
-        eng.subj, symtype(eng.subj[eng.sroot]), b.seg_op[vid], b.seq[vid]
+        symtype(eng.subj[eng.sroot]), b.seg_op[vid], b.seq[vid]
     )
 end
 
-function _seg_value(
-        subj::IRStructure{SymReal}, sty, @nospecialize(f), seq::SmallV{Int32}
-    )
-    args = ArgsT{SymReal}()
-    sizehint!(args, length(seq))
-    @inbounds for i in seq
-        push!(args, subj[i])
-    end
+function _seg_value(sty, @nospecialize(f), args::ArgsT{SymReal})
     if f === (+)
         return SymbolicUtils.add_worker(SymReal, args)
     elseif f === (*)
@@ -641,10 +633,12 @@ function _seg_value(
     elseif isempty(args)
         e = _identity_el(f, sty)
         e !== nothing && return Const{SymReal}(e)
-        return BSImpl.Term{SymReal}(f, args; type = promote_symtype(f))
+        return BSImpl.Term{SymReal}(
+            f, ArgsT{SymReal}(); type = promote_symtype(f)
+        )
     else
         return BSImpl.Term{SymReal}(
-            f, args;
+            f, copy(args);
             type = promote_symtype(
                 f, ntuple(i -> symtype(args[i]), length(args))...
             )

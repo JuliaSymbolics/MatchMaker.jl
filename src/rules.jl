@@ -131,7 +131,11 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
     for i in plan.updates
         vid = vid_of[i]
         if vid != 0
-            out[i] = _bound_value(eng, vid)
+            # segment markers keep the `ir[i]` placeholder — the parent's
+            # arg loop splices `b.seq[vid]` directly and only materializes
+            # on a head mismatch; a bare root is handled at the return.
+            MData.isa_variant(specs[vid], VarSpec.Segment) ||
+                (out[i] = _bound_value(eng, vid))
             continue
         end
         t = ir[i]
@@ -151,22 +155,25 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
         newargs = ArgsT{SymReal}()
         sizehint!(newargs, length(nbs) - argstart + 1)
         for j in argstart:length(nbs)
-            cexpr = out[nbs[j]]
             c_vid = vid_of[nbs[j]]
-            if c_vid != 0 && !canon &&
+            if c_vid != 0 &&
                     MData.isa_variant(specs[c_vid], VarSpec.Segment)
-                if iscall(cexpr) && operation(cexpr) === newop
-                    append!(newargs, arguments(cexpr))
-                elseif isconst(cexpr) && id !== nothing &&
+                if eng.binds.seg_op[c_vid] === newop
+                    # same head — splice the captured arg list; the term
+                    # is never materialized
+                    append!(newargs, eng.binds.seq[c_vid])
+                    continue
+                end
+                cexpr = _bound_value(eng, c_vid)
+                if !canon && isconst(cexpr) && id !== nothing &&
                         isequal(unwrap_const(cexpr), id)::Bool
                     # Const identity capture under this head: zero args
                     # (§5.6); any other Const is a one-element literal.
                     continue
-                else
-                    push!(newargs, cexpr)
                 end
-            else
                 push!(newargs, cexpr)
+            else
+                push!(newargs, out[nbs[j]])
             end
         end
         if newop === (+)
@@ -179,7 +186,12 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
             )
         end
     end
-    return out[plan.root]
+    r = plan.root
+    rv = vid_of[r]
+    if rv != 0 && MData.isa_variant(specs[rv], VarSpec.Segment)
+        return _bound_value(eng, rv)
+    end
+    return out[r]
 end
 
 ###

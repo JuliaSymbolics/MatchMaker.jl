@@ -96,9 +96,9 @@ function _seg_try!(
     )
     b = eng.binds
     if b.seg_op[vid] !== nothing
-        # non-linear recheck: the captured run must be identical. The IR
-        # interns by === (weak_definitions can hold isequal-different
-        # nodes), so compare exprs, not node indices.
+        # non-linear recheck: the captured arg list must be identical —
+        # compare exprs (bound terms, not node indices: the IR interns by
+        # === but weak_definitions can hold isequal-different nodes).
         seq = b.seq[vid]
         length(seq) == len || return SegResult.Dead
         if iszero(len)
@@ -113,7 +113,7 @@ function _seg_try!(
                 found = false
                 for k in 1:len
                     if !used[k] &&
-                            isequal(eng.subj[e], eng.subj[snbs[sidx + k - 1]])
+                            isequal(e, eng.subj[snbs[sidx + k - 1]])
                         used[k] = true
                         found = true
                         break
@@ -125,7 +125,7 @@ function _seg_try!(
         end
         for i in 1:len
             isequal(
-                eng.subj[seq[i]], eng.subj[snbs[sidx + i - 1]]
+                seq[i], eng.subj[snbs[sidx + i - 1]]
             ) || return SegResult.Dead
         end
         return SegResult.Bound
@@ -147,7 +147,7 @@ function _seg_try!(
     seq = b.seq[vid]
     empty!(seq)
     for i in 1:len
-        push!(seq, snbs[sidx + i - 1])
+        push!(seq, eng.subj[snbs[sidx + i - 1]])
     end
     b.seg_op[vid] = op
     push!(eng.trail, vid)
