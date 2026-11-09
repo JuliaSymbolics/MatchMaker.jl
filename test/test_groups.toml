@@ -1,0 +1,12 @@
+# Test-group matrix for SciML/.github/grouped-tests.yml
+# (compute_affected_sublibraries.jl --root-matrix). The group's `GROUP`
+# value dispatches inside test/runtests.jl via SciMLTesting.run_tests —
+# "Core" runs test/core.jl, "QA" runs test/qa/ in its own environment.
+# This file is CI-matrix metadata only; run_tests uses explicit-args
+# mode and does not read it.
+
+[Core]
+versions = ["lts", "1", "pre"]
+
+[QA]
+versions = ["lts", "1"]

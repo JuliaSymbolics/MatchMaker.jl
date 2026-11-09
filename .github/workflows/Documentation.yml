@@ -1,0 +1,17 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - master
+    tags: '*'
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' && github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    uses: "SciML/.github/.github/workflows/documentation.yml@v1"
+    secrets: "inherit"
