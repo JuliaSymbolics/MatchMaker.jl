@@ -12,6 +12,9 @@ using Test
 const _BS = BasicSymbolic{SymReal}
 d = MarkersMap(x => x)
 
+_rw = mmrule(slot(x) + slot(x) => slot(x) * slot(x))
+_rw_ws = RuleWorkspace(compile_rules(CompiledRule[_rw]))
+
 @testset "JET" begin
     for (f, tt) in (
             (slot, Tuple{_BS}),
@@ -32,6 +35,21 @@ d = MarkersMap(x => x)
             (matches, Tuple{Matcher, _BS}),
             (instantiate, Tuple{_BS, MarkersMap}),
             (MatchMaker._seg_value, Tuple{MatchMaker.MatchEngine, Int32}),
+            # rules.jl — rule objects, index, workspace, rewrite pass
+            (mmrule, Tuple{Pair{_BS, _BS}}),
+            (MatchMaker._compile_rhs, Tuple{_BS, Matcher}),
+            (MatchMaker._rhs_eval, Tuple{RhsPlan, MatchEngine}),
+            (MatchMaker._apply_rhs, Tuple{CompiledRule, MatchEngine}),
+            (compile_rules, Tuple{Vector{CompiledRule}}),
+            (MatchMaker._build_index, Tuple{Vector{CompiledRule}}),
+            (MatchMaker.lookup!,
+                Tuple{BucketIndex, MatchMaker.SmallV{Int32}, _BS}),
+            (RuleWorkspace, Tuple{MatchMaker.RuleSet{BucketIndex}}),
+            (_rw_ws, Tuple{_BS}),
+            (MatchMaker._apply_site!,
+                Tuple{RuleWorkspace, _BS, Int32}),
+            (rewrite, Tuple{RuleWorkspace, _BS}),
+            (fixpoint_rewrite, Tuple{RuleWorkspace, _BS}),
         )
         reports = JET.get_reports(JET.report_call(f, tt; target_modules = (MatchMaker,)))
         @test isempty(reports)

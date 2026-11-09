@@ -37,6 +37,7 @@ include("matchers/commutative.jl")
 include("matchers/ac.jl")
 include("instantiate.jl")
 include("api.jl")
+include("rules.jl")
 
 export slot, segment, optional,
     is_marker_term, is_marker_op,
@@ -46,10 +47,13 @@ export slot, segment, optional,
     is_associative, is_commutative, identity_element,
     OperationTraitsCtx, OperationTraits, set_operation_traits,
     Matcher, NodePlan, compile_pattern,
-    Constraint, MatchEngine, MatchFrame, next_match!,
+    Constraint, MatchEngine, MatchFrame, next_match!, reset!,
     SubstitutionView, MatchIterator, BoundMatchIterator, BoundMatch,
     matches, matchall, boundmatches, boundmatchall, eachmatch,
     instantiate,
+    mmrule, CompiledRule, RhsPlan, RhsT,
+    RuleSet, RuleIndex, BucketIndex, RuleWorkspace, compile_rules,
+    rewrite, fixpoint_rewrite,
     FrameStatus,
     @slots, @segments
 
