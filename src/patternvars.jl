@@ -45,7 +45,10 @@ const _Marker = Union{typeof(slot), typeof(segment), typeof(optional)}
 SymbolicUtils.promote_symtype(::_Marker, t::SymbolicUtils.TypeT) = t
 SymbolicUtils.promote_shape(::_Marker, @nospecialize(s::SymbolicUtils.ShapeT)) = s
 
-function (m::_Marker)(x::BasicSymbolic{SymReal})
+# NOTE: `(m::_Marker)(x)` functor methods are not definable on Julia <1.11
+# (method dispatch is unimplemented for Union-of-function signatures), so
+# the call methods live on each concrete marker function type.
+function _marker_term(m, x::BasicSymbolic{SymReal})
     issym(x) || throw(ArgumentError(lazy"$m expects a Sym, got: $x"))
     return BSImpl.Term{SymReal}(
         m, ArgsT{SymReal}((x,));
@@ -53,13 +56,17 @@ function (m::_Marker)(x::BasicSymbolic{SymReal})
     )
 end
 
-function (m::_Marker)(x::Symbol; type = Number, shape = nothing)
+function _marker_term(m, x::Symbol; type = Number, shape = nothing)
     s = shape === nothing ? Sym{SymReal}(x; type) : Sym{SymReal}(x; type, shape)
     return BSImpl.Term{SymReal}(
         m, ArgsT{SymReal}((s,));
         type = symtype(s), shape = SymbolicUtils.shape(s)
     )
 end
+
+(m::typeof(slot))(x; kw...) = _marker_term(m, x; kw...)
+(m::typeof(segment))(x; kw...) = _marker_term(m, x; kw...)
+(m::typeof(optional))(x; kw...) = _marker_term(m, x; kw...)
 
 ###
 ### Marker predicates and accessors

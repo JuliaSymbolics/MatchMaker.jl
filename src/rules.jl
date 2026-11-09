@@ -360,7 +360,7 @@ shared by all patterns whose preorder label prefixes reach it.
 
 - `ops`: `(op, arity)` → next — deterministic call-head transition.
 - `opwilds`: `arity` → next — head-marker call (`slot(f)(…)`) — any op.
-- `lits`: literal leaf expr → next.
+- `literals`: literal leaf expr → next.
 - `defers`: `SeqCall`/`CommCall`/`ACCall` subtree edges — confirm
   `iscall` + `op` (`nothing` = head-marker, any op) + arity bounds,
   then hand the whole subtree to the engine.
@@ -370,7 +370,7 @@ shared by all patterns whose preorder label prefixes reach it.
 mutable struct NetState
     ops::Dict{NetOp, Int32}
     opwilds::Dict{Int, Int32}
-    lits::Dict{BasicSymbolic{SymReal}, Int32}
+    literals::Dict{BasicSymbolic{SymReal}, Int32}
     defers::Vector{NetDefer}
     wild::Int32
     finals::SmallV{Int32}
@@ -426,7 +426,7 @@ function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
     plan = pat.plans[i]
     return @match plan begin
         NodePlan.Literal() =>
-            _net_next!(net, net.states[σ].lits, pat.ir[i])
+            _net_next!(net, net.states[σ].literals, pat.ir[i])
         NodePlan.Slot() => begin
             st = net.states[σ]
             st.wild == 0 && (st.wild = _net_new!(net))
@@ -639,7 +639,7 @@ function _net_go(
                 push!(out, d.next)
         end
     else
-        σ2 = get(st.lits, t, Int32(0))
+        σ2 = get(st.literals, t, Int32(0))
         σ2 != 0 && push!(out, σ2)
     end
     st.wild != 0 && push!(out, st.wild)

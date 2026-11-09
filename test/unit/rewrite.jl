@@ -30,7 +30,13 @@ const CS = SymbolicUtils.Const{SymReal}
     ws = RuleWorkspace(rs)
     @test isequal(ws(x + y), x * y)
     @test isequal(ws(CS(2) * x), CS(2) * x)      # r3 matched; x+x canonicalizes to 2x
-    @test isequal(ws(x + y + z + w), x + z + w) # r3: t=y, s captures the rest
+    # r3: t binds one arg, s captures the other three — which arg t takes
+    # is process-dependent, so any 3-of-4 subset is a valid result
+    rw = ws(x + y + z + w)
+    @test any(
+        Base.Fix1(isequal, rw),
+        (x + y + z, x + y + w, x + z + w, y + z + w),
+    )
     @test ws(x * y) === nothing                 # no candidate
     @test ws(CS(5)) === nothing                 # atom, no leaf rules
 
