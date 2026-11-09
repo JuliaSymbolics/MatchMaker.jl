@@ -3,9 +3,11 @@
 MatchPy-style symbolic pattern matching for [SymbolicUtils.jl](https://github.com/JuliaSymbolics/SymbolicUtils.jl),
 built on its `IRStructure` DAG representation.
 
-The user-facing guide is [`docs/user-guide.md`](docs/user-guide.md);
-the governing design document is [`DESIGN.md`](DESIGN.md); developer-facing
-documentation is [`DEVELOPING.md`](DEVELOPING.md).
+The user-facing guide is [`docs/src/guide.md`](docs/src/guide.md)
+(`julia docs/make.jl` builds the full Documenter site, including a
+tutorial and organized API reference); the governing design document
+is [`DESIGN.md`](DESIGN.md); developer-facing documentation is
+[`DEVELOPING.md`](DEVELOPING.md).
 
 ## What it is
 
@@ -29,6 +31,7 @@ match(m, expr)
 matches(m, expr)        # lazy, resumable
 boundmatches(m, expr)   # persistent lazy snapshots — cheap to collect
 eachmatch(f, m, expr)   # zero-allocation iteration
+matches_at(m, expr)     # where in expr does m match? — (bindings, subterm)
 instantiate(rhs, subst)
 ```
 
@@ -37,10 +40,23 @@ repeatedly; queries also take the raw pattern expression for one-shot
 use. `matchall` enumerates every match deterministically; `maxsteps`
 bounds the search; `Constraint`s prune partial assignments early.
 
+Rules and rewriting are built on the same machinery:
+
+```julia
+rules = compile_rules(CompiledRule[
+    mmrule(slot(a) + 0 => slot(a)),
+    mmrule(slot(a) + slot(a) => 2 * slot(a)),
+], DiscrimNet)             # or default BucketIndex
+ws = RuleWorkspace(rules)  # the mutable application context
+ws(x + 0)                  # => x  (first-match site application)
+rewrite(ws, expr)          # full-tree pass (:post or :pre)
+fixpoint_rewrite(ws, expr) # iterate to a fixed point (incremental)
+```
+
 Matching is done by a non-recursive frame machine over `IRStructure`, with
 associative/commutative/AC matching implemented via bipartite-assignment
 enumeration in the Eker/MatchPy lineage. Semantics, caveats, and the full
-API are in [`docs/user-guide.md`](docs/user-guide.md); correctness is
+API are in [`docs/src/guide.md`](docs/src/guide.md); correctness is
 cross-validated against a naive recursive oracle under randomized fuzzing.
 
 ## Why
@@ -50,7 +66,7 @@ cross-validated against a naive recursive oracle under randomized fuzzing.
   `isequal`.
 - `IRStructure` gives the whole subject DAG up front: interned nodes,
   O(1)-ish identity checks, no recursion, and amortization across patterns
-  (the future many-to-one story).
+  — the many-to-one story behind `RuleSet`/`DiscrimNet` dispatch.
 - Type-stable internals: Moshi ADTs, `FunctionWrappers`-stored callables,
   fast-pathed trait/symtype checks.
 
