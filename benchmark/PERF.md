@@ -39,6 +39,25 @@ Julia 1.13, at `perf/seg-args` (post-`ArgsT` segment binds).
   copy-on-write rebuilds without IR bookkeeping; the native pass buys
   DAG-shared subterm dedup instead.
 
+### DiscrimNet vs BucketIndex (same suite cases)
+
+`compile_rules(rules; index = DiscrimNet)` — Phase-2 shared-frontier
+trie + `net_cache` memoization, same workloads:
+
+| case | BucketIndex | DiscrimNet | ratio |
+|---|---|---|---|
+| site: `ws(x)` | 333 ns / 320 B | **291 ns / 288 B** | ~14% faster |
+| walk: `rewrite(ws,x)` | 24.4 μs / 12.4 KiB | 24.0 μs / 11.8 KiB | ~2% |
+| fixpoint | 13.0 μs / 8.3 KiB | 12.0 μs / 7.3 KiB | ~8% |
+
+Consistent but small: per-site `lookup!` was only ~6% of site cost, and
+an engine `reset!`+fail costs ≈ a net evaluation — so the net wins the
+lookup share (memo-hit ≈ dict get) and slightly less allocation, no
+more. The design payoff is structural, not per-site speed: `net_cache`
+persists across fixpoint iterations and DAG-shared subterms evaluate
+once, which is what the incremental fixpoint (dirty propagation, §7)
+stands on.
+
 ## Engine vs naive oracle (`matchall` workloads)
 
 | workload | engine | oracle | ratio |

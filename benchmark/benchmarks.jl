@@ -468,19 +468,29 @@ const RW_SU_FP = Fixpoint(Postwalk(Chain([
     (@rule ~a + ~b => ~a * ~b),
     (@rule sin(~a) => ~a),
 ])))
+# Phase-2: the same workloads through the DiscrimNet index
+const RW_WS_NET = RuleWorkspace(compile_rules(RW_MM_RULES; index = DiscrimNet))
+const RW_WS_NET_FP =
+    RuleWorkspace(compile_rules(RW_MM_FP_RULES; index = DiscrimNet))
 
 SUITE["rewrite"] = BenchmarkGroup()
 SUITE["rewrite"]["site: mm ws(x)"] =
     @benchmarkable $RW_WS($sub_rw_site)
+SUITE["rewrite"]["site: mm ws(x) net"] =
+    @benchmarkable $RW_WS_NET($sub_rw_site)
 SUITE["rewrite"]["site: su Chain(x)"] =
     @benchmarkable $RW_SU_CHAIN($sub_rw_site)
 SUITE["rewrite"]["walk: mm rewrite(ws, x)"] =
     @benchmarkable rewrite($RW_WS, $sub_rw)
+SUITE["rewrite"]["walk: mm rewrite(ws, x) net"] =
+    @benchmarkable rewrite($RW_WS_NET, $sub_rw)
 SUITE["rewrite"]["walk: mm Postwalk(ws)(x)"] =
     @benchmarkable ($RW_SU_POST === nothing ? nothing : Postwalk($RW_WS))($sub_rw)
 SUITE["rewrite"]["walk: su Postwalk(Chain)(x)"] =
     @benchmarkable $RW_SU_POST($sub_rw)
 SUITE["rewrite"]["fixp: mm fixpoint_rewrite(ws, x)"] =
     @benchmarkable fixpoint_rewrite($RW_WS_FP, $sub_rw_fp)
+SUITE["rewrite"]["fixp: mm fixpoint net"] =
+    @benchmarkable fixpoint_rewrite($RW_WS_NET_FP, $sub_rw_fp)
 SUITE["rewrite"]["fixp: su Fixpoint∘Postwalk(x)"] =
     @benchmarkable $RW_SU_FP($sub_rw_fp)
