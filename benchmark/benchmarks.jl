@@ -480,7 +480,7 @@ SUITE["rewrite"]["walk: mm Postwalk(ws)(x)"] =
     @benchmarkable ($RW_SU_POST === nothing ? nothing : Postwalk($RW_WS))($sub_rw)
 SUITE["rewrite"]["walk: su Postwalk(Chain)(x)"] =
     @benchmarkable $RW_SU_POST($sub_rw)
-SUITE["rewrite"]["fixp: mm fixrewrite(ws, x)"] =
-    @benchmarkable fixrewrite($RW_WS_FP, $sub_rw_fp)
+SUITE["rewrite"]["fixp: mm fixpoint_rewrite(ws, x)"] =
+    @benchmarkable fixpoint_rewrite($RW_WS_FP, $sub_rw_fp)
 SUITE["rewrite"]["fixp: su Fixpoint∘Postwalk(x)"] =
     @benchmarkable $RW_SU_FP($sub_rw_fp)

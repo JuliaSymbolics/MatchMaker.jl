@@ -28,7 +28,8 @@ An rhs template compiled against the lhs var ids — evaluation reads
 `eng.binds` by index and splices segment captures positionally, never
 building a `Sym → value` dict (REWRITING.md §2). `vid_of[i]` is the
 pattern var id bound at template-IR node `i` (`0` = not a marker);
-`is_seg[i]` marks segment markers, which splice rather than substitute.
+`updates` caches exactly the node indices needing rebuild on eval —
+everything else keeps `ir[i]`.
 """
 struct RhsPlan
     "Template DAG."
@@ -37,9 +38,9 @@ struct RhsPlan
     root::Int32
     "template node -> pattern var id (`0` = not a marker node)."
     vid_of::Vector{Int32}
-    "template node -> subtree contains a marker — only `needs` nodes
-    get rebuilt on eval; everything else keeps `ir[i]`."
-    needs::BitVector
+    "template-IR indices whose subtree contains a marker, sorted —
+    the only nodes `_rhs_eval` rebuilds."
+    updates::Vector{Int32}
 end
 
 """
@@ -55,6 +56,7 @@ function _compile_rhs(rhs::BasicSymbolic{SymReal}, pat::Matcher)
     n = length(ir)
     vid_of = zeros(Int32, n)
     needs = falses(n)
+    updates = Int32[]
     g = ir.dependency_graph
     for i in 1:n
         t = ir[i]
@@ -70,8 +72,9 @@ function _compile_rhs(rhs::BasicSymbolic{SymReal}, pat::Matcher)
         # any already-visited dependency does.
         needs[i] = vid_of[i] != 0 ||
             any(j -> needs[j], Graphs.outneighbors(g, i))
+        needs[i] && push!(updates, Int32(i))
     end
-    return RhsPlan(ir, root, vid_of, needs)
+    return RhsPlan(ir, root, vid_of, updates)
 end
 
 """
@@ -118,17 +121,14 @@ end
 
 # Evaluate a compiled template against the live engine — `instantiate`'s
 # postorder walk with `binds`-indexed marker resolution instead of a dict.
-# Only `needs` nodes are rebuilt; subtrees with no markers keep `ir[i]`.
+# Only `updates` nodes are rebuilt; subtrees with no markers keep `ir[i]`.
 function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
     ir = plan.ir
     g = ir.dependency_graph
-    n = length(ir)
-    out = Vector{BasicSymbolic{SymReal}}(undef, n)
+    out = copy(ir.symbols)
     vid_of = plan.vid_of
-    needs = plan.needs
     specs = eng.pat.var_specs
-    for i in 1:n
-        needs[i] || (out[i] = ir[i]; continue)
+    for i in plan.updates
         vid = vid_of[i]
         if vid != 0
             out[i] = _bound_value(eng, vid)
@@ -156,11 +156,9 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
             if c_vid != 0 && !canon &&
                     MData.isa_variant(specs[c_vid], VarSpec.Segment)
                 if iscall(cexpr) && operation(cexpr) === newop
-                    for ca in arguments(cexpr)
-                        push!(newargs, ca)
-                    end
+                    append!(newargs, arguments(cexpr))
                 elseif isconst(cexpr) && id !== nothing &&
-                        isequal(unwrap_const(cexpr), id)
+                        isequal(unwrap_const(cexpr), id)::Bool
                     # Const identity capture under this head: zero args
                     # (§5.6); any other Const is a one-element literal.
                     continue
@@ -237,19 +235,25 @@ function _root_arity(pat::Matcher, plan::NodePlanT)
             end
             (lo, hi)
         end
-        NodePlan.CommCall(; fixed, slots, optionals, segments) ||
-        NodePlan.ACCall(; fixed, slots, optionals, segments) => begin
-            lo = length(fixed) + length(slots)
-            hi = lo + length(optionals)
-            for s in segments
-                (l, h) = _child_take(pat, pat.plans[s])
-                lo += l
-                hi = _sat_add(hi, h)
-            end
-            (lo, hi)
-        end
+        NodePlan.CommCall(; fixed, slots, optionals, segments) =>
+            _ac_arity(pat, fixed, slots, optionals, segments)
+        NodePlan.ACCall(; fixed, slots, optionals, segments) =>
+            _ac_arity(pat, fixed, slots, optionals, segments)
         _ => (0, typemax(Int))
     end
+end
+
+# CommCall/ACCall arity: fixed children and slots consume exactly one
+# arg each, optionals 0-or-1, segments their spec range.
+function _ac_arity(pat::Matcher, fixed, slots, optionals, segments)
+    lo = length(fixed) + length(slots)
+    hi = lo + length(optionals)
+    for s in segments
+        (l, h) = _child_take(pat, pat.plans[s])
+        lo += l
+        hi = _sat_add(hi, h)
+    end
+    return (lo, hi)
 end
 
 # Subject args one pattern child consumes: slots 1 (0..1 when optional),
@@ -511,7 +515,9 @@ function _rewrite_post(ws::RuleWorkspace, expr::BasicSymbolic{SymReal})
             # unchanged — the node is already interned at index i
             out[i] = _apply_site(ws, t, i)
         else
-            newargs === nothing && (newargs = copy(parent(args)))
+            if newargs === nothing
+                newargs = copy(parent(args))
+            end
             x = maketerm(typeof(t), newop, newargs, metadata(t))
             out[i] = _apply_site(ws, x, populate_ir!(subj, x))
         end
@@ -580,11 +586,11 @@ subtrees are the same interned nodes, so `populate_ir!` costs only the
 new ones. A term seen twice ends the loop (`FixpointNoCycle`
 semantics); `maxiterations` bounds it outright.
 """
-function fixrewrite(
+function fixpoint_rewrite(
         ws::RuleWorkspace, expr::BasicSymbolic{SymReal};
         maxiterations::Int = 10_000, order::Symbol = :post
     )
-    seen = Set{BasicSymbolic{SymReal}}()
+    seen = IdSet{BasicSymbolic{SymReal}}()
     x = expr
     for _ in 1:maxiterations
         x′ = rewrite(ws, x; order)

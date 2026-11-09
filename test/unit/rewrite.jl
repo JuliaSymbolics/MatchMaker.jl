@@ -143,11 +143,11 @@ end
 
     # fixpoint: iterate until stable — a+b -> a*b has no + left
     ws_mul = RuleWorkspace(rs)
-    @test isequal(fixrewrite(ws_mul, x + y), x * y)
+    @test isequal(fixpoint_rewrite(ws_mul, x + y), x * y)
 
     # 2x+2y (canonical (x+y)+(x+y)) -> 2x*2y = 4xy in one pass
     nested = (x + y) + (x + y)
-    got = fixrewrite(ws_mul, nested)
+    got = fixpoint_rewrite(ws_mul, nested)
     @test isequal(got, CS(4) * x * y)
 end
 

@@ -53,7 +53,7 @@ export slot, segment, optional,
     instantiate,
     mmrule, CompiledRule, RhsPlan, RhsT,
     RuleSet, RuleIndex, BucketIndex, RuleWorkspace, compile_rules,
-    rewrite, fixrewrite,
+    rewrite, fixpoint_rewrite,
     FrameStatus,
     @slots, @segments
 
