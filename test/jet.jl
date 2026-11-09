@@ -33,6 +33,10 @@ _rw_ws = RuleWorkspace(compile_rules(CompiledRule[_rw]))
             (match, Tuple{_BS, _BS}),
             (matchall, Tuple{_BS, _BS}),
             (matches, Tuple{Matcher, _BS}),
+            (boundmatches_at, Tuple{Matcher, _BS}),
+            (matches_at, Tuple{Matcher, _BS}),
+            (MatchMaker._next_hit_site!, Tuple{MatchEngine, Int32}),
+            (Base.iterate, Tuple{BoundMatchAtIterator}),
             (instantiate, Tuple{_BS, MarkersMap}),
             (MatchMaker._seg_value, Tuple{MatchMaker.MatchEngine, Int32}),
             # rules.jl — rule objects, index, workspace, rewrite pass

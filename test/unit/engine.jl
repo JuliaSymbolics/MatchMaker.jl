@@ -118,3 +118,65 @@ end
     end
     @test n[] == 1
 end
+
+@testset "occurrence search" begin
+    @syms x y a b s t p q
+    h = Sym{SymReal}(:h; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    sub = h(x + y, sin(p + q)) + sin(x + y)
+
+    # occurrence search: sin sites only, postorder (bottom-up)
+    hits = collect(matches_at(sin(slot(a)), sub))
+    @test length(hits) == 2
+    @test isequal(hits[1][2], sin(p + q))
+    @test isequal(hits[1][1][a], p + q)
+    @test isequal(hits[2][2], sin(x + y))
+    @test isequal(hits[2][1][a], x + y)
+
+    # bare slot hits every node — DAG-shared x+y dedups to one site
+    sites = [t for (bm, t) in boundmatches_at(slot(a), sub)]
+    @test length(sites) == 10
+    @test allunique(sites)   # ===-deduped nodes, not positions
+
+    # non-linear pattern: h(a,a) hits where both children coincide
+    @test length(collect(boundmatches_at(h(slot(a), slot(a)), h(x + y, x + y)))) == 1
+    @test isempty(collect(boundmatches_at(h(slot(a), slot(a)), h(x, y))))
+
+    # leaf-only subject: bare slot yields one hit at the leaf
+    @test length(collect(boundmatches_at(slot(a), x))) == 1
+
+    # oracle: hits equal per-node `match` over every unique subterm
+    function naive_sites(pat, s)
+        eng_subj = SymbolicUtils.IRStructure{SymReal}()
+        SymbolicUtils.populate_ir!(eng_subj, s)
+        return [eng_subj[i] for i in 1:length(eng_subj)
+                if match(pat, eng_subj[i]) !== nothing]
+    end
+    for pat in (sin(slot(a)), slot(a) + slot(b), h(slot(a), slot(b)))
+        got = [t for (bm, t) in boundmatches_at(pat, sub)]
+        # every binding enumerated per site — oracle checks sites
+        @test isequal(unique(got), naive_sites(pat, sub))
+    end
+
+    # BoundMatch pairs — frozen snapshots valid past the step
+    r = collect(boundmatches_at(sin(slot(a)), sub))
+    @test length(r) == 2
+    @test all(bm isa BoundMatch for (bm, t) in r)
+    @test isequal(r[1][1][a], p + q)
+    @test isequal(r[1][2], sin(p + q))
+    @test isequal(r[2][1][a], x + y)
+
+    r2 = collect(matches_at(sin(slot(a)), sub))
+    @test isequal(
+        r2,
+        [(MarkersMap(a => p + q), sin(p + q)),
+            (MarkersMap(a => x + y), sin(x + y))])
+
+    # laziness: first() pays one site
+    @test isequal(first(boundmatches_at(sin(slot(a)), sub))[2], sin(p + q))
+    # multi-hit per site: AC pattern yields multiple bindings at x+y+p
+    @test length(collect(boundmatches_at(segment(s) + slot(t), x + y + p))) > 1
+    # empty result
+    @test isempty(collect(boundmatches_at(sin(x), sub)))
+    # take() respects laziness across empty nodes
+    @test length(collect(Iterators.take(boundmatches_at(slot(a), sub), 3))) == 3
+end
