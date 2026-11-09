@@ -8,7 +8,7 @@ using MatchMaker
 using SymbolicUtils
 using SymbolicUtils: Sym, SymReal, FnType, Const
 
-include(joinpath(@__DIR__, "..", "oracle.jl"))
+include(joinpath(@__DIR__, "..", "shared", "oracle.jl"))
 
 # A result dict in canonical comparable form: values normalized to
 # BasicSymbolic (head-slot ops and defaults arrive raw in the oracle,

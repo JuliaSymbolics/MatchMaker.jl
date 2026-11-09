@@ -11,17 +11,18 @@ dependencies and wires includes together; the file layout is DESIGN.md §6.
 module MatchMaker
 
 using SymbolicUtils
-using SymbolicUtils: BasicSymbolic, Sym, Term, Const, SymReal,
+using SymbolicUtils: SymbolicUtils, BasicSymbolic, Sym, Const, SymReal,
     issym, isconst, symtype, shape, BSImpl, ArgsT,
     hasmetadata, getmetadata, setmetadata, is_function_symbolic, SmallV,
-    replace_node!, get_canonical_expr!, promote_symtype, FnType
+    promote_symtype, FnType, IRStructure, populate_ir!, unwrap_const
+using TermInterface: arguments, iscall, operation, maketerm, metadata
 using Moshi.Data: @data
 import Moshi.Data as MData
 using Moshi.Match: @match
-using DocStringExtensions
+using DocStringExtensions: DocStringExtensions, TYPEDSIGNATURES
 using FunctionWrappers: FunctionWrapper
-using Graphs
-using ReadOnlyArrays
+using Graphs: Graphs
+using ReadOnlyArrays: ReadOnlyArrays
 using EnumX: @enumx
 using Preferences: @load_preference
 import Base: match, materialize, eachmatch
