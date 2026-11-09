@@ -737,50 +737,57 @@ end
 # Linear postorder sweep over ws.subj — `symbols` indexes children
 # before parents, interning dedups shared subterms, and `ws(x)`
 # populating new terms appends beyond `n` (next-iteration nodes).
+# One sweep node: rebuild `subj[i]` over the current child `out`s and
+# apply the site, returning the node's new value. `outneighbors` are
+# `arguments()` order (IRStructure invariant) and children are
+# interned — compare/rebuild against `subj[nbs[j]]` directly rather
+# than paying `arguments(t)` (on AddMul that rebuilds Mul/^ terms per
+# dict entry).
+function _rewrite_eval!(
+        ws::RuleWorkspace, out::Vector{BasicSymbolic{SymReal}}, i::Int32
+    )
+    subj = ws.subj
+    t = subj[i]
+    iscall(t) || return _apply_site(ws, t, i)
+    nbs = Graphs.outneighbors(subj.dependency_graph, i)
+    op = operation(t)
+    argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
+    newop = argstart == 2 ? unwrap_const(out[nbs[1]]) : op
+    newargs = nothing
+    for (k, j) in enumerate(argstart:length(nbs))
+        na = out[nbs[j]]
+        na === subj[nbs[j]] && continue
+        if newargs === nothing
+            newargs = ArgsT{SymReal}()
+            sizehint!(newargs, length(nbs) - argstart + 1)
+            for jj in argstart:length(nbs)
+                push!(newargs, subj[nbs[jj]])
+            end
+        end
+        newargs[k] = na
+    end
+    if newargs === nothing && newop === op
+        # unchanged — the node is already interned at index i
+        return _apply_site(ws, t, i)
+    end
+    if newargs === nothing
+        newargs = ArgsT{SymReal}()
+        sizehint!(newargs, length(nbs) - argstart + 1)
+        for jj in argstart:length(nbs)
+            push!(newargs, subj[nbs[jj]])
+        end
+    end
+    x = maketerm(typeof(t), newop, newargs, metadata(t))
+    return _apply_site(ws, x, populate_ir!(subj, x))
+end
+
 function _rewrite_post(ws::RuleWorkspace, expr::BasicSymbolic{SymReal})
     subj = ws.subj
     sroot = populate_ir!(subj, expr)
     n = length(subj)
-    g = subj.dependency_graph
     out = Vector{BasicSymbolic{SymReal}}(undef, n)
     for i in Int32(1):Int32(n)
-        t = subj[i]
-        iscall(t) || (out[i] = _apply_site(ws, t); continue)
-        nbs = Graphs.outneighbors(g, i)
-        op = operation(t)
-        argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
-        newop = argstart == 2 ? unwrap_const(out[nbs[1]]) : op
-        # `outneighbors` are `arguments()` order (IRStructure invariant)
-        # and children are interned — compare/rebuild against
-        # `subj[nbs[j]]` directly rather than paying `arguments(t)`
-        # (on AddMul that rebuilds Mul/^ terms per dict entry).
-        newargs = nothing
-        for (k, j) in enumerate(argstart:length(nbs))
-            na = out[nbs[j]]
-            na === subj[nbs[j]] && continue
-            if newargs === nothing
-                newargs = ArgsT{SymReal}()
-                sizehint!(newargs, length(nbs) - argstart + 1)
-                for jj in argstart:length(nbs)
-                    push!(newargs, subj[nbs[jj]])
-                end
-            end
-            newargs[k] = na
-        end
-        if newargs === nothing && newop === op
-            # unchanged — the node is already interned at index i
-            out[i] = _apply_site(ws, t, i)
-        else
-            if newargs === nothing
-                newargs = ArgsT{SymReal}()
-                sizehint!(newargs, length(nbs) - argstart + 1)
-                for jj in argstart:length(nbs)
-                    push!(newargs, subj[nbs[jj]])
-                end
-            end
-            x = maketerm(typeof(t), newop, newargs, metadata(t))
-            out[i] = _apply_site(ws, x, populate_ir!(subj, x))
-        end
+        out[i] = _rewrite_eval!(ws, out, i)
     end
     return out[sroot]
 end
@@ -850,6 +857,11 @@ function fixpoint_rewrite(
         ws::RuleWorkspace, expr::BasicSymbolic{SymReal};
         maxiterations::Int = 10_000, order::Symbol = :post
     )
+    if order === :post
+        return _fixpoint_post(ws, expr, maxiterations)
+    end
+    order === :pre ||
+        throw(ArgumentError(lazy"order must be :pre or :post, got: $order"))
     seen = IdSet{BasicSymbolic{SymReal}}()
     x = expr
     for _ in 1:maxiterations
@@ -860,4 +872,79 @@ function fixpoint_rewrite(
         x = x′
     end
     return x
+end
+
+# §7 incremental fixpoint: `out[i]` persists the latest rewrite result
+# of node `i` across iterations — `out[i]` *is* `rewrite(subj[i])`, so
+# the iterate chain `x ↦ out[node(x)]` advances by reading; evaluation
+# is only needed when the chain reaches a node that is unevaled or
+# stale (a child's `out` changed). Each sweep re-evaluates only the
+# direct parents of nodes whose `out` changed plus newly interned
+# nodes — transitivity follows from parents being marked as their own
+# children modify — O(Δ·depth) instead of a full re-walk. Pattern
+# children index lower than parents (postorder interning), so
+# ascending `dirty` order evaluates descendants first.
+function _fixpoint_post(
+        ws::RuleWorkspace, expr::BasicSymbolic{SymReal}, maxiterations::Int
+    )
+    subj = ws.subj
+    g = subj.dependency_graph
+    sroot = populate_ir!(subj, expr)
+    n = Int32(length(subj))
+    out = Vector{BasicSymbolic{SymReal}}(undef, n)
+    for i in Int32(1):n
+        out[i] = subj[i]
+    end
+    evaled = falses(n)
+    dirty = collect(Int32(1):n)
+    modified = Int32[]
+    stale = BitSet()
+    seen = IdSet{BasicSymbolic{SymReal}}()
+    n_known = n
+    steps = 0
+    while steps < maxiterations
+        # — eval phase: re-derive `out` for dirty nodes, ascending —
+        empty!(modified)
+        empty!(stale)
+        for i in dirty
+            new = _rewrite_eval!(ws, out, i)
+            if new !== out[i]
+                out[i] = new
+                push!(modified, i)
+            end
+            evaled[i] = true
+        end
+        # stale = direct parents of modified — a node is stale iff a
+        # child's `out` changed; the cascade covers transitivity (same
+        # idea as IRStructure's `non_canonical_idxs` marking)
+        for i in modified
+            union!(stale, Graphs.inneighbors(g, i))
+        end
+        # — chain phase: follow `x ↦ out[node(x)]` while `out` is fresh —
+        empty!(dirty)
+        while true
+            if n_known < length(subj)   # grow for newly interned nodes
+                resize!(out, length(subj))
+                resize!(evaled, length(subj))
+                for i in (n_known + 1):Int32(length(subj))
+                    out[i] = subj[i]
+                end
+                n_known = Int32(length(subj))
+            end
+            (evaled[sroot] && sroot ∉ stale) || break
+            res = out[sroot]
+            res in seen && return res
+            out[sroot] === subj[sroot] && return res   # rewrite(res) = res
+            push!(seen, res)
+            steps += 1
+            steps >= maxiterations && return res
+            sroot = populate_ir!(subj, res)
+        end
+        # next sweep: stale ∪ halted chain head ∪ new nodes — `stale` is
+        # a BitSet, so appending it yields `dirty` sorted + deduped
+        sroot <= n_known && push!(stale, sroot)
+        union!(stale, (n_known + 1):length(subj))
+        append!(dirty, stale)
+    end
+    return out[sroot]
 end

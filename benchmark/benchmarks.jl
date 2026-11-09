@@ -540,6 +540,20 @@ sub_dn_walk = h(sin(CS(3)), h(x + y, CS(5))) +
 # fixpoint: convergent pair over a subject with repeated subterms
 sub_dn_fp = h(sin(x + y), sin(p + q)) + sin(CS(3)) + sin(x + y)
 
+# deep multi-iteration fixpoint: nested sin/h/g chains converge over
+# ~5 sweeps — exercises §7 dirty propagation (each sweep re-evals only
+# stale parents + new nodes, not the whole subject)
+const DN_FP_DEEP_RULES = CompiledRule[
+    mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+    mmrule(sin(slot(a)) => slot(a)),
+    mmrule(cos(slot(a)) => slot(a)),
+    mmrule(h(slot(a), slot(b)) => slot(a)),
+    mmrule(g(slot(a), slot(b)) => slot(a) * slot(b)),
+]
+const DN_WS_FP_DEEP = RuleWorkspace(compile_rules(DN_FP_DEEP_RULES))
+sub_dn_fpdeep = h(sin(sin(sin(x + y))), cos(g(sin(p + q), sin(a + b)))) +
+    sin(sin(w + z)) + g(cos(x + y), sin(p + q))
+
 SUITE["discrimnet"] = BenchmarkGroup()
 SUITE["discrimnet"]["site: ws(h(x,7)) bucket"] =
     @benchmarkable $DN_WS_B($sub_dn_site)
@@ -553,3 +567,5 @@ SUITE["discrimnet"]["fixp: fixpoint bucket"] =
     @benchmarkable fixpoint_rewrite($DN_WS_B2, $sub_dn_fp)
 SUITE["discrimnet"]["fixp: fixpoint net"] =
     @benchmarkable fixpoint_rewrite($DN_WS_N2, $sub_dn_fp)
+SUITE["discrimnet"]["fixp: deep"] =
+    @benchmarkable fixpoint_rewrite($DN_WS_FP_DEEP, $sub_dn_fpdeep)

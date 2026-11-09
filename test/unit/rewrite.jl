@@ -153,6 +153,81 @@ end
     @test isequal(got, CS(4) * x * y)
 end
 
+@testset "incremental fixpoint" begin
+    @syms x y z a b s t p q w
+    h = Sym{SymReal}(:h; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    g = Sym{SymReal}(:g; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+
+    mkrules() = CompiledRule[
+        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+        mmrule(sin(slot(a)) => slot(a)),
+        mmrule(h(slot(a), slot(b)) => slot(a)),
+    ]
+    # multi-iteration convergence — h strips after children rewrite
+    @test isequal(
+        fixpoint_rewrite(RuleWorkspace(compile_rules(mkrules())),
+            h(sin(x + y), sin(p + q))),
+        x * y)
+    # result is stable — re-running fixes nothing
+    @test isequal(
+        fixpoint_rewrite(RuleWorkspace(compile_rules(mkrules())), x * y),
+        x * y)
+    # :pre order still works via the naive loop
+    @test isequal(
+        fixpoint_rewrite(RuleWorkspace(compile_rules(mkrules())),
+            h(sin(x + y), sin(p + q)); order = :pre),
+        x * y)
+
+    # 2-cycle terminates on the first repeated term
+    ws_cyc = RuleWorkspace(compile_rules(CompiledRule[
+        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+        mmrule(slot(a) * slot(b) => slot(a) + slot(b)),
+    ]))
+    r = fixpoint_rewrite(ws_cyc, x + y)
+    @test isequal(r, x * y) || isequal(r, x + y)
+
+    # 3-cycle terminates
+    ws_cyc3 = RuleWorkspace(compile_rules(CompiledRule[
+        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+        mmrule(slot(a) * slot(b) => h(slot(a), slot(b))),
+        mmrule(h(slot(a), slot(b)) => slot(a) + slot(b)),
+    ]))
+    @test fixpoint_rewrite(ws_cyc3, x + y) !== nothing
+
+    # maxiterations bounds the loop
+    @test fixpoint_rewrite(ws_cyc, x + y; maxiterations = 2) !== nothing
+
+    # dirty propagation: a convergent deep subject — results equal a
+    # naive full-rewrite loop oracle
+    ws_deep = RuleWorkspace(compile_rules(CompiledRule[
+        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+        mmrule(sin(slot(a)) => slot(a)),
+        mmrule(cos(slot(a)) => slot(a)),
+        mmrule(h(slot(a), slot(b)) => slot(a)),
+        mmrule(g(slot(a), slot(b)) => slot(a) * slot(b)),
+    ]))
+    function naive_fp(ws, x)
+        seen = IdSet{BasicSymbolic{SymReal}}()
+        for _ in 1:10_000
+            x′ = rewrite(ws, x)
+            isequal(x′, x) && return x
+            x′ in seen && return x′
+            push!(seen, x); x = x′
+        end
+        return x
+    end
+    ws_naive = RuleWorkspace(compile_rules(CompiledRule[
+        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+        mmrule(sin(slot(a)) => slot(a)),
+        mmrule(cos(slot(a)) => slot(a)),
+        mmrule(h(slot(a), slot(b)) => slot(a)),
+        mmrule(g(slot(a), slot(b)) => slot(a) * slot(b)),
+    ]))
+    sub = h(sin(sin(sin(x + y))), cos(g(sin(p + q), sin(a + b)))) +
+        sin(sin(w + z)) + g(cos(x + y), sin(p + q))
+    @test isequal(fixpoint_rewrite(ws_deep, sub), naive_fp(ws_naive, sub))
+end
+
 @testset "SU combinator compatibility" begin
     @syms x y z a b p q
 
