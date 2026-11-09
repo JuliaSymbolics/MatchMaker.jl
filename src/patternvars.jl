@@ -11,10 +11,10 @@
 """
     $TYPEDSIGNATURES
 
-Create a *slot* marker term wrapping the symbolic variable `x`: a
-`BasicSymbolic{SymReal}` `Term` whose `operation` is the `slot` function. `x` may be a `Sym` (wrapped as-is) or a `Symbol` (a fresh
-`Sym` is created; `type`/`shape` keywords apply). The inner `Sym`'s
-`symtype` is the type constraint — see DESIGN.md §3.1.
+Create a *slot* marker term wrapping the symbolic variable `x` —
+matches exactly one subject term. `x` may be a `Sym` (wrapped as-is)
+or a `Symbol` (a fresh `Sym` is created; `type`/`shape` keywords
+apply). The inner `Sym`'s `symtype` is the type constraint.
 """
 function slot end
 

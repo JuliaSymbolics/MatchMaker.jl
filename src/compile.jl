@@ -7,29 +7,28 @@
 """
     NodePlan
 
-Per-node matching plan, indexed by pattern-IR node index (DESIGN.md §5.2). A
-Moshi ADT — the variant is the match instruction; the engine dispatches on it
-and never re-derives node kind:
+Per-node matching plan, indexed by pattern-IR node index. A Moshi ADT —
+the variant is the match instruction the engine dispatches on.
 
-- `Literal()` — `Const`/non-variable `Sym`: match iff `isequal`.
+# Extended help
+
+- `Literal()` — match iff `isequal`.
 - `Slot(var_id, optional)` — a `slot`/`optional` marker occurrence.
 - `Segment(var_id)` — a `segment` marker occurrence.
 - `Call(op, head, children)` — free head: positional children.
-- `SeqCall(op, head, children)` — ordered-sequence matching: a contiguous
-  run of subject arguments per `segment` child. Used for two equivalent
-  cases: an
+- `SeqCall(op, head, children)` — ordered-sequence matching: a
+  contiguous run of subject arguments per `segment` child. Used for an
   associative-not-commutative head, or any free head whose children
   include a `segment` — a node containing a sequence doesn't have to be
-  associative; associativity only adds identity coercion (§4.6,
-  milestone 7).
+  associative; associativity only adds identity coercion.
 - `CommCall(op, head, fixed, slots, optionals, segments)` —
   commutative-not-associative head: children partitioned by kind.
 - `ACCall(op, head, fixed, slots, optionals, segments)` — AC head:
   children partitioned by kind.
 
-`op` is `operation(node)`. `head` is the node index of a symbolic-head
-obligation — nonzero when the operation is itself symbolic (`f(x)` with
-symbolic `f`, including head-slots like `slot(f)(x)` per §4.10).
+`op` is `operation(node)`; `head` is the node index of a symbolic-head
+obligation — nonzero when the operation is itself symbolic (including
+head-slots like `slot(f)(x)`).
 """
 @data NodePlan begin
     struct Literal end
@@ -80,7 +79,7 @@ const NodePlanT = NodePlan.Type
 
 A compiled pattern: pattern `IRStructure` + per-node [`NodePlan`](@ref)s +
 variable table. Built once by [`compile_pattern`](@ref); shareable across
-subjects (the many-to-one hook, §5.2).
+subjects.
 """
 struct Matcher
     "Pattern DAG."
@@ -108,9 +107,9 @@ end
 """
     $TYPEDSIGNATURES
 
-Compile `expr` into a [`Matcher`](@ref) (DESIGN.md §5.2). `vars` maps pattern
-variables (inner `Sym`s or marker terms) to `VarSpec` variants
-([`slotspec`](@ref)/[`segmentspec`](@ref)). Unlisted variables get the
+Compile `expr` into a [`Matcher`](@ref). `vars` maps pattern variables
+(inner `Sym`s or marker terms) to `VarSpec` variants
+([`slotspec`](@ref)/[`segmentspec`](@ref)); unlisted variables get the
 unconstrained spec for their kind.
 """
 function compile_pattern(

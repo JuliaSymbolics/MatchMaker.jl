@@ -13,9 +13,8 @@ using SymbolicUtils: maketerm, metadata, ROArgsT
     RhsT
 
 `FunctionWrapper` signature for callable rule RHSs:
-`(view::SubstitutionView) -> Union{expr, nothing}` — `nothing` signals
-"matched but produce nothing", and the caller falls through to the next
-rule (same convention as `PredT`/`ConstrT` in §3.2).
+`(view::SubstitutionView) -> Union{expr, nothing}` — `nothing` means
+"matched but produce nothing": the caller falls through to the next rule.
 """
 const RhsT = FunctionWrapper{
     Union{BasicSymbolic{SymReal}, Nothing}, Tuple{SubstitutionView}
@@ -26,10 +25,13 @@ const RhsT = FunctionWrapper{
 
 An rhs template compiled against the lhs var ids — evaluation reads
 `eng.binds` by index and splices segment captures positionally, never
-building a `Sym → value` dict (REWRITING.md §2). `vid_of[i]` is the
-pattern var id bound at template-IR node `i` (`0` = not a marker);
-`updates` caches exactly the node indices needing rebuild on eval —
-everything else keeps `ir[i]`.
+building a `Sym → value` dict.
+
+# Extended help
+
+`vid_of[i]` is the pattern var id bound at template-IR node `i` (`0` =
+not a marker); `updates` caches exactly the node indices needing
+rebuild on eval — everything else keeps `ir[i]`.
 """
 struct RhsPlan
     "Template DAG."
@@ -94,11 +96,10 @@ end
     mmrule(lhs => rhs; vars = Dict(), constraints = Constraint[])
 
 Build a [`CompiledRule`](@ref): `lhs` is compiled via
-[`compile_pattern`](@ref); `rhs` is either a symbolic template (compiled
-to an [`RhsPlan`](@ref) over the lhs var ids) or a callable
-`f(view) -> expr | nothing` (wrapped in [`RhsT`](@ref)). `vars` maps
-pattern variables to [`VarSpec`](@ref)s; `constraints` are early-firing
-cross-variable checks (§4.9).
+[`compile_pattern`](@ref); `rhs` is a symbolic template (compiled to an
+[`RhsPlan`](@ref)) or a callable `f(view) -> expr | nothing`.
+`vars` maps pattern variables to [`VarSpec`](@ref)s; `constraints` are
+cross-variable checks — see [`Constraint`](@ref).
 """
 function mmrule(
         lhs::Pair{BasicSymbolic{SymReal}, T};
@@ -201,9 +202,9 @@ end
 """
     RuleIndex
 
-Abstract dispatch seam for many-to-one lookup (REWRITING.md §5):
-`lookup!(idx, buf, x)` appends candidate rule ids to `buf`. Phase 1 is
-[`BucketIndex`](@ref); a discrimination net (`DiscrimNet`) is Phase 2.
+Abstract dispatch seam for many-to-one lookup:
+`lookup!(idx, buf, ws, x, sroot)` appends candidate rule ids to `buf`.
+Phase 1 is [`BucketIndex`](@ref); [`DiscrimNet`](@ref) is Phase 2.
 """
 abstract type RuleIndex end
 
@@ -214,8 +215,12 @@ const _NO_RULES = SmallV{Int32}()
 
 Phase-1 index: rules bucketed by root-obligation signature — a fixed
 `op` head, a slot/marked head (`any_head`), or a leaf literal
-(`leaf_rules`). `arity[i]` is rule `i`'s `(min, max)` subject-arity
-bounds (`optional` counts 0-or-1).
+(`leaf_rules`).
+
+# Extended help
+
+`arity[i]` is rule `i`'s `(min, max)` subject-arity bounds (`optional`
+counts 0-or-1).
 """
 struct BucketIndex <: RuleIndex
     "root op identity -> rule ids."
@@ -353,6 +358,8 @@ end
 One trie node of a [`DiscrimNet`](@ref) — the continuation frontier
 shared by all patterns whose preorder label prefixes reach it.
 
+# Extended help
+
 - `ops`: `(op, arity)` → next — deterministic call-head transition.
 - `opwilds`: `arity` → next — head-marker call (`slot(f)(…)`) — any op.
 - `lits`: literal leaf expr → next.
@@ -380,18 +387,21 @@ NetState() = NetState(
 """
     DiscrimNet <: RuleIndex
 
-Phase-2 index (REWRITING.md §5): a trie over every pattern's *preorder
-obligation sequence*. `Call` children descend positionally; slot
-obligations are wildcard edges (predicates, `want_type`s and
-non-linearity are left to the engine — the net over-approximates
-survivors); `SeqCall`/`CommCall`/`ACCall` subtrees only confirm
-deterministic structure (op + arity bounds) and defer to the engine —
-`optional`/`segment` labels never reach the net.
+Phase-2 index: a shared trie over every pattern's preorder obligation
+sequence — select with `compile_rules(rules, DiscrimNet)`. Faster than
+[`BucketIndex`](@ref) wherever many rules share a root head but differ
+in literals or deeper structure; never slower by design
+(over-approximates survivors — the engine still decides).
 
-Evaluation is NFA simulation over `ws.subj`, memoized per
-`(state, subj_node)` in `ws.net_cache`: subject-IR interning makes a
-DAG-shared subterm evaluate once, and fixpoint iterations re-evaluate
-only newly created nodes.
+# Extended help
+
+`Call` children descend positionally; slot obligations are wildcard
+edges (predicates, `want_type`s and non-linearity stay with the
+engine); `SeqCall`/`CommCall`/`ACCall` subtrees only confirm op + arity
+bounds and defer to the engine. Evaluation is NFA simulation over
+`ws.subj`, memoized per `(state, subj_node)` in `ws.net_cache`:
+subject-IR interning makes a DAG-shared subterm evaluate once, and
+fixpoint iterations re-evaluate only newly created nodes.
 """
 struct DiscrimNet <: RuleIndex
     states::Vector{NetState}
@@ -476,10 +486,9 @@ end
 """
     RuleSet{I <: RuleIndex}
 
-The immutable compiled artifact (REWRITING.md §3): the rules plus the
-dispatch index, built once by [`compile_rules`](@ref) and shareable
-across tasks and calls — all mutable state lives in
-[`RuleWorkspace`](@ref).
+The immutable compiled artifact: the rules plus the dispatch index,
+built once by [`compile_rules`](@ref) and shareable across tasks and
+calls — all mutable state lives in [`RuleWorkspace`](@ref).
 """
 struct RuleSet{I <: RuleIndex}
     "Rules in declaration order — application order."
@@ -493,9 +502,8 @@ end
 
 Compile a collection of [`CompiledRule`](@ref)s (from [`mmrule`](@ref))
 into a [`RuleSet`](@ref) — builds the dispatch index once, shareable
-globally. The optional second argument selects the [`RuleIndex`](@ref)
-implementation: [`BucketIndex`](@ref) (default, Phase 1) or
-[`DiscrimNet`](@ref) (Phase 2).
+globally. The optional second argument selects the [`RuleIndex`](@ref):
+[`BucketIndex`](@ref) (default) or [`DiscrimNet`](@ref).
 """
 function compile_rules(
         rules::AbstractVector{CompiledRule},
@@ -515,17 +523,16 @@ _make_index(::Type{DiscrimNet}, rs) = _build_net(rs)
 """
     RuleWorkspace
 
-The mutable application context — and the rewriter callable
-(REWRITING.md §4). Holds one shared subject `IRStructure`, a lazily
-created `MatchEngine` per rule (`reset!` between sites, not
-re-allocated), the candidate buffer, and the Phase-2 `net_cache`.
+The mutable application context — and the rewriter callable. Holds one
+shared subject `IRStructure`, a lazily created [`MatchEngine`](@ref)
+per rule (`reset!` between sites, not re-allocated), the candidate
+buffer, and the `net_cache`. Build one per [`RuleSet`](@ref) and reuse.
 
 ```julia
 (ws::RuleWorkspace)(x) -> expr′ | nothing   # first-match rule application
 ```
 
-Buffers plateau at `max(|pattern|, |subject|)` over sites seen — reuse
-does not grow. `ws.maxsteps` is a mutable per-site budget.
+`ws.maxsteps` is a mutable per-site budget.
 """
 mutable struct RuleWorkspace
     "The ruleset this workspace serves."
@@ -717,13 +724,10 @@ end
 """
     $TYPEDSIGNATURES
 
-The MatchMaker-native rewrite pass (REWRITING.md §6). `order = :post`
-(the default) sweeps `ws.subj` postorder — `populate_ir!` interning
-dedups shared subterms for free, `maketerm` rebuilds only nodes whose
-children changed, and the workspace applies at every node — linear in
-IR size, no call-stack, no memo dict. `order = :pre` applies the
-workspace before descending into the result (same semantics as
-`Rewriters.Prewalk`), driven by an explicit worklist.
+The MatchMaker-native rewrite pass. `order = :post` (the default)
+sweeps `ws.subj` postorder — interning dedups shared subterms and only
+changed nodes rebuild. `order = :pre` applies the workspace before
+descending into the result (same semantics as `Rewriters.Prewalk`).
 """
 function rewrite(
         ws::RuleWorkspace, expr::BasicSymbolic{SymReal};
@@ -847,11 +851,10 @@ end
 """
     $TYPEDSIGNATURES
 
-Iterate [`rewrite`](@ref) to a fixed point (REWRITING.md §7): the
-workspace `IRStructure` accumulates across iterations — unchanged
-subtrees are the same interned nodes, so `populate_ir!` costs only the
-new ones. A term seen twice ends the loop (`FixpointNoCycle`
-semantics); `maxiterations` bounds it outright.
+Iterate [`rewrite`](@ref) to a fixed point: the workspace `IRStructure`
+accumulates across iterations, and each sweep re-evaluates only
+changed-node ancestors plus new nodes (dirty propagation). A term seen
+twice ends the loop; `maxiterations` bounds it outright.
 """
 function fixpoint_rewrite(
         ws::RuleWorkspace, expr::BasicSymbolic{SymReal};

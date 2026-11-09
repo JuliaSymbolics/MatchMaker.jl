@@ -13,11 +13,10 @@ const _STRICT_VIEWS = @load_preference("strict_views", false)
 """
     SubstitutionView <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
 
-A read-only view of a match's live engine bindings (DESIGN.md §5.6): variable
-`Sym` → bound expression, resolved lazily. Valid only until the next
-`eachmatch`/`iterate` step mutates the bindings — copy with
-[`materialize`](@ref) to keep results. With the `strict_views` preference
-enabled, stale access throws.
+A read-only view of a match's live engine bindings, resolved lazily.
+Valid only until the next `eachmatch`/`iterate` step mutates the
+bindings — copy with [`materialize`](@ref) to keep results. With the
+`strict_views` preference enabled, stale access throws.
 """
 struct SubstitutionView <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
     eng::MatchEngine
@@ -101,18 +100,11 @@ end
 """
     BoundMatch <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
 
-A persistent match result that shares no mutable state with the engine
-that produced it: it stores the pattern, the subject IR, and a frozen
-copy of the [`Bindings`](@ref). Variable values are resolved
-on access — segment vars pay `_seg_value` reconstruction once (memoized
-into the snapshot), so a [`BoundMatch`](@ref) is cheap to collect and
-stays cheaper than a [`MarkersMap`](@ref) when only a few variables are
-materialized. Copy into a [`MarkersMap`](@ref) with
-[`materialize`](@ref).
-
-Returned by [`boundmatches`](@ref) and [`boundmatchall`](@ref) — the
-fast way to collect many results when the consumer only inspects a few
-bound values (or just counts/compares matches).
+A persistent match result — a frozen copy of the bindings, resolved
+lazily on access. Returned by [`boundmatches`](@ref),
+[`boundmatchall`](@ref), and [`boundmatches_at`](@ref); cheap to
+collect when the consumer inspects only a few bound values per match.
+Copy into a [`MarkersMap`](@ref) with [`materialize`](@ref).
 """
 struct BoundMatch <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
     pat::Matcher

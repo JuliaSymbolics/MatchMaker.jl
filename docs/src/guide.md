@@ -1,3 +1,7 @@
+```@meta
+CurrentModule = MatchMaker
+```
+
 # MatchMaker.jl user guide
 
 MatchPy-style symbolic pattern matching for

@@ -70,7 +70,7 @@ end
 Whether `f(x, f(y, z)) ≡ f(f(x, y), z)` for calls whose result symtype is
 `ST`. Extension point: add methods for your own functions. For *symbolic*
 heads, traits come from [`OperationTraitsCtx`](@ref) metadata on the head
-`Sym` (DESIGN.md §3.5).
+`Sym` — see [`set_operation_traits`](@ref).
 """
 is_associative(@nospecialize(f), ::SymbolicUtils.TypeT) = false
 

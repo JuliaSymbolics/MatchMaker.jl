@@ -6,18 +6,16 @@
 Rebuild `template`, replacing marker terms with their bound values from
 `subst` (a `MarkersMap` or any dict keyed on variable syms/marker terms).
 `slot`/`optional` vars substitute their bound expression; `segment` vars
-splice `arguments(bound)` into the parent's argument list; a `Const`
-segment binding (the identity) contributes zero arguments; a head marker
-(`slot(f)(…)`) substitutes the raw bound operation (DESIGN.md §4.10, §5.6).
+splice `arguments(bound)` into the parent's argument list (a `Const`
+segment binding contributes zero arguments); a head marker
+(`slot(f)(…)`) substitutes the raw bound operation.
 
-Iterates the template's `IRStructure` in postorder building `out[i]` — no
-recursion: marker nodes resolve to their bound expression, and call nodes
-rebuild `f(args…)` splicing segment-bound args (canonical exprs of children
-are always available, children before parents).
+# Extended help
 
-For templates without segment or head markers, `SymbolicUtils.IRSubstituter`
-gives the same result — `instantiate` is required for splicing and head
-substitution, which node→expr rules cannot express.
+Iterates the template's `IRStructure` in postorder building `out[i]` —
+no recursion. For templates without segment or head markers,
+`SymbolicUtils.IRSubstituter` gives the same result; `instantiate` is
+required for splicing and head substitution.
 """
 function instantiate(template::BasicSymbolic{SymReal}, subst)
     ir = IRStructure{SymReal}()
