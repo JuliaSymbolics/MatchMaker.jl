@@ -20,13 +20,15 @@ struct Bindings
     seq::Vector{ArgsT{SymReal}}
     "var_id -> the head a segment var captured under."
     seg_op::Vector{Any}
+    "var_id -> memoized `f(captured…)` for segment vars (lazily filled)."
+    segval::Vector{Any}
     "var_id -> non-node bound value (e.g. a head-slot var bound to a raw op)."
     extra::Vector{Any}
 end
 
 Bindings(nvars::Integer) = Bindings(
     zeros(Int32, nvars), [ArgsT{SymReal}() for _ in 1:nvars],
-    fill(nothing, nvars), fill(nothing, nvars)
+    fill(nothing, nvars), fill(nothing, nvars), fill(nothing, nvars)
 )
 
 is_bound_node(b::Bindings, vid::Int32) = b.node[vid] != 0
