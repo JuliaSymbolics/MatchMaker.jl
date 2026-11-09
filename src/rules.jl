@@ -327,6 +327,16 @@ end
 ### DiscrimNet (§5, Phase 2)
 ###
 
+# One deferred-subtree edge: `SeqCall`/`CommCall`/`ACCall` confirm
+# `iscall` + `op` (`nothing` = head-marker, any op) + `lo <= arity <=
+# hi`, then the engine does the real match under that head.
+struct NetDefer
+    op::Any
+    lo::Int
+    hi::Int
+    next::Int32
+end
+
 """
     NetState
 
@@ -336,9 +346,9 @@ shared by all patterns whose preorder label prefixes reach it.
 - `ops`: `(op, arity)` → next — deterministic call-head transition.
 - `opwilds`: `arity` → next — head-marker call (`slot(f)(…)`) — any op.
 - `lits`: literal leaf expr → next.
-- `defers`: `(op, lo, hi, next)` tuples — `SeqCall`/`CommCall`/`ACCall`
-  subtrees confirm `iscall` + `op` (`nothing` = head-marker, any op) +
-  arity bounds, then hand the whole subtree to the engine.
+- `defers`: `SeqCall`/`CommCall`/`ACCall` subtree edges — confirm
+  `iscall` + `op` (`nothing` = head-marker, any op) + arity bounds,
+  then hand the whole subtree to the engine.
 - `wild`: slot transition — fires on any subject node (`0` = none).
 - `finals`: rule ids whose label sequence ends here.
 """
@@ -346,7 +356,7 @@ mutable struct NetState
     ops::Dict{Tuple{Any, Int}, Int32}
     opwilds::Dict{Int, Int32}
     lits::Dict{BasicSymbolic{SymReal}, Int32}
-    defers::Vector{Tuple{Any, Int, Int, Int32}}
+    defers::Vector{NetDefer}
     wild::Int32
     finals::SmallV{Int32}
 end
@@ -354,7 +364,7 @@ end
 NetState() = NetState(
     Dict{Tuple{Any, Int}, Int32}(), Dict{Int, Int32}(),
     Dict{BasicSymbolic{SymReal}, Int32}(),
-    Tuple{Any, Int, Int, Int32}[], Int32(0), SmallV{Int32}()
+    NetDefer[], Int32(0), SmallV{Int32}()
 )
 
 """
@@ -435,10 +445,10 @@ function _net_defer!(
     o = op isa BasicSymbolic{SymReal} && is_marker_term(op) ? nothing : op
     ds = net.states[σ].defers
     for d in ds
-        d[1] === o && d[2] == lo && d[3] == hi && return d[4]
+        d.op === o && d.lo == lo && d.hi == hi && return d.next
     end
     σ2 = _net_new!(net)
-    push!(ds, (o, lo, hi, σ2))
+    push!(ds, NetDefer(o, lo, hi, σ2))
     return σ2
 end
 
@@ -608,9 +618,9 @@ function _net_go(
         for (k, σ2) in st.opwilds
             k == arity && _net_descend!(out, net, ws, σ2, nbs, argstart)
         end
-        for (o, lo, hi, σ2) in st.defers
-            (o === nothing || o === op) && lo <= arity <= hi &&
-                push!(out, σ2)
+        for d in st.defers
+            (d.op === nothing || d.op === op) && d.lo <= arity <= d.hi &&
+                push!(out, d.next)
         end
     else
         for (e, σ2) in st.lits
