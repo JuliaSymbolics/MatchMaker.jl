@@ -495,6 +495,26 @@ SUITE["rewrite"]["fixp: mm fixpoint net"] =
 SUITE["rewrite"]["fixp: su Fixpoint∘Postwalk(x)"] =
     @benchmarkable $RW_SU_FP($sub_rw_fp)
 
+# Occurrence search (milestone 4): `eachmatch_at` shares one engine +
+# the populated IR across sites — the naive alternative descends and
+# builds a fresh engine+IR per `match` call. Subject with DAG-shared
+# subterms (sin(x+y), sin(p+q) occur twice) exercises node dedup.
+sub_occ = h(x + y, sin(p + q)) * (sin(x + y) + sin(p + q)) * sin(x + y)
+pat_occ = sin(slot(a))
+function _naive_occ(pat, s)
+    subj = SymbolicUtils.IRStructure{SymReal}()
+    SymbolicUtils.populate_ir!(subj, s)
+    n = 0
+    for i in 1:length(subj)
+        match(pat, subj[i]) === nothing || (n += 1)
+    end
+    return n
+end
+SUITE["rewrite"]["occ: eachmatch_at"] =
+    @benchmarkable eachmatch_at((v, t) -> true, $pat_occ, $sub_occ)
+SUITE["rewrite"]["occ: descend+match"] =
+    @benchmarkable _naive_occ($pat_occ, $sub_occ)
+
 # ------------------------------------------------------------------
 # DiscrimNet vs BucketIndex at scale — the cases that exercise the
 # net's leverage: many same-(op,arity) rules distinguished only by

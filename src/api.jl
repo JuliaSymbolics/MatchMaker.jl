@@ -308,3 +308,34 @@ function eachmatch(
 end
 eachmatch(f, p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     eachmatch(f, compile_pattern(p), s; kwargs...)
+
+"""
+    $TYPEDSIGNATURES
+
+Occurrence search — call `f(::SubstitutionView, t)` on each match of `m`
+at each node of `s`, in postorder (bottom-up): the view is the
+[`SubstitutionView`](@ref) for the current match, `t` the subterm of `s`
+at that site. Stop when `f` returns `false`.
+
+The subject is interned once into the engine's shared IR, so a
+structurally shared subterm is one node and yields one hit — sites are
+deduplicated by `===`-identity, not by syntactic position (REWRITING.md
+milestone 4). The view is only valid inside `f` — `materialize` to keep.
+"""
+function eachmatch_at(
+        f::F, m::Matcher, s::BasicSymbolic{SymReal};
+        constraints = Constraint[], maxsteps::Int = typemax(Int)
+    ) where {F}
+    eng = MatchEngine(m, s, constraints; maxsteps)
+    subj = eng.subj
+    for i in Int32(1):Int32(length(subj))
+        reset!(eng, subj, i)
+        t = subj[i]
+        while next_match!(eng)
+            f(SubstitutionView(eng, eng.steps), t) === false && return nothing
+        end
+    end
+    return nothing
+end
+eachmatch_at(f, p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
+    eachmatch_at(f, compile_pattern(p), s; kwargs...)

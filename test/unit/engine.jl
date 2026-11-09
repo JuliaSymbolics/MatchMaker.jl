@@ -118,3 +118,57 @@ end
     end
     @test n[] == 1
 end
+
+@testset "eachmatch_at" begin
+    @syms x y a b p q
+    h = Sym{SymReal}(:h; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    sub = h(x + y, sin(p + q)) + sin(x + y)
+
+    # occurrence search: sin sites only, postorder (bottom-up)
+    hits = Tuple{MarkersMap,Any}[]
+    eachmatch_at((v, t) -> (push!(hits, (materialize(v), t)); true),
+        sin(slot(a)), sub)
+    @test length(hits) == 2
+    @test isequal(hits[1][2], sin(p + q))
+    @test isequal(hits[1][1][a], p + q)
+    @test isequal(hits[2][2], sin(x + y))
+    @test isequal(hits[2][1][a], x + y)
+
+    # bare slot hits every node — DAG-shared x+y dedups to one site
+    sites = Any[]
+    eachmatch_at((v, t) -> (push!(sites, t); true), slot(a), sub)
+    @test length(sites) == 10
+    @test allunique(sites)   # ===-deduped nodes, not positions
+
+    # non-linear pattern: h(a,a) hits where both children coincide
+    nl = Ref(0)
+    eachmatch_at((v, t) -> (nl[] += 1; true),
+        h(slot(a), slot(a)), h(x + y, x + y))
+    @test nl[] == 1
+    eachmatch_at((v, t) -> (nl[] += 1; true), h(slot(a), slot(a)), h(x, y))
+    @test nl[] == 1
+
+    # f returning false stops early
+    n = Ref(0)
+    eachmatch_at((v, t) -> (n[] += 1; n[] < 2), slot(a), sub)
+    @test n[] == 2
+
+    # leaf-only subject: bare slot yields one hit at the leaf
+    leaf = Ref(0)
+    eachmatch_at((v, t) -> (leaf[] += 1; true), slot(a), x)
+    @test leaf[] == 1
+
+    # oracle: hits equal per-node `match` over every unique subterm
+    function naive_sites(pat, s)
+        eng_subj = SymbolicUtils.IRStructure{SymReal}()
+        SymbolicUtils.populate_ir!(eng_subj, s)
+        return [eng_subj[i] for i in 1:length(eng_subj)
+                if match(pat, eng_subj[i]) !== nothing]
+    end
+    for pat in (sin(slot(a)), slot(a) + slot(b), h(slot(a), slot(b)))
+        got = Any[]
+        eachmatch_at((v, t) -> (push!(got, t); true), pat, sub)
+        # eachmatch enumerates every binding per site — oracle checks sites
+        @test isequal(unique(got), naive_sites(pat, sub))
+    end
+end
