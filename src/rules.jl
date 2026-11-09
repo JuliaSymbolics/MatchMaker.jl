@@ -499,8 +499,8 @@ globally. `index` selects the [`RuleIndex`](@ref) implementation:
 """
 function compile_rules(
         rules::AbstractVector{CompiledRule};
-        index::Type{<:RuleIndex} = BucketIndex,
-    )
+        index::Type{I} = BucketIndex,
+    ) where {I <: RuleIndex}
     rs = collect(CompiledRule, rules)
     return RuleSet(rs, _make_index(index, rs))
 end
@@ -541,13 +541,18 @@ mutable struct RuleWorkspace
     "Phase-2 memo: (net_state, subj_node) -> next-state set (§7 —
     persists across iterations; unused under `BucketIndex`)."
     net_cache::Dict{Tuple{Int32, Int32}, SmallV{Int32}}
+    "Phase-2 scratch: pooled frontier buffers for `_net_descend!` —
+    re-entrant (nested descents pull fresh pairs; returned buffers are
+    emptied on checkout). Unused under `BucketIndex`."
+    net_pool::Vector{Vector{Int32}}
 end
 
 function RuleWorkspace(rs::RuleSet; maxsteps::Int = typemax(Int))
     return RuleWorkspace(
         rs, maxsteps, IRStructure{SymReal}(),
         Union{Nothing, MatchEngine}[nothing for _ in rs.rules],
-        SmallV{Int32}(), Dict{Tuple{Int32, Int32}, SmallV{Int32}}()
+        SmallV{Int32}(), Dict{Tuple{Int32, Int32}, SmallV{Int32}}(),
+        Vector{Int32}[]
     )
 end
 
@@ -582,6 +587,15 @@ end
 ### Net evaluation — go(σ, s) = NFA states after consuming subject node s
 ###
 
+# Pooled frontier buffers — `_net_descend!` recurses through `_net_go`,
+# so each descent checks out its own pair from `ws.net_pool`.
+@inline function _net_buf!(ws::RuleWorkspace)
+    isempty(ws.net_pool) && return Int32[]
+    return empty!(pop!(ws.net_pool))
+end
+@inline _net_free!(ws::RuleWorkspace, buf::Vector{Int32}) =
+    push!(ws.net_pool, buf)
+
 # Fold `s`'s call children through `go` starting from `σ`: the Op/
 # OpWild head transition consumed `s`; each child subtree advances the
 # frontier one label.
@@ -589,21 +603,24 @@ function _net_descend!(
         out::SmallV{Int32}, net::DiscrimNet, ws::RuleWorkspace,
         σ::Int32, nbs, argstart::Int
     )
-    states = SmallV{Int32}()
+    states = _net_buf!(ws)
+    next = _net_buf!(ws)
     push!(states, σ)
     for j in argstart:length(nbs)
-        isempty(states) && return out
-        next = SmallV{Int32}()
+        isempty(states) && break
         for σc in states
             for σn in _net_go(net, ws, σc, nbs[j])
                 σn in next || push!(next, σn)
             end
         end
-        states = next
+        (states, next) = (next, states)
+        empty!(next)
     end
     for σn in states
         σn in out || push!(out, σn)
     end
+    _net_free!(ws, next)
+    _net_free!(ws, states)
     return out
 end
 
