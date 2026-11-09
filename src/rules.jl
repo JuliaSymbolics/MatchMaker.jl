@@ -513,13 +513,20 @@ function _rewrite_post(ws::RuleWorkspace, expr::BasicSymbolic{SymReal})
         op = operation(t)
         argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
         newop = argstart == 2 ? unwrap_const(out[nbs[1]]) : op
-        args = arguments(t)::ROArgsT{SymReal}
+        # `outneighbors` are `arguments()` order (IRStructure invariant)
+        # and children are interned — compare/rebuild against
+        # `subj[nbs[j]]` directly rather than paying `arguments(t)`
+        # (on AddMul that rebuilds Mul/^ terms per dict entry).
         newargs = nothing
         for (k, j) in enumerate(argstart:length(nbs))
             na = out[nbs[j]]
-            na === args[k] && continue
+            na === subj[nbs[j]] && continue
             if newargs === nothing
-                newargs = copy(parent(args))::ArgsT{SymReal}
+                newargs = ArgsT{SymReal}()
+                sizehint!(newargs, length(nbs) - argstart + 1)
+                for jj in argstart:length(nbs)
+                    push!(newargs, subj[nbs[jj]])
+                end
             end
             newargs[k] = na
         end
@@ -528,7 +535,11 @@ function _rewrite_post(ws::RuleWorkspace, expr::BasicSymbolic{SymReal})
             out[i] = _apply_site(ws, t, i)
         else
             if newargs === nothing
-                newargs = copy(parent(args))
+                newargs = ArgsT{SymReal}()
+                sizehint!(newargs, length(nbs) - argstart + 1)
+                for jj in argstart:length(nbs)
+                    push!(newargs, subj[nbs[jj]])
+                end
             end
             x = maketerm(typeof(t), newop, newargs, metadata(t))
             out[i] = _apply_site(ws, x, populate_ir!(subj, x))
