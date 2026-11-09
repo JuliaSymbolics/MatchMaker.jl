@@ -898,7 +898,7 @@ function _fixpoint_post(
     evaled = falses(n)
     dirty = collect(Int32(1):n)
     modified = Int32[]
-    stale = IdSet{Int32}()
+    stale = BitSet()
     seen = IdSet{BasicSymbolic{SymReal}}()
     n_known = n
     steps = 0
@@ -940,13 +940,13 @@ function _fixpoint_post(
             steps >= maxiterations && return res
             sroot = populate_ir!(subj, res)
         end
-        # next sweep: stale ancestors ∪ the halted chain head ∪ new nodes
-        append!(dirty, stale)
-        sroot <= n_known && push!(dirty, sroot)
+        # next sweep: stale ∪ halted chain head ∪ new nodes — `stale` is
+        # a BitSet, so appending it yields `dirty` sorted + deduped
+        sroot <= n_known && push!(stale, sroot)
         for i in (n_known + 1):Int32(length(subj))
-            push!(dirty, i)
+            push!(stale, i)
         end
-        sort!(unique!(dirty))
+        append!(dirty, stale)
     end
     return out[sroot]
 end
