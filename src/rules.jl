@@ -874,29 +874,14 @@ function fixpoint_rewrite(
     return x
 end
 
-# inneighbors-closure of `modified`: a node's `out` is stale iff a
-# child's `out` changed. Appends to `stale` (deduped by set membership).
-function _dirty_ancestors!(
-        stale::IdSet{Int32}, g, modified::Vector{Int32})
-    stack = copy(modified)
-    while !isempty(stack)
-        i = pop!(stack)
-        for p in Graphs.inneighbors(g, i)
-            p in stale && continue
-            push!(stale, p)
-            push!(stack, p)
-        end
-    end
-    return stale
-end
-
 # §7 incremental fixpoint: `out[i]` persists the latest rewrite result
 # of node `i` across iterations — `out[i]` *is* `rewrite(subj[i])`, so
 # the iterate chain `x ↦ out[node(x)]` advances by reading; evaluation
 # is only needed when the chain reaches a node that is unevaled or
-# stale (an `out` descendant changed). Each sweep re-evaluates only the
-# inneighbors-ancestors of nodes whose `out` changed plus newly
-# interned nodes — O(Δ·depth) instead of a full re-walk. Pattern
+# stale (a child's `out` changed). Each sweep re-evaluates only the
+# direct parents of nodes whose `out` changed plus newly interned
+# nodes — transitivity follows from parents being marked as their own
+# children modify — O(Δ·depth) instead of a full re-walk. Pattern
 # children index lower than parents (postorder interning), so
 # ascending `dirty` order evaluates descendants first.
 function _fixpoint_post(
@@ -929,7 +914,12 @@ function _fixpoint_post(
             end
             evaled[i] = true
         end
-        _dirty_ancestors!(stale, g, modified)
+        # stale = direct parents of modified — a node is stale iff a
+        # child's `out` changed; the cascade covers transitivity (same
+        # idea as IRStructure's `non_canonical_idxs` marking)
+        for i in modified
+            union!(stale, Graphs.inneighbors(g, i))
+        end
         # — chain phase: follow `x ↦ out[node(x)]` while `out` is fresh —
         empty!(dirty)
         while true
