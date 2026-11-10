@@ -1,0 +1,6 @@
+[default.extend-words]
+# "SIAM J. Comput." / "J. Symb. Comput." — journal abbreviations in the
+# bibliography, not the word "compute".
+Comput = "Comput"
+# pattern-node shorthand used in DESIGN.md prose.
+pn = "pn"
