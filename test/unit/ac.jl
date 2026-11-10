@@ -92,10 +92,12 @@ let
         # bound a ↦ p in the outer frame.
         k = Sym{SymReal}(:k; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
         @test isequal(
-            only(matchall(
-                g(slot(a), f(slot(b), h(slot(c), segment(s)))),
-                g(p, f(k(q), h(q)))
-            )),
+            only(
+                matchall(
+                    g(slot(a), f(slot(b), h(slot(c), segment(s)))),
+                    g(p, f(k(q), h(q)))
+                )
+            ),
             MarkersMap(a => p, b => k(q), c => q, s => h())
         )
     end
@@ -216,19 +218,23 @@ let
         # a rejected default cannot bind, so the position fails
         m5 = compile_pattern(
             x + optional(a);
-            vars = Dict(a => slotspec(
-                v -> !(SymbolicUtils.isconst(v) && v.val === 0);
-                default = 0
-            ))
+            vars = Dict(
+                a => slotspec(
+                    v -> !(SymbolicUtils.isconst(v) && v.val === 0);
+                    default = 0
+                )
+            )
         )
         @test isempty(collect(matches(m5, x)))
         @test isequal(only(collect(matches(m5, x + p))), MarkersMap(a => p))
         # an accepted default binds through extra as before
         m6 = compile_pattern(
             x + optional(a);
-            vars = Dict(a => slotspec(
-                v -> SymbolicUtils.isconst(v) && v.val isa Int; default = 0
-            ))
+            vars = Dict(
+                a => slotspec(
+                    v -> SymbolicUtils.isconst(v) && v.val isa Int; default = 0
+                )
+            )
         )
         @test isequal(only(collect(matches(m6, x))), MarkersMap(a => 0))
         @test isequal(only(collect(matches(m6, x + 1))), MarkersMap(a => 1))
@@ -250,20 +256,24 @@ let
         # under * with a rejected identity default
         m8 = compile_pattern(
             x * optional(a);
-            vars = Dict(a => slotspec(
-                v -> !(SymbolicUtils.isconst(v) && v.val === 1);
-                default = 1
-            ))
+            vars = Dict(
+                a => slotspec(
+                    v -> !(SymbolicUtils.isconst(v) && v.val === 1);
+                    default = 1
+                )
+            )
         )
         @test isempty(collect(matches(m8, x)))
         @test isequal(only(collect(matches(m8, x * p))), MarkersMap(a => p))
         # same check inside a nested AC call
         m9 = compile_pattern(
             g(f(optional(a)), slot(a));
-            vars = Dict(a => slotspec(
-                v -> !(SymbolicUtils.isconst(v) && v.val === 5);
-                default = 5
-            ))
+            vars = Dict(
+                a => slotspec(
+                    v -> !(SymbolicUtils.isconst(v) && v.val === 5);
+                    default = 5
+                )
+            )
         )
         @test isempty(collect(matches(m9, g(f(), p))))
         @test isequal(
@@ -284,33 +294,49 @@ end
     # order — a permuted term subject binds positionally, not
     # commutatively
     @test isequal(
-        only(collect(matchall(
-            compile_pattern(term(+, slot(a), slot(b), slot(c))),
-            term(+, c, b, a)
-        ))),
+        only(
+            collect(
+                matchall(
+                    compile_pattern(term(+, slot(a), slot(b), slot(c))),
+                    term(+, c, b, a)
+                )
+            )
+        ),
         MarkersMap(a => c, b => b, c => a)
     )
     # an `Any`-symtype subject is not admitted for a SymReal slot —
     # `Any` is unknown, not provably numeric
     hh = Sym{SymReal}(:hh; type = FnType{Tuple{Any}, Number, Nothing})
-    @test isempty(collect(matchall(
-        compile_pattern(hh(slot(a))), hh(term(+, x, y, z))
-    )))
+    @test isempty(
+        collect(
+            matchall(
+                compile_pattern(hh(slot(a))), hh(term(+, x, y, z))
+            )
+        )
+    )
     # declared-trait heads keep AC regardless of arg count — the
     # traits key on the Sym, not the symtype
     fac = Sym{SymReal}(
         :fac; type = FnType{Tuple{Vararg{Number}}, Number, Nothing}
     )
     fac = set_operation_traits(fac; associative = true, commutative = true)
-    @test length(collect(matchall(
-        compile_pattern(fac(slot(a), slot(b), slot(c))), fac(c, b, a)
-    ))) == 6
+    @test length(
+        collect(
+            matchall(
+                compile_pattern(fac(slot(a), slot(b), slot(c))), fac(c, b, a)
+            )
+        )
+    ) == 6
     # and canonical +/* constructed via the workers are AC-typed —
     # the right way to build an Add/Mul programmatically
-    @test length(collect(matchall(
-        compile_pattern(
-            SymbolicUtils.add_worker(SymReal, (slot(a), slot(b), slot(c)))
-        ),
-        c + b + a
-    ))) == 6
+    @test length(
+        collect(
+            matchall(
+                compile_pattern(
+                    SymbolicUtils.add_worker(SymReal, (slot(a), slot(b), slot(c)))
+                ),
+                c + b + a
+            )
+        )
+    ) == 6
 end

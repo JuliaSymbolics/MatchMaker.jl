@@ -125,12 +125,13 @@ end
     sub = h(x + y, sin(p + q)) + sin(x + y)
 
     # occurrence search: sin sites only, postorder (bottom-up)
+    # hit order is IR-node order — which sin site comes first depends on
+    # canonical arg order (version/process-dependent), so key by subterm
     hits = collect(matches_at(sin(slot(a)), sub))
     @test length(hits) == 2
-    @test isequal(hits[1][2], sin(p + q))
-    @test isequal(hits[1][1][a], p + q)
-    @test isequal(hits[2][2], sin(x + y))
-    @test isequal(hits[2][1][a], x + y)
+    hitmap = Dict{BasicSymbolic{SymReal}, MarkersMap}(t => mm for (mm, t) in hits)
+    @test isequal(hitmap[sin(p + q)][a], p + q)
+    @test isequal(hitmap[sin(x + y)][a], x + y)
 
     # bare slot hits every node — DAG-shared x+y dedups to one site
     sites = [t for (bm, t) in boundmatches_at(slot(a), sub)]
@@ -148,8 +149,10 @@ end
     function naive_sites(pat, s)
         eng_subj = SymbolicUtils.IRStructure{SymReal}()
         SymbolicUtils.populate_ir!(eng_subj, s)
-        return [eng_subj[i] for i in 1:length(eng_subj)
-                if match(pat, eng_subj[i]) !== nothing]
+        return [
+            eng_subj[i] for i in 1:length(eng_subj)
+                if match(pat, eng_subj[i]) !== nothing
+        ]
     end
     for pat in (sin(slot(a)), slot(a) + slot(b), h(slot(a), slot(b)))
         got = [t for (bm, t) in boundmatches_at(pat, sub)]
@@ -161,18 +164,20 @@ end
     r = collect(boundmatches_at(sin(slot(a)), sub))
     @test length(r) == 2
     @test all(bm isa BoundMatch for (bm, t) in r)
-    @test isequal(r[1][1][a], p + q)
-    @test isequal(r[1][2], sin(p + q))
-    @test isequal(r[2][1][a], x + y)
+    rh = Dict{BasicSymbolic{SymReal}, BoundMatch}(t => bm for (bm, t) in r)
+    @test isequal(rh[sin(p + q)][a], p + q)
+    @test isequal(rh[sin(x + y)][a], x + y)
 
     r2 = collect(matches_at(sin(slot(a)), sub))
-    @test isequal(
-        r2,
-        [(MarkersMap(a => p + q), sin(p + q)),
-            (MarkersMap(a => x + y), sin(x + y))])
+    rh2 = Dict{BasicSymbolic{SymReal}, MarkersMap}(t => mm for (mm, t) in r2)
+    @test isequal(rh2[sin(p + q)], MarkersMap(a => p + q))
+    @test isequal(rh2[sin(x + y)], MarkersMap(a => x + y))
 
-    # laziness: first() pays one site
-    @test isequal(first(boundmatches_at(sin(slot(a)), sub))[2], sin(p + q))
+    # laziness: first() pays one site — which one is order-dependent
+    @test any(
+        Base.Fix1(isequal, first(boundmatches_at(sin(slot(a)), sub))[2]),
+        (sin(p + q), sin(x + y)),
+    )
     # multi-hit per site: AC pattern yields multiple bindings at x+y+p
     @test length(collect(boundmatches_at(segment(s) + slot(t), x + y + p))) > 1
     # empty result

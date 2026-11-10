@@ -16,7 +16,7 @@ function _fz_norm(d)
     pairs = sort!(
         [
             string(k) => (v isa BasicSymbolic{SymReal} ? v : Const{SymReal}(v))
-            for (k, v) in d
+                for (k, v) in d
         ]; by = first
     )
     return join((string(k, " => ", repr(v)) for (k, v) in pairs), "; ")
@@ -41,7 +41,7 @@ let
 
     function rand_subject(rng::Xoshiro, depth::Int)
         depth <= 0 && return rand(rng, ATOMS)
-    rand(rng) < 0.25 && return rand(rng, ATOMS)
+        rand(rng) < 0.25 && return rand(rng, ATOMS)
         op = rand(rng, HEADS)
         nargs = rand(rng, 0:3)
         args = BasicSymbolic{SymReal}[rand_subject(rng, depth - 1) for _ in 1:nargs]

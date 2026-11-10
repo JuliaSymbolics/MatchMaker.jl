@@ -45,7 +45,7 @@ function _mp_norm(d)
     pairs = sort!(
         [
             string(k) => (v isa BasicSymbolic{SymReal} ? v : Const{SymReal}(v))
-            for (k, v) in d
+                for (k, v) in d
         ]; by = first
     )
     return join((string(k, " => ", repr(v)) for (k, v) in pairs), "; ")
@@ -53,9 +53,13 @@ end
 
 # deduped match count — MatchPy yields unique substitutions
 function mpc(pat, subj; vars = Dict{BasicSymbolic{SymReal}, VarSpec.Type}(), constraints = Constraint[])
-    return length(unique(_mp_norm.(
-        collect(matchall(compile_pattern(pat; vars = _mp_vars(pat, vars)), subj; constraints))
-    )))
+    return length(
+        unique(
+            _mp_norm.(
+                collect(matchall(compile_pattern(pat; vars = _mp_vars(pat, vars)), subj; constraints))
+            )
+        )
+    )
 end
 
 # vars keys not present in the pattern must be dropped — the testsets
@@ -88,14 +92,20 @@ function mp(
     dropn = Set(string.(drop))
     # MatchPy yields each distinct substitution once; the engine yields
     # one result per distinct assignment — dedupe identical maps
-    got = unique(sort(_mp_norm.(
-        [
-            Dict(k => v for (k, v) in d if string(k) ∉ dropn)
-            for d in collect(matchall(
-                compile_pattern(pat; vars), subj; constraints
-            ))
-        ]
-    )))
+    got = unique(
+        sort(
+            _mp_norm.(
+                [
+                    Dict(k => v for (k, v) in d if string(k) ∉ dropn)
+                        for d in collect(
+                            matchall(
+                                compile_pattern(pat; vars), subj; constraints
+                            )
+                        )
+                ]
+            )
+        )
+    )
     # expected maps: Dicts, or a Vector{Pair} meaning one map
     maps = expected isa AbstractVector{<:Pair} ? [expected] : expected
     want = sort(_mp_norm.(maps))
@@ -232,66 +242,86 @@ let
             (h(a, b), h(a, segment(x)), [x => h(b)]),
             (h(a, b), h(segment(x), segment(x)), Dict[]),
             (h(a, a), h(segment(x), segment(x)), [x => h(a)]),
-            (h(a, b), h(segment(x), segment(y)),
+            (
+                h(a, b), h(segment(x), segment(y)),
                 [
                     Dict(x => h(), y => h(a, b)),
                     Dict(x => h(a), y => h(b)),
                     Dict(x => h(a, b), y => h()),
-                ]),
-            (h(a), h(segment(x), segment(y)),
-                [Dict(x => h(), y => h(a)), Dict(x => h(a), y => h())]),
-            (h(a, b, c), h(segment(x), segment(y)),
+                ],
+            ),
+            (
+                h(a), h(segment(x), segment(y)),
+                [Dict(x => h(), y => h(a)), Dict(x => h(a), y => h())],
+            ),
+            (
+                h(a, b, c), h(segment(x), segment(y)),
                 [
                     Dict(x => h(), y => h(a, b, c)),
                     Dict(x => h(a), y => h(b, c)),
                     Dict(x => h(a, b), y => h(c)),
                     Dict(x => h(a, b, c), y => h()),
-                ]),
-            (h(a, h2(b)), h(segment(x), segment(y)),
+                ],
+            ),
+            (
+                h(a, h2(b)), h(segment(x), segment(y)),
                 [
                     Dict(x => h(), y => h(a, h2(b))),
                     Dict(x => h(a), y => h(h2(b))),
                     Dict(x => h(a, h2(b)), y => h()),
-                ]),
+                ],
+            ),
             (h(a, h2(b)), h(segment(x), h2(segment(y))), [x => h(a), y => h2(b)]),
             (h(a, h2(b)), h(segment(x), h2(segment(x))), Dict[]),
             (h(a, h2(a)), h(segment(x), h2(segment(x))), [x => h(a)]),
             (h(h2(a), h2(b)), h(segment(x), segment(x)), Dict[]),
-            (h(h2(a), h2(b)), h(segment(x), segment(y)),
+            (
+                h(h2(a), h2(b)), h(segment(x), segment(y)),
                 [
                     Dict(x => h(h2(a), h2(b)), y => h()),
                     Dict(x => h(h2(a)), y => h(h2(b))),
                     Dict(x => h(), y => h(h2(a), h2(b))),
-                ]),
+                ],
+            ),
             (h(h2(a), a), h(segment(x), segment(x)), Dict[]),
             (h(h2(a), a), h(h2(segment(x)), segment(x)), [x => h2(a)]),
-            (h(h(a, b)), h(segment(x), segment(y)),
+            (
+                h(h(a, b)), h(segment(x), segment(y)),
                 [
                     Dict(x => h(h(a, b)), y => h()),
                     Dict(x => h(), y => h(h(a, b))),
-                ]),
+                ],
+            ),
             (h(h(a, b)), h(segment(x)), [x => h(h(a, b))]),
             (h2(a, b), h(segment(x), segment(y)), Dict[]),
             (h(a, a, a), h(segment(x), b, segment(y)), Dict[]),
-            (h(a, a, a), h(segment(x), a, segment(y)),
+            (
+                h(a, a, a), h(segment(x), a, segment(y)),
                 [
                     Dict(x => h(), y => h(a, a)),
                     Dict(x => h(a), y => h(a)),
                     Dict(x => h(a, a), y => h()),
-                ]),
+                ],
+            ),
             (h(a), h(segment(x), a, segment(y)), [Dict(x => h(), y => h())]),
-            (h(a, a), h(segment(x), a, segment(y)),
-                [Dict(x => h(a), y => h()), Dict(x => h(), y => h(a))]),
-            (h(a, b, a), h(segment(x), a, segment(y)),
-                [Dict(x => h(), y => h(b, a)), Dict(x => h(a, b), y => h())]),
+            (
+                h(a, a), h(segment(x), a, segment(y)),
+                [Dict(x => h(a), y => h()), Dict(x => h(), y => h(a))],
+            ),
+            (
+                h(a, b, a), h(segment(x), a, segment(y)),
+                [Dict(x => h(), y => h(b, a)), Dict(x => h(a, b), y => h())],
+            ),
             (h(a, b, a, b), h(segment(x), segment(x)), [x => h(a, b)]),
             (h(a, b, a, a), h(segment(x), segment(x)), Dict[]),
             (h(a, b, a), h(segment(x), b, segment(x)), [x => h(a)]),
             (h(a, b, a, a), h(segment(x), b, segment(x)), Dict[]),
             (h(a, a, b, a), h(segment(x), b, segment(x)), Dict[]),
             (h(a, b, a, b, a, b, a), h(segment(x), b, segment(x)), [x => h(a, b, a)]),
-            (h(a, b, a, b), h(segment(x), b, segment(y)),
-                [Dict(x => h(a, b, a), y => h()), Dict(x => h(a), y => h(a, b))]),
+            (
+                h(a, b, a, b), h(segment(x), b, segment(y)),
+                [Dict(x => h(a, b, a), y => h()), Dict(x => h(a), y => h(a, b))],
+            ),
         ]
         for (subj, pat, maps) in cases
             @test mp(pat, subj, maps; vars)
@@ -316,8 +346,10 @@ let
             (h(a, a), h(segment(x), segment(x)), [x => h(a)]),
             (h(a, b), h(segment(x), segment(y)), [Dict(x => h(a), y => h(b))]),
             (h(a), h(segment(x), segment(y)), Dict[]),
-            (h(a, b, c), h(segment(x), segment(y)),
-                [Dict(x => h(a), y => h(b, c)), Dict(x => h(a, b), y => h(c))]),
+            (
+                h(a, b, c), h(segment(x), segment(y)),
+                [Dict(x => h(a), y => h(b, c)), Dict(x => h(a, b), y => h(c))],
+            ),
             (h(a, h2(b)), h(segment(x), segment(y)), [Dict(x => h(a), y => h(h2(b)))]),
             (h(a, h2(b)), h(segment(x), h2(segment(y))), [x => h(a), y => h2(b)]),
             (h(a, h2(b)), h(segment(x), h2(segment(x))), Dict[]),
@@ -372,48 +404,68 @@ let
         )
         cases = [
             # f(a,b)  f(x__, y___)   MatchPy: [x:[a,b],y:[]; x:[a],y:[b]]
-            (h(a, b), h(segment(x), segment(y)), v1,
-                [Dict(x => h(a, b), y => h()), Dict(x => h(a), y => h(b))]),
+            (
+                h(a, b), h(segment(x), segment(y)), v1,
+                [Dict(x => h(a, b), y => h()), Dict(x => h(a), y => h(b))],
+            ),
             # f(a,b)  f(x___, y__)   MatchPy: [x:[a],y:[b]; x:[],y:[a,b]]
-            (h(a, b), h(segment(x), segment(y)), v2,
-                [Dict(x => h(a), y => h(b)), Dict(x => h(), y => h(a, b))]),
+            (
+                h(a, b), h(segment(x), segment(y)), v2,
+                [Dict(x => h(a), y => h(b)), Dict(x => h(), y => h(a, b))],
+            ),
             # f(a,b,c) f(x_, y__)    [x:a, y:[b,c]]
-            (h(a, b, c), h(slot(xs), segment(y)), v1,
-                [Dict(xs => a, y => h(b, c))]),
+            (
+                h(a, b, c), h(slot(xs), segment(y)), v1,
+                [Dict(xs => a, y => h(b, c))],
+            ),
             # f(a,b,c) f(x__, y_)    [x:[a,b], y:c]
-            (h(a, b, c), h(segment(x), slot(ys)), v1,
-                [Dict(x => h(a, b), ys => c)]),
+            (
+                h(a, b, c), h(segment(x), slot(ys)), v1,
+                [Dict(x => h(a, b), ys => c)],
+            ),
             # f(a,b,c) f(x_, y___)   [x:a, y:[b,c]]
-            (h(a, b, c), h(slot(xs), segment(y)), v2,
-                [Dict(xs => a, y => h(b, c))]),
+            (
+                h(a, b, c), h(slot(xs), segment(y)), v2,
+                [Dict(xs => a, y => h(b, c))],
+            ),
             # f(a,b,c) f(x___, y_)   [x:[a,b], y:c]
-            (h(a, b, c), h(segment(x), slot(ys)), v2,
-                [Dict(x => h(a, b), ys => c)]),
+            (
+                h(a, b, c), h(segment(x), slot(ys)), v2,
+                [Dict(x => h(a, b), ys => c)],
+            ),
             # f(a,b,c) f(x___, y_, z___)
             #   [x:[a,b],y:c,z:[]; x:[a],y:b,z:[c]; x:[],y:a,z:[b,c]]
-            (h(a, b, c), h(segment(x), slot(ys), segment(z)), v3,
+            (
+                h(a, b, c), h(segment(x), slot(ys), segment(z)), v3,
                 [
                     Dict(x => h(a, b), ys => c, z => h()),
                     Dict(x => h(a), ys => b, z => h(c)),
                     Dict(x => h(), ys => a, z => h(b, c)),
-                ]),
+                ],
+            ),
             # f(a,b,c) f(x__, y_, z___)
             #   [x:[a,b],y:c,z:[]; x:[a],y:b,z:[c]]
-            (h(a, b, c), h(segment(x), slot(ys), segment(z)), v4,
+            (
+                h(a, b, c), h(segment(x), slot(ys), segment(z)), v4,
                 [
                     Dict(x => h(a, b), ys => c, z => h()),
                     Dict(x => h(a), ys => b, z => h(c)),
-                ]),
+                ],
+            ),
             # f(a,b,c) f(x___, y_, z__)
             #   [x:[a],y:b,z:[c]; x:[],y:a,z:[b,c]]
-            (h(a, b, c), h(segment(x), slot(ys), segment(z)), v5,
+            (
+                h(a, b, c), h(segment(x), slot(ys), segment(z)), v5,
                 [
                     Dict(x => h(a), ys => b, z => h(c)),
                     Dict(x => h(), ys => a, z => h(b, c)),
-                ]),
+                ],
+            ),
             # f(a,b,c) f(x__, y_, z__)   [x:[a],y:b,z:[c]]
-            (h(a, b, c), h(segment(x), slot(ys), segment(z)), v6,
-                [Dict(x => h(a), ys => b, z => h(c))]),
+            (
+                h(a, b, c), h(segment(x), slot(ys), segment(z)), v6,
+                [Dict(x => h(a), ys => b, z => h(c))],
+            ),
             # f(a,a) f(x_, x__) / f(x__, x_) — skipped: same var 'x' as
             # both dot and sequence would be a slot/segment kind mix
         ]
@@ -444,17 +496,27 @@ let
 
     @testset "commutative multiple fixed vars" begin
         cases = [
-            (g(a, b, a, a, b), g(slot(x), slot(x), slot(x), slot(y), slot(y)),
-                [Dict(x => a, y => b)]),
-            (g(a, b, a, b), g(slot(x), slot(x), slot(y), slot(y)),
-                [Dict(x => a, y => b), Dict(x => b, y => a)]),
-            (g(a, b, a, b), g(slot(x), slot(x), slot(x), slot(y), slot(y)),
-                Dict[]),
+            (
+                g(a, b, a, a, b), g(slot(x), slot(x), slot(x), slot(y), slot(y)),
+                [Dict(x => a, y => b)],
+            ),
+            (
+                g(a, b, a, b), g(slot(x), slot(x), slot(y), slot(y)),
+                [Dict(x => a, y => b), Dict(x => b, y => a)],
+            ),
+            (
+                g(a, b, a, b), g(slot(x), slot(x), slot(x), slot(y), slot(y)),
+                Dict[],
+            ),
             (g(a, b, a, b), g(slot(x), slot(y), slot(y)), Dict[]),
-            (g(a, b, a, b), g(slot(x), a, slot(y), slot(y)),
-                [Dict(x => a, y => b)]),
-            (g(a, b, b, b), g(slot(x), b, slot(y), slot(y)),
-                [Dict(x => a, y => b)]),
+            (
+                g(a, b, a, b), g(slot(x), a, slot(y), slot(y)),
+                [Dict(x => a, y => b)],
+            ),
+            (
+                g(a, b, b, b), g(slot(x), b, slot(y), slot(y)),
+                [Dict(x => a, y => b)],
+            ),
         ]
         for (subj, pat, maps) in cases
             @test mp(pat, subj, maps)
@@ -576,8 +638,10 @@ let
             (h(fa(segment(x)), fac(segment(x))), h(fa(a), fac(a)), true),
             (h(fac(segment(x)), fa(segment(x))), h(fac(a), fa(a)), true),
             (h(fac(segment(x)), g(segment(x))), h(fac(a), g(a)), true),
-            (h(fac(segment(x)), fac(segment(x), segment(x))),
-                h(fac(a, b), fac(a, a, b, b)), true),
+            (
+                h(fac(segment(x)), fac(segment(x), segment(x))),
+                h(fac(a, b), fac(a, a, b, b)), true,
+            ),
             # bound under ordered head, multiset recheck under unordered
             (h(fa(segment(x)), g(segment(x))), h(fa(a, b), g(b, a)), true),
             (h(fa(segment(x)), g(segment(x))), h(fa(a, b), g(a, b)), true),
@@ -610,13 +674,17 @@ let
             (g(a), g(slot(sp)), Dict[]),
             (g(sp), g(slot(sp)), [sp => sp]),
             (g(a, sp), g(slot(sp), segment(y)), [sp => sp]),
-            (g(a, sp), g(slot(x), segment(y)),
-                [Dict(x => sp), Dict(x => a)]),
+            (
+                g(a, sp), g(slot(x), segment(y)),
+                [Dict(x => sp), Dict(x => a)],
+            ),
             (fac(a), fac(slot(sp)), Dict[]),
             (fac(sp), fac(slot(sp)), [sp => sp]),
             (fac(a, sp), fac(slot(sp), segment(y)), [sp => sp]),
-            (fac(a, sp), fac(slot(x), segment(y)),
-                [Dict(x => sp), Dict(x => a)]),
+            (
+                fac(a, sp), fac(slot(x), segment(y)),
+                [Dict(x => sp), Dict(x => a)],
+            ),
             (fac(a, sp), fac(slot(x)), Dict[]),
         ]
         drop = BasicSymbolic{SymReal}[y]
@@ -643,8 +711,10 @@ let
             (h2(h(a, b)), h2(slot(x)), lit_fab, [x => h(a, b)]),
         ]
         for (subj, pat, spec, maps) in cases
-            @test mp(pat, subj, maps;
-                vars = Dict{BasicSymbolic{SymReal}, VarSpec.Type}(x => spec))
+            @test mp(
+                pat, subj, maps;
+                vars = Dict{BasicSymbolic{SymReal}, VarSpec.Type}(x => spec)
+            )
         end
     end
 
@@ -663,8 +733,10 @@ let
             (fa(a, b, a, b), fa(segment(x), segment(x)), [x => fa(a, b)]),
             (fa(a, b, a), fa(segment(x), b, segment(x)), [x => fa(a)]),
             (fa(a, a, b, a, a), fa(segment(x), b, segment(x)), [x => fa(a, a)]),
-            (fa(a, b, c), fa(segment(x), segment(y)),
-                [Dict(x => fa(a), y => fa(b, c)), Dict(x => fa(a, b), y => fa(c))]),
+            (
+                fa(a, b, c), fa(segment(x), segment(y)),
+                [Dict(x => fa(a), y => fa(b, c)), Dict(x => fa(a, b), y => fa(c))],
+            ),
             (fa(a), fa(segment(x)), [x => fa(a)]),
             (fa(a, b), fa(segment(x)), [x => fa(a, b)]),
         ]
@@ -731,7 +803,7 @@ let
     @testset "constraints" begin
         # global MockConstraint(v) — ports as a Constraint over the
         # pattern's vars
-                cases = [
+        cases = [
             (a, slot(u1), [_u -> false], 0),
             (a, slot(u1), [_u -> true], 1),
             (h(a, b), h(slot(u1), slot(u2)), [_u -> false, _u -> true], 0),
@@ -770,13 +842,17 @@ let
         )
         @test mpc(
             h(segment(u1), segment(u2)), h(a, b); vars = vv,
-            constraints = [Constraint(_ -> false, BasicSymbolic{SymReal}[]),
-                           Constraint(_ -> false, BasicSymbolic{SymReal}[])]
+            constraints = [
+                Constraint(_ -> false, BasicSymbolic{SymReal}[]),
+                Constraint(_ -> false, BasicSymbolic{SymReal}[]),
+            ]
         ) == 0
         @test mpc(
             h(segment(u1), segment(u2)), h(a, b); vars = vv,
-            constraints = [Constraint(_ -> true, BasicSymbolic{SymReal}[]),
-                           Constraint(_ -> true, BasicSymbolic{SymReal}[])]
+            constraints = [
+                Constraint(_ -> true, BasicSymbolic{SymReal}[]),
+                Constraint(_ -> true, BasicSymbolic{SymReal}[]),
+            ]
         ) == 3
         # local MockConstraint(v, 'x') — constraint over [x]
         @test mpc(
@@ -796,11 +872,13 @@ let
         vx = Dict{BasicSymbolic{SymReal}, VarSpec.Type}(
             u1 => segmentspec(nothing; min = 0), u2 => segmentspec(nothing; min = 0)
         )
-        res = collect(matchall(
-            compile_pattern(h(segment(u1), slot(x), segment(u2)); vars = vx),
-            h(a, aa, b, bb);
-            constraints = [Constraint(v -> length(string(v[1])) > 1, [x])]
-        ))
+        res = collect(
+            matchall(
+                compile_pattern(h(segment(u1), slot(x), segment(u2)); vars = vx),
+                h(a, aa, b, bb);
+                constraints = [Constraint(v -> length(string(v[1])) > 1, [x])]
+            )
+        )
         @test length(res) == 2
         @test any(r -> isequal(r[x], aa), res)
         @test any(r -> isequal(r[x], bb), res)

@@ -176,7 +176,7 @@ function _reset!(v::AbstractVector, n::Int, x)
 end
 
 "_reset! for nested SmallV/Vector buffers: reuse live objects, empty them."
-function _reset!(v::Vector{T}, n::Int) where T <: Union{SmallV{Int32}, Vector{Int32}}
+function _reset!(v::Vector{T}, n::Int) where {T <: Union{SmallV{Int32}, Vector{Int32}}}
     while length(v) < n
         push!(v, T())
     end
@@ -329,11 +329,9 @@ function pool_acquire!(
 end
 
 
-
 ###
 ### MatchEngine (§5.4)
 ###
-
 
 
 """

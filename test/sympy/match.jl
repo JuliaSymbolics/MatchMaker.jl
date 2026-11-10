@@ -41,7 +41,7 @@ function _sn_norm(d)
     pairs = sort!(
         [
             string(k) => (v isa BasicSymbolic{SymReal} ? v : Const{SymReal}(v))
-            for (k, v) in d
+                for (k, v) in d
         ]; by = first
     )
     return join((string(k, " => ", repr(v)) for (k, v) in pairs), "; ")
@@ -50,9 +50,17 @@ end
 # sm(pat, subj, expected): expected is a Dict or Vector{Pair} (one
 # substitution), a Vector of those, or `nothing` for no match.
 function sm(pat, subj, expected; vars = VS())
-    got = unique(sort(_sn_norm.(collect(matchall(
-        compile_pattern(pat; vars), subj
-    )))))
+    got = unique(
+        sort(
+            _sn_norm.(
+                collect(
+                    matchall(
+                        compile_pattern(pat; vars), subj
+                    )
+                )
+            )
+        )
+    )
     maps = if expected === nothing
         Dict[]
     elseif expected isa AbstractVector{<:Pair} || expected isa AbstractDict
@@ -210,10 +218,14 @@ let
         @test sm(slot(P) * x, 6 / x, nothing)
         # test_match_issue_21942 — literal exponent shared, base binds
         ex = (1 - a)^-1
-        @test sm(slot(P)^ex, (b * x^ex + y^ex * (1 - b))^ex,
-            [P => b * x^ex + y^ex * (1 - b)])
-        @test sm(-slot(P)^ex, -(b * x^ex + y^ex * (1 - b))^ex,
-            [P => b * x^ex + y^ex * (1 - b)])
+        @test sm(
+            slot(P)^ex, (b * x^ex + y^ex * (1 - b))^ex,
+            [P => b * x^ex + y^ex * (1 - b)]
+        )
+        @test sm(
+            -slot(P)^ex, -(b * x^ex + y^ex * (1 - b))^ex,
+            [P => b * x^ex + y^ex * (1 - b)]
+        )
     end
 
     @testset "match terms" begin
@@ -230,10 +242,14 @@ let
     @testset "match bound" begin
         # test_match_bound — `sm`/`tup` free heads; V is non-linear
         # across a nested tuple arg
-        @test sm(sm_(slot(V), tup(slot(V), 1, slot(W))),
-            sm_(x, tup(x, 1, 2)), Dict(V => x, W => 2))
-        @test sm(sm_(slot(V), tup(slot(V), 1, 2)),
-            sm_(x, tup(x, 1, 2)), Dict(V => x))
+        @test sm(
+            sm_(slot(V), tup(slot(V), 1, slot(W))),
+            sm_(x, tup(x, 1, 2)), Dict(V => x, W => 2)
+        )
+        @test sm(
+            sm_(slot(V), tup(slot(V), 1, 2)),
+            sm_(x, tup(x, 1, 2)), Dict(V => x)
+        )
         @test sm(sm_(y, tup(y, 1, slot(W))), sm_(x, tup(x, 1, 2)), nothing)
     end
 
@@ -269,8 +285,10 @@ let
         @test sm(cos(y) + r, cos(x) + 5 * sin(y), nothing; vars = rvars)
         # r ↦ cos(x) contains neither sin nor y; p*sin(q) ↔ 5sin(y)
         vars2 = VS(P => excl(1, x), R => excl(sin, y))
-        @test sm(r + p * sin(slot(Q)), cos(x) + 5 * sin(y),
-            Dict(R => cos(x), P => 5, Q => y); vars = vars2)
+        @test sm(
+            r + p * sin(slot(Q)), cos(x) + 5 * sin(y),
+            Dict(R => cos(x), P => 5, Q => y); vars = vars2
+        )
         # skipped: Wild-vs-Wild cases (p.match(q+r)) — subjects are
         # concrete here, not patterns
     end

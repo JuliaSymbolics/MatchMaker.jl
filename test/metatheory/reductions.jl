@@ -26,16 +26,24 @@ function _mt_norm(d)
     pairs = sort!(
         [
             string(k) => (v isa BasicSymbolic{SymReal} ? v : Const{SymReal}(v))
-            for (k, v) in d
+                for (k, v) in d
         ]; by = first
     )
     return join((string(k, " => ", repr(v)) for (k, v) in pairs), "; ")
 end
 
 function sm(pat, subj, expected; vars = VS())
-    got = unique(sort(_mt_norm.(collect(matchall(
-        compile_pattern(pat; vars), subj
-    )))))
+    got = unique(
+        sort(
+            _mt_norm.(
+                collect(
+                    matchall(
+                        compile_pattern(pat; vars), subj
+                    )
+                )
+            )
+        )
+    )
     maps = if expected === nothing
         Dict[]
     elseif expected isa AbstractVector{<:Pair} || expected isa AbstractDict
@@ -55,15 +63,23 @@ let
     h = Sym{SymReal}(:h; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
 
     @testset "segment as tail" begin
-        @test sm(f(slot(wx), segment(wy)), f(1, 2, 3, 4),
-            Dict(wx => 1, wy => f(2, 3, 4)))
-        @test sm(f(slot(wx), 2, segment(wy)), f(1, 2, 3, 4),
-            Dict(wx => 1, wy => f(3, 4)))
-        @test sm(f(slot(wx), 2, segment(wy)), f(1, 2, 3),
-            Dict(wx => 1, wy => f(3)))
+        @test sm(
+            f(slot(wx), segment(wy)), f(1, 2, 3, 4),
+            Dict(wx => 1, wy => f(2, 3, 4))
+        )
+        @test sm(
+            f(slot(wx), 2, segment(wy)), f(1, 2, 3, 4),
+            Dict(wx => 1, wy => f(3, 4))
+        )
+        @test sm(
+            f(slot(wx), 2, segment(wy)), f(1, 2, 3),
+            Dict(wx => 1, wy => f(3))
+        )
         # empty tail capture
-        @test sm(f(slot(wx), 2, 3, 4, segment(wy)), f(1, 2, 3, 4),
-            Dict(wx => 1, wy => f()))
+        @test sm(
+            f(slot(wx), 2, 3, 4, segment(wy)), f(1, 2, 3, 4),
+            Dict(wx => 1, wy => f())
+        )
         # the whole arg list
         @test sm(f(segment(wx)), f(1, 2, 3, 4), [wx => f(1, 2, 3, 4)])
         # nested inside another call
@@ -85,55 +101,77 @@ let
     end
 
     @testset "segment as head" begin
-        @test sm(f(segment(wx), slot(wy)), f(1, 2, 3, 4),
-            Dict(wx => f(1, 2, 3), wy => 4))
+        @test sm(
+            f(segment(wx), slot(wy)), f(1, 2, 3, 4),
+            Dict(wx => f(1, 2, 3), wy => 4)
+        )
         @test sm(f(segment(wx), 3, 4), f(1, 2, 3, 4), [wx => f(1, 2)])
-        @test sm(f(slot(wx), 2, 3, segment(wy)), f(1, 2, 3, 4),
-            Dict(wx => 1, wy => f(4)))
+        @test sm(
+            f(slot(wx), 2, 3, segment(wy)), f(1, 2, 3, 4),
+            Dict(wx => 1, wy => f(4))
+        )
     end
 
     @testset "multiple segments" begin
         # every split of the arg list
-        @test sm(f(segment(wx), segment(wy)), f(1, 2, 3, 4),
+        @test sm(
+            f(segment(wx), segment(wy)), f(1, 2, 3, 4),
             [
                 Dict(wx => f(), wy => f(1, 2, 3, 4)),
                 Dict(wx => f(1), wy => f(2, 3, 4)),
                 Dict(wx => f(1, 2), wy => f(3, 4)),
                 Dict(wx => f(1, 2, 3), wy => f(4)),
                 Dict(wx => f(1, 2, 3, 4), wy => f()),
-            ])
-        @test sm(f(segment(wx), 3, segment(wy)), f(1, 2, 3, 4, 5),
-            Dict(wx => f(1, 2), wy => f(4, 5)))
-        @test sm(f(segment(wx), 3, segment(wy), 5, segment(wz)),
+            ]
+        )
+        @test sm(
+            f(segment(wx), 3, segment(wy)), f(1, 2, 3, 4, 5),
+            Dict(wx => f(1, 2), wy => f(4, 5))
+        )
+        @test sm(
+            f(segment(wx), 3, segment(wy), 5, segment(wz)),
             f(1, 2, 3, 4, 5, 6),
-            Dict(wx => f(1, 2), wy => f(4), wz => f(6)))
-        @test sm(f(segment(wx), 3, segment(wy), 5, segment(wz), 7),
+            Dict(wx => f(1, 2), wy => f(4), wz => f(6))
+        )
+        @test sm(
+            f(segment(wx), 3, segment(wy), 5, segment(wz), 7),
             f(1, 2, 2, 3, 4, 4, 5, 6, 7, 7),
-            Dict(wx => f(1, 2, 2), wy => f(4, 4), wz => f(6, 7)))
+            Dict(wx => f(1, 2, 2), wy => f(4, 4), wz => f(6, 7))
+        )
     end
 
     @testset "repeated segments" begin
         # non-linear ~~x: the second capture must repeat the first run
-        @test sm(f(segment(wx), segment(wx), 4), f(1, 2, 1, 2, 4),
-            [wx => f(1, 2)])
+        @test sm(
+            f(segment(wx), segment(wx), 4), f(1, 2, 1, 2, 4),
+            [wx => f(1, 2)]
+        )
         @test sm(f(segment(wx), segment(wx), 4), f(1, 2, 3, 4), nothing)
         @test sm(f(segment(wx), segment(wx), 4), f(4), [wx => f()])
         @test sm(f(segment(wx), segment(wx)), f(1, 2, 1, 2), [wx => f(1, 2)])
         @test sm(f(segment(wx), segment(wx)), f(1, 2, 3, 4), nothing)
-        @test sm(f(segment(wx), 3, segment(wx)), f(1, 2, 3, 1, 2),
-            [wx => f(1, 2)])
+        @test sm(
+            f(segment(wx), 3, segment(wx)), f(1, 2, 3, 1, 2),
+            [wx => f(1, 2)]
+        )
         @test sm(f(segment(wx), 3, segment(wx)), f(3), [wx => f()])
         @test sm(f(segment(wx), 3, segment(wx)), f(1, 2, 3, 4, 5), nothing)
         # three occurrences of the same segment var
-        @test sm(f(segment(wx), 3, segment(wx), 5, segment(wx)),
-            f(1, 2, 3, 1, 2, 5, 1, 2), [wx => f(1, 2)])
-        @test sm(f(segment(wx), 3, segment(wx), 5, segment(wx)),
-            f(1, 2, 3, 3, 1, 2, 5, 1, 2), nothing)
+        @test sm(
+            f(segment(wx), 3, segment(wx), 5, segment(wx)),
+            f(1, 2, 3, 1, 2, 5, 1, 2), [wx => f(1, 2)]
+        )
+        @test sm(
+            f(segment(wx), 3, segment(wx), 5, segment(wx)),
+            f(1, 2, 3, 3, 1, 2, 5, 1, 2), nothing
+        )
         # interleaved non-linear segments — z must backtrack from
         # [6] to [6,7] so the y recheck can succeed
         @test sm(
-            f(segment(wx), 3, segment(wy), 5, segment(wx), segment(wz),
-                7, segment(wy)),
+            f(
+                segment(wx), 3, segment(wy), 5, segment(wx), segment(wz),
+                7, segment(wy)
+            ),
             f(1, 2, 2, 3, 4, 4, 5, 1, 2, 2, 6, 7, 7, 4, 4),
             Dict(wx => f(1, 2, 2), wy => f(4, 4), wz => f(6, 7))
         )

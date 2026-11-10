@@ -100,7 +100,7 @@ function _step_ac!(
             empty!(cands[j])
             for i in 1:m
                 _ac_cand!(eng, order[j], snbs[sstart + i - 1]) &&
-                    push!(cands[j], i)
+                    push!(cands[j], Int32(i))
             end
             isempty(cands[j]) && return _call_fail!(eng, mark)
         end

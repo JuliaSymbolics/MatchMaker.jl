@@ -20,22 +20,34 @@ const CS = SymbolicUtils.Const{SymReal}
     @test_throws ArgumentError mmrule(slot(a) => slot(b))
 
     # workspace callable: first match in declaration order
-    rs = compile_rules(CompiledRule[
-        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-        mmrule(segment(s) + slot(t) => segment(s)),
-        mmrule(slot(a) * CS(2) => slot(a) + slot(a)),
-    ])
+    rs = compile_rules(
+        CompiledRule[
+            mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+            mmrule(segment(s) + slot(t) => segment(s)),
+            mmrule(slot(a) * CS(2) => slot(a) + slot(a)),
+        ]
+    )
     ws = RuleWorkspace(rs)
     @test isequal(ws(x + y), x * y)
     @test isequal(ws(CS(2) * x), CS(2) * x)      # r3 matched; x+x canonicalizes to 2x
-    @test isequal(ws(x + y + z + w), x + z + w) # r3: t=y, s captures the rest
+    # r3: t binds one arg, s captures the other three — which arg t takes
+    # is process-dependent, so any 3-of-4 subset is a valid result
+    rw = ws(x + y + z + w)
+    @test any(
+        Base.Fix1(isequal, rw),
+        (x + y + z, x + y + w, x + z + w, y + z + w),
+    )
     @test ws(x * y) === nothing                 # no candidate
     @test ws(CS(5)) === nothing                 # atom, no leaf rules
 
     # callable rhs: `nothing` falls through to the next rule
-    only_equal = mmrule(slot(a) + slot(b) =>
-        (view -> isequal(view[slot(a)], view[slot(b)]) ?
-            CS(2) * view[slot(a)] : nothing))
+    only_equal = mmrule(
+        slot(a) + slot(b) =>
+            (
+            view -> isequal(view[slot(a)], view[slot(b)]) ?
+                CS(2) * view[slot(a)] : nothing
+        )
+    )
     mul = mmrule(slot(a) + slot(b) => slot(a) * slot(b))
     ws2 = RuleWorkspace(compile_rules(CompiledRule[only_equal, mul]))
     @test isequal(ws2(x + y), x * y)   # callable -> nothing -> r2 fires
@@ -43,9 +55,11 @@ const CS = SymbolicUtils.Const{SymReal}
     @test ws2(e) === nothing           # x+x is a Mul — no + head
 
     # same engine is reset and reused across sites — bindings don't leak
-    rs3 = compile_rules(CompiledRule[
-        mmrule(slot(a) + slot(b) => slot(b)),
-    ])
+    rs3 = compile_rules(
+        CompiledRule[
+            mmrule(slot(a) + slot(b) => slot(b)),
+        ]
+    )
     pat_ab = compile_pattern(slot(a) + slot(b))
     ws3 = RuleWorkspace(rs3)
     # canonical Add arg order is process-dependent — compare against the
@@ -107,8 +121,10 @@ end
 
     # head-slot pattern lands in any_head
     fh = Sym{SymReal}(:fh; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
-    r_hd = mmrule(slot(f)(slot(a)) => slot(a);
-        vars = Dict(a => slotspec()))
+    r_hd = mmrule(
+        slot(f)(slot(a)) => slot(a);
+        vars = Dict(a => slotspec())
+    )
     idx2 = compile_rules(CompiledRule[r_hd]).index
     @test collect(idx2.any_head) == Int32[1]
 end
@@ -130,10 +146,14 @@ end
 
     # :pre vs :post differ on whether the parent sees original children:
     # h(x+y, x*y) — :pre parent sees unequal args, :post sees x*y==x*y
-    ws_pair = RuleWorkspace(compile_rules(CompiledRule[
-        r_mul,
-        mmrule(h(slot(a), slot(a)) => slot(a)),   # non-linear h rule
-    ]))
+    ws_pair = RuleWorkspace(
+        compile_rules(
+            CompiledRule[
+                r_mul,
+                mmrule(h(slot(a), slot(a)) => slot(a)),   # non-linear h rule
+            ]
+        )
+    )
     @test isequal(rewrite(ws_pair, h(x + y, x * y); order = :pre), h(x * y, x * y))
     @test isequal(rewrite(ws_pair, h(x + y, x * y); order = :post), x * y)
     @test_throws ArgumentError rewrite(ws_pair, x; order = :bogus)
@@ -165,33 +185,48 @@ end
     ]
     # multi-iteration convergence — h strips after children rewrite
     @test isequal(
-        fixpoint_rewrite(RuleWorkspace(compile_rules(mkrules())),
-            h(sin(x + y), sin(p + q))),
-        x * y)
+        fixpoint_rewrite(
+            RuleWorkspace(compile_rules(mkrules())),
+            h(sin(x + y), sin(p + q))
+        ),
+        x * y
+    )
     # result is stable — re-running fixes nothing
     @test isequal(
         fixpoint_rewrite(RuleWorkspace(compile_rules(mkrules())), x * y),
-        x * y)
+        x * y
+    )
     # :pre order still works via the naive loop
     @test isequal(
-        fixpoint_rewrite(RuleWorkspace(compile_rules(mkrules())),
-            h(sin(x + y), sin(p + q)); order = :pre),
-        x * y)
+        fixpoint_rewrite(
+            RuleWorkspace(compile_rules(mkrules())),
+            h(sin(x + y), sin(p + q)); order = :pre
+        ),
+        x * y
+    )
 
     # 2-cycle terminates on the first repeated term
-    ws_cyc = RuleWorkspace(compile_rules(CompiledRule[
-        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-        mmrule(slot(a) * slot(b) => slot(a) + slot(b)),
-    ]))
+    ws_cyc = RuleWorkspace(
+        compile_rules(
+            CompiledRule[
+                mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+                mmrule(slot(a) * slot(b) => slot(a) + slot(b)),
+            ]
+        )
+    )
     r = fixpoint_rewrite(ws_cyc, x + y)
     @test isequal(r, x * y) || isequal(r, x + y)
 
     # 3-cycle terminates
-    ws_cyc3 = RuleWorkspace(compile_rules(CompiledRule[
-        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-        mmrule(slot(a) * slot(b) => h(slot(a), slot(b))),
-        mmrule(h(slot(a), slot(b)) => slot(a) + slot(b)),
-    ]))
+    ws_cyc3 = RuleWorkspace(
+        compile_rules(
+            CompiledRule[
+                mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+                mmrule(slot(a) * slot(b) => h(slot(a), slot(b))),
+                mmrule(h(slot(a), slot(b)) => slot(a) + slot(b)),
+            ]
+        )
+    )
     @test fixpoint_rewrite(ws_cyc3, x + y) !== nothing
 
     # maxiterations bounds the loop
@@ -199,15 +234,19 @@ end
 
     # dirty propagation: a convergent deep subject — results equal a
     # naive full-rewrite loop oracle
-    ws_deep = RuleWorkspace(compile_rules(CompiledRule[
-        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-        mmrule(sin(slot(a)) => slot(a)),
-        mmrule(cos(slot(a)) => slot(a)),
-        mmrule(h(slot(a), slot(b)) => slot(a)),
-        mmrule(g(slot(a), slot(b)) => slot(a) * slot(b)),
-    ]))
+    ws_deep = RuleWorkspace(
+        compile_rules(
+            CompiledRule[
+                mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+                mmrule(sin(slot(a)) => slot(a)),
+                mmrule(cos(slot(a)) => slot(a)),
+                mmrule(h(slot(a), slot(b)) => slot(a)),
+                mmrule(g(slot(a), slot(b)) => slot(a) * slot(b)),
+            ]
+        )
+    )
     function naive_fp(ws, x)
-        seen = IdSet{BasicSymbolic{SymReal}}()
+        seen = Base.IdSet{BasicSymbolic{SymReal}}()
         for _ in 1:10_000
             x′ = rewrite(ws, x)
             isequal(x′, x) && return x
@@ -216,13 +255,17 @@ end
         end
         return x
     end
-    ws_naive = RuleWorkspace(compile_rules(CompiledRule[
-        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-        mmrule(sin(slot(a)) => slot(a)),
-        mmrule(cos(slot(a)) => slot(a)),
-        mmrule(h(slot(a), slot(b)) => slot(a)),
-        mmrule(g(slot(a), slot(b)) => slot(a) * slot(b)),
-    ]))
+    ws_naive = RuleWorkspace(
+        compile_rules(
+            CompiledRule[
+                mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+                mmrule(sin(slot(a)) => slot(a)),
+                mmrule(cos(slot(a)) => slot(a)),
+                mmrule(h(slot(a), slot(b)) => slot(a)),
+                mmrule(g(slot(a), slot(b)) => slot(a) * slot(b)),
+            ]
+        )
+    )
     sub = h(sin(sin(sin(x + y))), cos(g(sin(p + q), sin(a + b)))) +
         sin(sin(w + z)) + g(cos(x + y), sin(p + q))
     @test isequal(fixpoint_rewrite(ws_deep, sub), naive_fp(ws_naive, sub))
@@ -231,10 +274,14 @@ end
 @testset "SU combinator compatibility" begin
     @syms x y z a b p q
 
-    ws = RuleWorkspace(compile_rules(CompiledRule[
-        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-        mmrule(slot(a) * slot(a) => slot(a)^CS(2)),
-    ]))
+    ws = RuleWorkspace(
+        compile_rules(
+            CompiledRule[
+                mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+                mmrule(slot(a) * slot(a) => slot(a)^CS(2)),
+            ]
+        )
+    )
 
     # Postwalk/Prewalk apply the workspace per node
     @test isequal(Postwalk(ws)((x + y) * (p + q)), x * y * (p * q))
@@ -266,8 +313,10 @@ end
         mmrule(h(slot(a), slot(b)) => slot(a)),
         mmrule(h(slot(a), CS(1)) => CS(0)),
         mmrule(sin(slot(a)) => slot(a)),
-        mmrule(slot(fh)(slot(a), slot(b)) => slot(a);
-            vars = Dict(fh => slotspec())),
+        mmrule(
+            slot(fh)(slot(a), slot(b)) => slot(a);
+            vars = Dict(fh => slotspec())
+        ),
         mmrule(slot(a) * CS(1) => slot(a)),   # a*1 canonicalizes → bare slot
         mmrule(CS(3) => CS(4)),
     ]
@@ -286,8 +335,10 @@ end
 
     # net is stricter than the root-only bucket check, never looser —
     # and both agree on what apply produces
-    terms = [x + y, x + y + z, x * y, 2x * y, h(x, y), h(x, CS(1)),
-        sin(x), fh(x, y), CS(3), x, CS(1) + x, CS(3) * y]
+    terms = [
+        x + y, x + y + z, x * y, 2x * y, h(x, y), h(x, CS(1)),
+        sin(x), fh(x, y), CS(3), x, CS(1) + x, CS(3) * y,
+    ]
     for t in terms
         sb, sn = surv(ws_b, t), surv(ws_n, t)
         @test issorted(sn)
@@ -309,20 +360,36 @@ end
     # rewrite + fixpoint parity
     sub = h(sin(x + y), p * q) + cos(w) * (a + b + c) + sin(p + q)
     @test isequal(rewrite(ws_b, sub), rewrite(ws_n, sub))
-    ws2b = RuleWorkspace(compile_rules(CompiledRule[
-        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-        mmrule(sin(slot(a)) => slot(a))]))
-    ws2n = RuleWorkspace(compile_rules(CompiledRule[
-        mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-        mmrule(sin(slot(a)) => slot(a))], DiscrimNet))
+    ws2b = RuleWorkspace(
+        compile_rules(
+            CompiledRule[
+                mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+                mmrule(sin(slot(a)) => slot(a)),
+            ]
+        )
+    )
+    ws2n = RuleWorkspace(
+        compile_rules(
+            CompiledRule[
+                mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+                mmrule(sin(slot(a)) => slot(a)),
+            ], DiscrimNet
+        )
+    )
     @test isequal(
         fixpoint_rewrite(ws2b, h(sin(x + y), sin(p + q))),
-        fixpoint_rewrite(ws2n, h(sin(x + y), sin(p + q))))
+        fixpoint_rewrite(ws2n, h(sin(x + y), sin(p + q)))
+    )
 
     # net_cache: a DAG-shared subterm evaluates once — h(x+y, x+y)
     # visits the same interned node from two trie states' descents
-    ws3 = RuleWorkspace(compile_rules(CompiledRule[
-        mmrule(h(slot(a), slot(a)) => slot(a))], DiscrimNet))
+    ws3 = RuleWorkspace(
+        compile_rules(
+            CompiledRule[
+                mmrule(h(slot(a), slot(a)) => slot(a)),
+            ], DiscrimNet
+        )
+    )
     ws3(h(x + y, x + y))
     @test length(ws3.net_cache) > 0
     nbefore = length(ws3.net_cache)
@@ -347,8 +414,10 @@ end
     function rand_term(rng, depth)
         (depth <= 0 || rand(rng) < 0.3) && return rand(rng, subj_atoms)
         op = rand(rng, HEADS)
-        args = BasicSymbolic{SymReal}[rand_term(rng, depth - 1)
-                                    for _ in 1:nargs(rng, op)]
+        args = BasicSymbolic{SymReal}[
+            rand_term(rng, depth - 1)
+                for _ in 1:nargs(rng, op)
+        ]
         return op === (+) ? SymbolicUtils.add_worker(SymReal, args) :
             op === (*) ? SymbolicUtils.mul_worker(SymReal, args) : op(args...)
     end
@@ -362,8 +431,10 @@ end
             return slot(vs)
         else
             op = rand(rng, HEADS)
-            args = BasicSymbolic{SymReal}[rand_pat(rng, depth - 1, vars)
-                                          for _ in 1:nargs(rng, op)]
+            args = BasicSymbolic{SymReal}[
+                rand_pat(rng, depth - 1, vars)
+                    for _ in 1:nargs(rng, op)
+            ]
             return op === (+) ? +(args...) :
                 op === (*) ? *(args...) : op(args...)
         end

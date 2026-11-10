@@ -15,7 +15,7 @@
 "matched but produce nothing": the caller falls through to the next rule.
 """
 const RhsT = FunctionWrapper{
-    Union{BasicSymbolic{SymReal}, Nothing}, Tuple{SubstitutionView}
+    Union{BasicSymbolic{SymReal}, Nothing}, Tuple{SubstitutionView},
 }
 
 """
@@ -104,7 +104,7 @@ function mmrule(
         vars::AbstractDict{BasicSymbolic{SymReal}, VarSpecT} =
             Dict{BasicSymbolic{SymReal}, VarSpecT}(),
         constraints = Constraint[],
-    ) where T
+    ) where {T}
     (l, rhs) = lhs
     pat = compile_pattern(l; vars)
     r = rhs isa BasicSymbolic{SymReal} ? _compile_rhs(rhs, pat) : RhsT(rhs)
@@ -360,7 +360,7 @@ shared by all patterns whose preorder label prefixes reach it.
 
 - `ops`: `(op, arity)` → next — deterministic call-head transition.
 - `opwilds`: `arity` → next — head-marker call (`slot(f)(…)`) — any op.
-- `lits`: literal leaf expr → next.
+- `literals`: literal leaf expr → next.
 - `defers`: `SeqCall`/`CommCall`/`ACCall` subtree edges — confirm
   `iscall` + `op` (`nothing` = head-marker, any op) + arity bounds,
   then hand the whole subtree to the engine.
@@ -370,7 +370,7 @@ shared by all patterns whose preorder label prefixes reach it.
 mutable struct NetState
     ops::Dict{NetOp, Int32}
     opwilds::Dict{Int, Int32}
-    lits::Dict{BasicSymbolic{SymReal}, Int32}
+    literals::Dict{BasicSymbolic{SymReal}, Int32}
     defers::Vector{NetDefer}
     wild::Int32
     finals::SmallV{Int32}
@@ -426,8 +426,8 @@ function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
     plan = pat.plans[i]
     return @match plan begin
         NodePlan.Literal() =>
-            _net_next!(net, net.states[σ].lits, pat.ir[i])
-        NodePlan.Slot(;) => begin
+            _net_next!(net, net.states[σ].literals, pat.ir[i])
+        NodePlan.Slot() => begin
             st = net.states[σ]
             st.wild == 0 && (st.wild = _net_new!(net))
             st.wild
@@ -435,8 +435,10 @@ function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
         NodePlan.Call(; op, head, children) => begin
             σ = head != 0 && is_marker_term(op) ?
                 _net_next!(net, net.states[σ].opwilds, length(children)) :
-                _net_next!(net, net.states[σ].ops,
-                    NetOp(op, length(children)))
+                _net_next!(
+                    net, net.states[σ].ops,
+                    NetOp(op, length(children))
+                )
             for c in children
                 σ = _net_insert!(net, pat, c, σ)
             end
@@ -448,7 +450,7 @@ function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
             _net_defer!(net, σ, pat, plan, op, head)
         NodePlan.ACCall(; op, head) =>
             _net_defer!(net, σ, pat, plan, op, head)
-        NodePlan.Segment(;) =>
+        NodePlan.Segment() =>
             error("unreachable: segment obligation reached the discrim net")
     end
 end
@@ -637,7 +639,7 @@ function _net_go(
                 push!(out, d.next)
         end
     else
-        σ2 = get(st.lits, t, Int32(0))
+        σ2 = get(st.literals, t, Int32(0))
         σ2 != 0 && push!(out, σ2)
     end
     st.wild != 0 && push!(out, st.wild)
@@ -800,7 +802,8 @@ end
 function _rewrite_pre(ws::RuleWorkspace, x::BasicSymbolic{SymReal})
     out = BasicSymbolic{SymReal}[]
     stk = Tuple{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}, Int}[
-        (x, x, 0)]
+        (x, x, 0),
+    ]
     memo = IdDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}()
     while !isempty(stk)
         (orig, cur, i) = stk[end]
@@ -838,7 +841,8 @@ function _rewrite_pre(ws::RuleWorkspace, x::BasicSymbolic{SymReal})
         end
         resize!(out, length(out) - nargs)
         y = newargs === nothing ? cur : maketerm(
-            typeof(cur), operation(cur), newargs, metadata(cur))
+                typeof(cur), operation(cur), newargs, metadata(cur)
+            )
         pop!(stk)
         memo[orig] = y
         push!(out, y)
@@ -863,7 +867,7 @@ function fixpoint_rewrite(
     end
     order === :pre ||
         throw(ArgumentError(lazy"order must be :pre or :post, got: $order"))
-    seen = IdSet{BasicSymbolic{SymReal}}()
+    seen = Base.IdSet{BasicSymbolic{SymReal}}()
     x = expr
     for _ in 1:maxiterations
         x′ = rewrite(ws, x; order)
@@ -900,7 +904,7 @@ function _fixpoint_post(
     dirty = collect(Int32(1):n)
     modified = Int32[]
     stale = BitSet()
-    seen = IdSet{BasicSymbolic{SymReal}}()
+    seen = Base.IdSet{BasicSymbolic{SymReal}}()
     n_known = n
     steps = 0
     while steps < maxiterations

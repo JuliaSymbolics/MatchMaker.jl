@@ -35,19 +35,23 @@ let
         # bind of a, not once per produced alternative
         count[] = 0
         cn = Constraint(v -> (count[] += 1; true), [a])
-        @test length(matchall(
-            g(slot(a), slot(b), slot(c)), g(x, y, z);
-            constraints = [cn]
-        )) == 6
+        @test length(
+            matchall(
+                g(slot(a), slot(b), slot(c)), g(x, y, z);
+                constraints = [cn]
+            )
+        ) == 6
         @test count[] == 3
         # a two-var constraint fires when the second var binds — once
         # per (a, b) pairing
         count[] = 0
         cn = Constraint(v -> (count[] += 1; true), [a, b])
-        @test length(matchall(
-            g(slot(a), slot(b), slot(c)), g(x, y, z);
-            constraints = [cn]
-        )) == 6
+        @test length(
+            matchall(
+                g(slot(a), slot(b), slot(c)), g(x, y, z);
+                constraints = [cn]
+            )
+        ) == 6
         @test count[] == 6
     end
     @testset "equivalent to post-hoc filtering" begin
@@ -59,7 +63,7 @@ let
         )
         want = [
             m for m in matchall(f(slot(a), segment(s)), f(p, q, r)) if
-            isequal(m[a], q)
+                isequal(m[a], q)
         ]
         @test length(got) == length(want) == 1
         @test isequal(only(got), only(want))
@@ -98,8 +102,10 @@ let
             v -> iscall(v[1]) && length(arguments(v[1])) == 2, [s]
         )
         res = collect(
-            matchall(f(segment(s), segment(t)), f(p, q, r);
-            constraints = [cn])
+            matchall(
+                f(segment(s), segment(t)), f(p, q, r);
+                constraints = [cn]
+            )
         )
         @test length(res) == 3
         @test any(

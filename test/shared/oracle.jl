@@ -34,7 +34,7 @@ function oracle_matchall(
         b = Dict{BasicSymbolic{SymReal}, Any}(),
         sruns = Dict{BasicSymbolic{SymReal}, Vector}(),
         sops = Dict{BasicSymbolic{SymReal}, Any}(),
-        res = Dict{BasicSymbolic{SymReal}, Any}[]
+        res = Dict{BasicSymbolic{SymReal}, Any}[],
     )
     _o_match(pat, subj, vars, st) do
         push!(st.res, copy(st.b))
@@ -145,7 +145,7 @@ function _o_sargs(@nospecialize(effop), subj, ST)
         _is_associative_head(effop, ST) || return collect(arguments(subj))
         flat = Any[]
         function pushflat(a)
-            if iscall(a) && operation(a) === effop
+            return if iscall(a) && operation(a) === effop
                 foreach(pushflat, arguments(a))
             else
                 push!(flat, a)
@@ -274,8 +274,8 @@ function _o_seq!(
         MData.isa_variant(spec, VarSpec.Slot) && spec.default !== nothing &&
             (spec.predicate === nothing || spec.predicate(spec.default)) &&
             _o_bind(vs, spec.default, st) do
-                _o_seq!(k, effop, kids, sargs, vars, st, ST, i + 1, sidx)
-            end
+            _o_seq!(k, effop, kids, sargs, vars, st, ST, i + 1, sidx)
+        end
         return nothing
     end
     sidx <= n || return nothing
@@ -323,8 +323,8 @@ function _o_comm!(k::F, effop, kids, sargs, vars, st, ST) where {F}
             MData.isa_variant(spec, VarSpec.Slot) && spec.default !== nothing &&
                 (spec.predicate === nothing || spec.predicate(spec.default)) &&
                 _o_bind(vs, spec.default, st) do
-                    rec(j + 1)
-                end
+                rec(j + 1)
+            end
             return nothing
         end
         for a in 1:n

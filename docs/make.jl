@@ -7,7 +7,6 @@ DocMeta.setdocmeta!(MatchMaker, :DocTestSetup, :(using MatchMaker); recursive = 
 makedocs(
     sitename = "MatchMaker.jl",
     modules = [MatchMaker],
-    remotes = nothing,
     pages = [
         "Home" => "index.md",
         "Tutorial" => "tutorial.md",
@@ -24,4 +23,9 @@ makedocs(
         "Design notes" => "optional-segments.md",
     ],
     checkdocs = :none,
+)
+
+deploydocs(
+    repo = "github.com/JuliaSymbolics/MatchMaker.jl.git",
+    push_preview = true
 )
