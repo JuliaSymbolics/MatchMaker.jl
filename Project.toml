@@ -1,6 +1,6 @@
 name = "MatchMaker"
 uuid = "a3da1e36-6513-4d47-b86d-5347c7de0145"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Aayush Sabharwal <aayush.sabharwal@gmail.com>"]
 
 [deps]
