@@ -246,7 +246,7 @@ end
         )
     )
     function naive_fp(ws, x)
-        seen = IdSet{BasicSymbolic{SymReal}}()
+        seen = Base.IdSet{BasicSymbolic{SymReal}}()
         for _ in 1:10_000
             x′ = rewrite(ws, x)
             isequal(x′, x) && return x

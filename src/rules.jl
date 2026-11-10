@@ -867,7 +867,7 @@ function fixpoint_rewrite(
     end
     order === :pre ||
         throw(ArgumentError(lazy"order must be :pre or :post, got: $order"))
-    seen = IdSet{BasicSymbolic{SymReal}}()
+    seen = Base.IdSet{BasicSymbolic{SymReal}}()
     x = expr
     for _ in 1:maxiterations
         x′ = rewrite(ws, x; order)
@@ -904,7 +904,7 @@ function _fixpoint_post(
     dirty = collect(Int32(1):n)
     modified = Int32[]
     stale = BitSet()
-    seen = IdSet{BasicSymbolic{SymReal}}()
+    seen = Base.IdSet{BasicSymbolic{SymReal}}()
     n_known = n
     steps = 0
     while steps < maxiterations
