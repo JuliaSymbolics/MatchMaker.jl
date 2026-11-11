@@ -1,0 +1,17 @@
+name: Benchmark this PR
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - 'docs/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  bench:
+    uses: "SciML/.github/.github/workflows/benchmark.yml@v1"
+    secrets: "inherit"
