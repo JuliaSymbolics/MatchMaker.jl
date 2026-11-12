@@ -9,7 +9,7 @@ Julia-native symbolic pattern matching and rewriting for
 expressions: literals, slots, sequence captures, optional positions,
 and associative/commutative matching with deterministic enumeration.
 
-```julia
+```@example
 using MatchMaker, SymbolicUtils
 ```
 
