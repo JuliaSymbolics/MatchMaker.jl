@@ -2,7 +2,7 @@
 # `SUITE` is a BenchmarkGroup; run with AirspeedVelocity.jl's benchpkg,
 # or manually: `using PkgBenchmark; benchmarkpkg(".")`.
 #
-# Baselines: the naive oracle (test/oracle.jl — §5.7's top-level seam)
+# Baselines: the naive oracle (test/shared/oracle.jl — §5.7's top-level seam)
 # and SymbolicUtils' @acrule for AC first-match.
 
 using BenchmarkTools
@@ -10,7 +10,7 @@ using MatchMaker
 using SymbolicUtils
 using SymbolicUtils: Sym, SymReal, FnType, Const, BasicSymbolic, term
 
-include(joinpath(@__DIR__, "..", "test", "oracle.jl"))
+include(joinpath(@__DIR__, "..", "test", "shared", "oracle.jl"))
 
 @syms x y z a b c d s t p q r w
 h = Sym{SymReal}(:h; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
