@@ -9,7 +9,7 @@ MatchPy-style symbolic pattern matching for
 literals, slots, sequence captures, optional positions, and
 associative/commutative (AC) matching with deterministic enumeration.
 
-```@example
+```@example guide
 using MatchMaker, SymbolicUtils
 using SymbolicUtils: Sym, SymReal, FnType
 ```
@@ -20,7 +20,7 @@ A pattern is an ordinary `BasicSymbolic{SymReal}` expression containing
 *marker terms* — calls to the marker functions `slot`, `segment`, and
 `optional` wrapping a plain symbolic variable:
 
-```@example
+```@example guide
 @syms x y z a b s t p q u v c
 
 slot(a)        # matches exactly one term        (MatchPy Wildcard.dot)
@@ -31,7 +31,7 @@ optional(a)    # may be absent, binding a default (MatchPy Optional)
 Everything else in the pattern is matched literally: other calls match
 subject calls with the same operation, plain syms match themselves.
 
-```@example
+```@example guide
 pat = slot(a) + b * slot(t)          # a + b*t — b is a literal here
 m = compile_pattern(pat)
 match(m, x + b * z)                  # MarkersMap(a => x, t => z)
@@ -41,7 +41,7 @@ Marker terms can be built inline (`slot(a)`) or declared up front with
 [`@slots`](@ref)/[`@segments`](@ref), which create the variable and bind
 its marker form in one call:
 
-```@example
+```@example guide
 @slots a::Real b    # a ≡ slot(a), b ≡ slot(b) — already markers
 @segments s         # s ≡ segment(s)
 pat = a + s
@@ -58,7 +58,7 @@ Predicates, bounds, and defaults live outside the expression, in the
 `vars` map passed to `compile_pattern` — patterns stay readable and
 specs stay swappable:
 
-```@example
+```@example guide
 vars = Dict(
     a => slotspec(p -> p > 0),
     s => segmentspec(SymbolicUtils.issym; min = 1),
@@ -95,7 +95,7 @@ A pattern head's behavior is declared with
 `set_operation_traits(headsym; commutative, associative, identity)`;
 the builtins `+` and `*` are already AC with identities `0`/`1`:
 
-```@example
+```@example guide
 f = Sym{SymReal}(:f; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
 g = Sym{SymReal}(:g; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
 g = set_operation_traits(g; commutative = true)
@@ -154,7 +154,7 @@ in `vars` — both checked at `compile_pattern` time.
 The same variable `Sym` in two or more marker occurrences binds once
 and is rechecked by `isequal` at subsequent occurrences:
 
-```@example
+```@example guide
 matchall(compile_pattern(f(slot(u), slot(u))), f(p, p))  # u ↦ p
 matchall(compile_pattern(f(slot(u), slot(u))), f(p, q))  # []
 matchall(compile_pattern(f(segment(v), segment(v))), f(x, x, y, y))
@@ -179,7 +179,7 @@ called with the bound values in `vars` order and must return `Bool`.
 Constraints fire *as soon as* every listed variable is bound —
 pruning partial assignments before deeper positions dispatch:
 
-```@example
+```@example guide
 cn = Constraint(v -> !isequal(v[1], v[2]), [a, s])
 matchall(pat, p + q; constraints = [cn])
 ```
@@ -237,7 +237,7 @@ when two assignments bind the same values (MatchPy semantics).
 `instantiate(rhs, subst)` substitutes bindings into a template
 expression, splicing segment captures into `segment` positions:
 
-```@example
+```@example guide
 instantiate(slot(u) + segment(v), Dict(u => x, v => p + q))   # x + p + q
 ```
 
@@ -252,7 +252,7 @@ instantiate(slot(u) + segment(v), Dict(u => x, v => p + q))   # x + p + q
 Patterns are normalized by the algebra at **construction** time, before
 the matcher sees them:
 
-```@example
+```@example guide
 slot(x) * slot(x)   # ≡ slot(x)^2      — one pow node, not two slots
 slot(x) + slot(x)   # ≡ 2 * slot(x)    — coefficient, not two slots
 ```
