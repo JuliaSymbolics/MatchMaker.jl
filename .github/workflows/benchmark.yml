@@ -1,0 +1,28 @@
+name: Benchmark this PR
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - 'docs/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # Uses the action directly (rather than the SciML reusable workflow) so
+      # bench-on can freeze the benchmark script + Project.toml to the PR head
+      # instead of master — the PR itself may fix or extend benchmark/.
+      - uses: MilesCranmer/AirspeedVelocity.jl@action-v1
+        with:
+          julia-version: "1"
+          bench-on: ${{ github.event.pull_request.head.sha }}
