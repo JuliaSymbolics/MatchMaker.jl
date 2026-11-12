@@ -9,8 +9,9 @@ MatchPy-style symbolic pattern matching for
 literals, slots, sequence captures, optional positions, and
 associative/commutative (AC) matching with deterministic enumeration.
 
-```julia
+```@example guide
 using MatchMaker, SymbolicUtils
+using SymbolicUtils: Sym, SymReal, FnType
 ```
 
 ## Patterns
@@ -19,8 +20,8 @@ A pattern is an ordinary `BasicSymbolic{SymReal}` expression containing
 *marker terms* — calls to the marker functions `slot`, `segment`, and
 `optional` wrapping a plain symbolic variable:
 
-```julia
-@syms x y a b s t
+```@example guide
+@syms x y z a b s t p q u v c
 
 slot(a)        # matches exactly one term        (MatchPy Wildcard.dot)
 segment(s)     # matches a run of ≥0 args        (MatchPy Wildcard.star/plus)
@@ -30,7 +31,7 @@ optional(a)    # may be absent, binding a default (MatchPy Optional)
 Everything else in the pattern is matched literally: other calls match
 subject calls with the same operation, plain syms match themselves.
 
-```julia
+```@example guide
 pat = slot(a) + b * slot(t)          # a + b*t — b is a literal here
 m = compile_pattern(pat)
 match(m, x + b * z)                  # MarkersMap(a => x, t => z)
@@ -40,7 +41,7 @@ Marker terms can be built inline (`slot(a)`) or declared up front with
 [`@slots`](@ref)/[`@segments`](@ref), which create the variable and bind
 its marker form in one call:
 
-```julia
+```@example guide
 @slots a::Real b    # a ≡ slot(a), b ≡ slot(b) — already markers
 @segments s         # s ≡ segment(s)
 pat = a + s
@@ -57,13 +58,13 @@ Predicates, bounds, and defaults live outside the expression, in the
 `vars` map passed to `compile_pattern` — patterns stay readable and
 specs stay swappable:
 
-```julia
+```@example guide
 vars = Dict(
-    a => slotspec(predicate = p -> p > 0),
+    a => slotspec(p -> p > 0),
     s => segmentspec(SymbolicUtils.issym; min = 1),
-    b => slotspec(default = 5),
+    c => slotspec(default = 5),
 )
-m = compile_pattern(pat; vars)
+m = compile_pattern(a + s + optional(c); vars)
 ```
 
 **`slotspec(predicate = nothing; default = nothing)`**
@@ -94,7 +95,9 @@ A pattern head's behavior is declared with
 `set_operation_traits(headsym; commutative, associative, identity)`;
 the builtins `+` and `*` are already AC with identities `0`/`1`:
 
-```julia
+```@example guide
+f = Sym{SymReal}(:f; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+g = Sym{SymReal}(:g; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
 g = set_operation_traits(g; commutative = true)
 f = set_operation_traits(f; associative = true, commutative = true,
                            identity = :f0)      # f() ≡ :f0
@@ -151,10 +154,10 @@ in `vars` — both checked at `compile_pattern` time.
 The same variable `Sym` in two or more marker occurrences binds once
 and is rechecked by `isequal` at subsequent occurrences:
 
-```julia
-matchall(compile_pattern(f(slot(a), slot(a))), f(p, p))  # a ↦ p
-matchall(compile_pattern(f(slot(a), slot(a))), f(p, q))  # []
-matchall(compile_pattern(f(segment(s), segment(s))), f(x, x, y, y))
+```@example guide
+matchall(compile_pattern(f(slot(u), slot(u))), f(p, p))  # u ↦ p
+matchall(compile_pattern(f(slot(u), slot(u))), f(p, q))  # []
+matchall(compile_pattern(f(segment(v), segment(v))), f(x, x, y, y))
 ```
 
 A bound *segment* rechecks its captured run elementwise — under
@@ -176,9 +179,9 @@ called with the bound values in `vars` order and must return `Bool`.
 Constraints fire *as soon as* every listed variable is bound —
 pruning partial assignments before deeper positions dispatch:
 
-```julia
-cn = Constraint(v -> !isequal(v[1], v[2]), [a, b])
-matchall(pat, subj; constraints = [cn])
+```@example guide
+cn = Constraint(v -> !isequal(v[1], v[2]), [a, s])
+matchall(pat, p + q; constraints = [cn])
 ```
 
 ## Querying
@@ -234,8 +237,8 @@ when two assignments bind the same values (MatchPy semantics).
 `instantiate(rhs, subst)` substitutes bindings into a template
 expression, splicing segment captures into `segment` positions:
 
-```julia
-instantiate(slot(a) + segment(s), {a => x, s => p + q})   # x + p + q
+```@example guide
+instantiate(slot(u) + segment(v), Dict(u => x, v => p + q))   # x + p + q
 ```
 
 - a `segment` position splices its captured args into the parent call;
@@ -249,7 +252,7 @@ instantiate(slot(a) + segment(s), {a => x, s => p + q})   # x + p + q
 Patterns are normalized by the algebra at **construction** time, before
 the matcher sees them:
 
-```julia
+```@example guide
 slot(x) * slot(x)   # ≡ slot(x)^2      — one pow node, not two slots
 slot(x) + slot(x)   # ≡ 2 * slot(x)    — coefficient, not two slots
 ```
