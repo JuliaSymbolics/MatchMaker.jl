@@ -13,5 +13,16 @@ concurrency:
 
 jobs:
   bench:
-    uses: "SciML/.github/.github/workflows/benchmark.yml@v1"
-    secrets: "inherit"
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # Uses the action directly (rather than the SciML reusable workflow) so
+      # bench-on can freeze the benchmark script + Project.toml to the PR head
+      # instead of master — the PR itself may fix or extend benchmark/.
+      - uses: MilesCranmer/AirspeedVelocity.jl@action-v1
+        with:
+          julia-version: "1"
+          bench-on: ${{ github.event.pull_request.head.sha }}
