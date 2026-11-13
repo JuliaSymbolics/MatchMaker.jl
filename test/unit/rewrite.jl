@@ -40,6 +40,22 @@ const CS = SymbolicUtils.Const{SymReal}
     @test ws(x * y) === nothing                 # no candidate
     @test ws(CS(5)) === nothing                 # atom, no leaf rules
 
+    # non-callable rhs is wrapped as a literal Const (#7)
+    ws_const = RuleWorkspace(
+        compile_rules(CompiledRule[mmrule(slot(a) + 1 => 0)])
+    )
+    @test isequal(ws_const(x + 1), CS(0))
+    @test ws_const(x + y) === nothing
+
+    # …and combines with a value-checking slotspec for the exp(0) recipe
+    zero_only = mmrule(
+        exp(slot(u)) => 0;
+        vars = Dict(u => slotspec(t -> isequal(t, CS(0)))),
+    )
+    ws_zero = RuleWorkspace(compile_rules(CompiledRule[zero_only]))
+    @test isequal(ws_zero(exp(CS(0))), CS(0))
+    @test ws_zero(exp(CS(1))) === nothing
+
     # callable rhs: `nothing` falls through to the next rule
     only_equal = mmrule(
         slot(a) + slot(b) =>

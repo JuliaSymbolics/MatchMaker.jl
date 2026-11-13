@@ -95,7 +95,8 @@ end
 
 Build a [`CompiledRule`](@ref): `lhs` is compiled via
 [`compile_pattern`](@ref); `rhs` is a symbolic template (compiled to an
-[`RhsPlan`](@ref)) or a callable `f(view) -> expr | nothing`.
+[`RhsPlan`](@ref)), a callable `f(view) -> expr | nothing`, or any
+other value, which is wrapped as a literal `Const`.
 `vars` maps pattern variables to [`VarSpec`](@ref)s; `constraints` are
 cross-variable checks — see [`Constraint`](@ref).
 """
@@ -107,7 +108,11 @@ function mmrule(
     ) where {T}
     (l, rhs) = lhs
     pat = compile_pattern(l; vars)
-    r = rhs isa BasicSymbolic{SymReal} ? _compile_rhs(rhs, pat) : RhsT(rhs)
+    # callable rhs → live SubstitutionView; a non-callable rhs is a
+    # literal constant wrapped as Const (so `mmrule(l => 0)` works)
+    r = rhs isa BasicSymbolic{SymReal} ? _compile_rhs(rhs, pat) :
+        hasmethod(rhs, Tuple{SubstitutionView}) ? RhsT(rhs) :
+        _compile_rhs(Const{SymReal}(rhs), pat)
     return CompiledRule(pat, Constraint[constraints...], r)
 end
 
