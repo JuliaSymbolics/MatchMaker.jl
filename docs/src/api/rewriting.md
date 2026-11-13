@@ -35,3 +35,9 @@ RuleWorkspace
 rewrite
 fixpoint_rewrite
 ```
+
+## Deprecated
+
+```@docs
+compile_rules
+```

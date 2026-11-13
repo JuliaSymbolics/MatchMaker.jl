@@ -93,7 +93,7 @@ end
 """
     mmrule(lhs => rhs; vars = Dict(), constraints = Constraint[])
 
-Build a [`CompiledRule`](@ref): `lhs` is compiled via
+Build a [`CompiledRule`](@ref). `lhs` is compiled via
 [`compile_pattern`](@ref); `rhs` is a symbolic template (compiled to an
 [`RhsPlan`](@ref)), a callable `f(view) -> expr | nothing`, or any
 other value, which is wrapped as a literal `Const`.

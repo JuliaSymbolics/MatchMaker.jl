@@ -41,3 +41,9 @@ using MatchMaker, SymbolicUtils
 
 See the [Tutorial](tutorial.md) for a worked end-to-end example and the
 [user guide](guide.md) for the semantics reference.
+
+## Module
+
+```@docs
+MatchMaker
+```

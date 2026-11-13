@@ -9,7 +9,7 @@
 # `operation` is the function itself.
 
 """
-    $TYPEDSIGNATURES
+    slot(x)
 
 Create a *slot* marker term wrapping the symbolic variable `x` —
 matches exactly one subject term. `x` may be a `Sym` (wrapped as-is)
@@ -19,7 +19,7 @@ apply). The inner `Sym`'s `symtype` is the type constraint.
 function slot end
 
 """
-    $TYPEDSIGNATURES
+    segment(x)
 
 Create a *segment* marker term wrapping `x`: matches a contiguous run (free/associative heads) or a sub-multiset
 (commutative/AC heads) of an argument list. See [`slot`](@ref).
@@ -27,7 +27,7 @@ Create a *segment* marker term wrapping `x`: matches a contiguous run (free/asso
 function segment end
 
 """
-    $TYPEDSIGNATURES
+    optional(x)
 
 Create an *optional* marker term wrapping `x`: a slot occurrence that may instead bind the variable's `VarSpec.Slot.default` (the
 default lives in the spec, not in the tree). See [`slot`](@ref).
