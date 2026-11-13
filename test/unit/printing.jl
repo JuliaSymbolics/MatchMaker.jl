@@ -1,4 +1,5 @@
 using MatchMaker, SymbolicUtils, Test
+using MatchMaker: RuleSet
 
 @testset "printing" begin
     @syms x a b s
@@ -19,7 +20,7 @@ using MatchMaker, SymbolicUtils, Test
     @test plain(mmrule(exp(slot(a)) => 0)) == "exp(slot(a)) => 0"
     @test plain(mmrule(slot(a) => (v -> v[a]))) == "slot(a) => <callable>"
 
-    rs = ruleset(CompiledRule[r, mmrule(exp(slot(a)) => 0)])
+    rs = RuleSet(CompiledRule[r, mmrule(exp(slot(a)) => 0)])
     @test plain(rs) == "RuleSet{BucketIndex}(2 rules)"
     @test sprint(show, MIME"text/plain"(), rs) ==
         "RuleSet{BucketIndex} with 2 rules:\n" *
@@ -40,7 +41,7 @@ using MatchMaker, SymbolicUtils, Test
     @test endswith(it, "…)")
     @test lastindex(it) < lastindex("boundmatches() ") + 60 + 40
 
-    net = ruleset(CompiledRule[r], DiscrimNet)
+    net = RuleSet(CompiledRule[r], DiscrimNet)
     @test plain(net) == "RuleSet{DiscrimNet}(1 rules)"
     @test contains(plain(net.index), "DiscrimNet(")
     @test contains(plain(net.index.states[1]), "NetState(")

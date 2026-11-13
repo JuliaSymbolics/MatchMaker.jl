@@ -33,7 +33,7 @@ and matches literally:
 ```julia
 @syms x
 r = mmrule(exp(Const{SymReal}(0)) => 1)
-ws = RuleWorkspace(ruleset(CompiledRule[r]))
+ws = RuleWorkspace(RuleSet(CompiledRule[r]))
 ws(exp(Const{SymReal}(0)))   # 1 — the symbolic exp(0) term matched
 ws(exp(x))                   # nothing — no literal `0` argument
 ```

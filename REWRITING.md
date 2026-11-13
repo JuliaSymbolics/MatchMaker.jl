@@ -72,7 +72,7 @@ rule = mmrule(lhs => rhs;
   `FunctionWrapper`, same convention as `PredT`/`ConstrT` in §3.2), so
   `apply` union-splits on a 2-member concrete union instead of calling
   `Any`. `RhsPlan` is the rhs expression compiled *against the lhs
-  var ids* at `compile_rules` time — instantiation reads `binds` by
+  var ids* at `RuleSet` construction time — instantiation reads `binds` by
   index and splices segment captures positionally, bypassing the
   `Sym → value` dict that `instantiate`/`MarkersMap` would build per
   rewrite.
@@ -114,7 +114,7 @@ struct RuleSet{I <: RuleIndex}
     index::I                  # §5 — BucketIndex now, DiscrimNet later
 end
 
-compile_rules(rules) -> RuleSet     # build once, share globally, thread-safe
+RuleSet(rules)                       # build once, share globally, thread-safe
 ```
 
 `RuleSet` is parametric on the index: an abstract `index::RuleIndex`
@@ -247,7 +247,7 @@ per-attempt allocation cost verbatim; the workspace exists to remove it.
 
 ### Phase 1: `RuleIndex` bucket dispatch (initial deliverable)
 
-Group rules by root-obligation signature at `compile_rules` time:
+Group rules by root-obligation signature at `RuleSet` construction time:
 
 - fixed op head → bucket per `op` identity
 - head-slot (`~f` over args) → `:any_head`

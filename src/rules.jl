@@ -387,7 +387,7 @@ NetState() = NetState(
     DiscrimNet <: RuleIndex
 
 Phase-2 index: a shared trie over every pattern's preorder obligation
-sequence — select with `ruleset(rules, DiscrimNet)`. Faster than
+sequence — select with `RuleSet(rules, DiscrimNet)`. Faster than
 [`BucketIndex`](@ref) wherever many rules share a root head but differ
 in literals or deeper structure; never slower by design
 (over-approximates survivors — the engine still decides).
@@ -488,7 +488,7 @@ end
     RuleSet{I <: RuleIndex}
 
 The immutable compiled artifact: the rules plus the dispatch index,
-built once by [`ruleset`](@ref) and shareable across tasks and
+built once by `RuleSet(rules, index)` and shareable across tasks and
 calls — all mutable state lives in [`RuleWorkspace`](@ref).
 """
 struct RuleSet{I <: RuleIndex}
@@ -499,14 +499,17 @@ struct RuleSet{I <: RuleIndex}
 end
 
 """
-    ruleset(rules::AbstractVector{CompiledRule}, index = BucketIndex)
+    RuleSet(rules::AbstractVector{CompiledRule}, index = BucketIndex)
 
 Bundle a collection of [`CompiledRule`](@ref)s (from [`mmrule`](@ref))
-into an immutable [`RuleSet`](@ref) — builds the dispatch index once,
+into an immutable `RuleSet` — builds the dispatch index once,
 shareable globally. `index` selects the [`RuleIndex`](@ref):
 [`BucketIndex`](@ref) (default) or [`DiscrimNet`](@ref).
+
+SymbolicUtils.jl exports a different `RuleSet`; qualifying
+`MatchMaker.RuleSet` (or `using MatchMaker: RuleSet`) disambiguates.
 """
-function ruleset(
+function RuleSet(
         rules::AbstractVector{CompiledRule},
         ::Type{index} = BucketIndex,
     ) where {index <: RuleIndex}

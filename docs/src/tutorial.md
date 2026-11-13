@@ -6,6 +6,7 @@ CurrentModule = MatchMaker
 
 ```@example tut
 using MatchMaker, SymbolicUtils
+using MatchMaker: RuleSet  # SymbolicUtils exports a different RuleSet
 using SymbolicUtils: Sym, SymReal, FnType
 @syms x y z a b s t p q
 ```
@@ -67,12 +68,12 @@ instantiate(slot(t) + y, subst)
 
 ## Rewriting
 
-`mmrule` compiles `lhs => rhs` pairs; `ruleset` bundles them into an
-immutable `RuleSet`; a `RuleWorkspace` owns the mutable state and is
+`mmrule` compiles `lhs => rhs` pairs; `RuleSet` bundles them into
+an immutable rule set; a `RuleWorkspace` owns the mutable state and is
 the rewriter callable:
 
 ```@example tut
-rules = ruleset(CompiledRule[
+rules = RuleSet(CompiledRule[
     mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
     mmrule(sin(slot(a)) => slot(a)),
 ])
@@ -91,7 +92,7 @@ fixpoint_rewrite(ws, sin(x + y) + cos(p + q))
 
 ## Choosing a rule index
 
-`ruleset(rules, index)` picks the dispatch structure that selects
+`RuleSet(rules, index)` picks the dispatch structure that selects
 candidate rules at each site. Two are provided:
 
 - **`BucketIndex`** (the default) buckets rules by root-head signature
@@ -106,7 +107,7 @@ candidate rules at each site. Two are provided:
   never slower once the net amortizes.
 
 ```@example tut
-net_rules = ruleset(CompiledRule[
+net_rules = RuleSet(CompiledRule[
     mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
     mmrule(sin(slot(a)) => slot(a)),
 ], DiscrimNet)
