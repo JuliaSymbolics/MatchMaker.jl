@@ -1,7 +1,7 @@
 using Test
 using MatchMaker
 using SymbolicUtils
-using SymbolicUtils: Sym, SymReal, FnType
+using SymbolicUtils: Sym, SymReal, FnType, BasicSymbolic
 
 @testset "lazy BoundMatch results" begin
     @syms x y z a b s t v p q r
@@ -11,7 +11,12 @@ using SymbolicUtils: Sym, SymReal, FnType
 
     eager = matchall(pat, subj)
     lazy = boundmatchall(pat, subj)
-    @test eltype(lazy) === BoundMatch || all(m -> m isa BoundMatch, lazy)
+    @test lazy isa Vector{BoundMatch}
+    @test eager isa Vector{MarkersMap}
+    @test collect(boundmatches_at(compile_pattern(sin(slot(a))), sin(sin(x)))) isa
+        Vector{Tuple{BoundMatch, BasicSymbolic{SymReal}}}
+    @test collect(matches_at(compile_pattern(sin(slot(a))), sin(sin(x)))) isa
+        Vector{Tuple{MarkersMap, BasicSymbolic{SymReal}}}
     @test length(lazy) == length(eager)
 
     # values agree with eager results, elementwise and as a multiset
