@@ -31,6 +31,15 @@ Base.show(io::IO, m::Matcher) =
 Base.show(io::IO, p::NodePlanT) = MData.show_variant(io, p)
 Base.show(io::IO, v::VarSpecT) = MData.show_variant(io, v)
 
+# Render a subject term, capped — subjects can be arbitrarily large.
+function _show_subject(io::IO, t)
+    s = sprint(show, t)
+    if lastindex(s) > 60
+        s = first(s, 59) * "…"
+    end
+    return print(io, s)
+end
+
 ###
 ### Engine
 ###
@@ -40,7 +49,7 @@ function Base.show(io::IO, e::MatchEngine)
     print(io, e.pat.ir[e.pat.root])
     if 0 < e.sroot <= length(e.subj)
         print(io, " on ")
-        print(io, e.subj[e.sroot])
+        _show_subject(io, e.subj[e.sroot])
     end
     return print(io, ")")
 end
@@ -62,12 +71,21 @@ Base.show(io::IO, b::Bindings) = print(io, "Bindings(", count(!iszero, b.node), 
 ### Results & iterators
 ###
 
-Base.show(io::IO, it::MatchIterator) =
-    (print(io, "matches("); print(io, it.eng.pat.ir[it.eng.pat.root]); print(io, ")"))
-Base.show(io::IO, it::BoundMatchIterator) =
-    (print(io, "boundmatches("); print(io, it.eng.pat.ir[it.eng.pat.root]); print(io, ")"))
-Base.show(io::IO, it::BoundMatchAtIterator) =
-    (print(io, "boundmatches_at("); print(io, it.eng.pat.ir[it.eng.pat.root]); print(io, ")"))
+function _show_iterator(io::IO, name, eng::MatchEngine)
+    print(io, name, "(")
+    print(io, eng.pat.ir[eng.pat.root])
+    print(io, ", ")
+    if 0 < eng.sroot <= length(eng.subj)
+        _show_subject(io, eng.subj[eng.sroot])
+    else
+        print(io, "<uninitialized>")
+    end
+    return print(io, ")")
+end
+
+Base.show(io::IO, it::MatchIterator) = _show_iterator(io, "matches", it.eng)
+Base.show(io::IO, it::BoundMatchIterator) = _show_iterator(io, "boundmatches", it.eng)
+Base.show(io::IO, it::BoundMatchAtIterator) = _show_iterator(io, "boundmatches_at", it.eng)
 
 ###
 ### Rules

@@ -28,11 +28,17 @@ using MatchMaker, SymbolicUtils, Test
     @test plain(RuleWorkspace(rs)) == "RuleWorkspace(2 rules)"
 
     @test plain(matches(m, sin(x) + x)) ==
-        "matches(segment(s) + sin(slot(a)))"
+        "matches(segment(s) + sin(slot(a)), sin(x) + x)"
     @test plain(boundmatches(m, sin(x) + x)) ==
-        "boundmatches(segment(s) + sin(slot(a)))"
+        "boundmatches(segment(s) + sin(slot(a)), sin(x) + x)"
     @test plain(boundmatches_at(m, sin(x) + x)) ==
-        "boundmatches_at(segment(s) + sin(slot(a)))"
+        "boundmatches_at(segment(s) + sin(slot(a)), sin(x) + x)"
+
+    # long subjects truncate
+    big = sum(v -> v^2, [x, a, b, s, x^2, a^2, b^2, s^2, sin(x), cos(a)])
+    it = plain(boundmatches(m, big))
+    @test endswith(it, "…)")
+    @test lastindex(it) < lastindex("boundmatches() ") + 60 + 40
 
     net = compile_rules(CompiledRule[r], DiscrimNet)
     @test plain(net) == "RuleSet{DiscrimNet}(1 rules)"
