@@ -76,9 +76,7 @@ function instantiate(template::BasicSymbolic{SymReal}, subst)
         elseif newop === (*)
             out[i] = SymbolicUtils.mul_worker(SymReal, newargs)
         else
-            out[i] = BSImpl.Term{SymReal}(
-                newop, newargs; type = symtype(t), shape = SymbolicUtils.shape(t)
-            )
+            out[i] = maketerm(typeof(t), newop, newargs, metadata(t))
         end
     end
     return out[root]

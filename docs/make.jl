@@ -1,4 +1,5 @@
 using Documenter
+using DocumenterCodeBlocks
 using MatchMaker
 using SymbolicUtils
 
@@ -7,10 +8,13 @@ DocMeta.setdocmeta!(MatchMaker, :DocTestSetup, :(using MatchMaker); recursive = 
 makedocs(
     sitename = "MatchMaker.jl",
     modules = [MatchMaker],
+    plugins = [CodeBlocks()],
+    checkdocs = :exports,
     pages = [
         "Home" => "index.md",
         "Tutorial" => "tutorial.md",
         "User guide" => "guide.md",
+        "Limitations" => "limitations.md",
         "API reference" => [
             "Patterns" => "api/patterns.md",
             "Traits" => "api/traits.md",
@@ -22,7 +26,6 @@ makedocs(
         ],
         "Design notes" => "optional-segments.md",
     ],
-    checkdocs = :none,
 )
 
 deploydocs(

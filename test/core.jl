@@ -71,3 +71,7 @@ end
 @safetestset "rewrite / ruleset" begin
     include("unit/rewrite.jl")
 end
+
+@safetestset "printing" begin
+    include("unit/printing.jl")
+end

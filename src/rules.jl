@@ -93,9 +93,10 @@ end
 """
     mmrule(lhs => rhs; vars = Dict(), constraints = Constraint[])
 
-Build a [`CompiledRule`](@ref): `lhs` is compiled via
+Build a [`CompiledRule`](@ref). `lhs` is compiled via
 [`compile_pattern`](@ref); `rhs` is a symbolic template (compiled to an
-[`RhsPlan`](@ref)) or a callable `f(view) -> expr | nothing`.
+[`RhsPlan`](@ref)), a callable `f(view) -> expr | nothing`, or any
+other value, which is wrapped as a literal `Const`.
 `vars` maps pattern variables to [`VarSpec`](@ref)s; `constraints` are
 cross-variable checks — see [`Constraint`](@ref).
 """
@@ -107,7 +108,9 @@ function mmrule(
     ) where {T}
     (l, rhs) = lhs
     pat = compile_pattern(l; vars)
-    r = rhs isa BasicSymbolic{SymReal} ? _compile_rhs(rhs, pat) : RhsT(rhs)
+    r = rhs isa BasicSymbolic{SymReal} ? _compile_rhs(rhs, pat) :
+        hasmethod(rhs, Tuple{SubstitutionView}) ? RhsT(rhs) :
+        _compile_rhs(Const{SymReal}(rhs), pat)
     return CompiledRule(pat, Constraint[constraints...], r)
 end
 
@@ -180,9 +183,7 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
         elseif newop === (*)
             out[i] = SymbolicUtils.mul_worker(SymReal, newargs)
         else
-            out[i] = BSImpl.Term{SymReal}(
-                newop, newargs; type = symtype(t), shape = SymbolicUtils.shape(t)
-            )
+            out[i] = maketerm(typeof(t), newop, newargs, metadata(t))
         end
     end
     r = plan.root
@@ -386,7 +387,7 @@ NetState() = NetState(
     DiscrimNet <: RuleIndex
 
 Phase-2 index: a shared trie over every pattern's preorder obligation
-sequence — select with `compile_rules(rules, DiscrimNet)`. Faster than
+sequence — select with `RuleSet(rules, DiscrimNet)`. Faster than
 [`BucketIndex`](@ref) wherever many rules share a root head but differ
 in literals or deeper structure; never slower by design
 (over-approximates survivors — the engine still decides).
@@ -487,7 +488,7 @@ end
     RuleSet{I <: RuleIndex}
 
 The immutable compiled artifact: the rules plus the dispatch index,
-built once by [`compile_rules`](@ref) and shareable across tasks and
+built once by `RuleSet(rules, index)` and shareable across tasks and
 calls — all mutable state lives in [`RuleWorkspace`](@ref).
 """
 struct RuleSet{I <: RuleIndex}
@@ -498,19 +499,22 @@ struct RuleSet{I <: RuleIndex}
 end
 
 """
-    $TYPEDSIGNATURES
+    RuleSet(rules::AbstractVector{CompiledRule}, index = BucketIndex)
 
-Compile a collection of [`CompiledRule`](@ref)s (from [`mmrule`](@ref))
-into a [`RuleSet`](@ref) — builds the dispatch index once, shareable
-globally. The optional second argument selects the [`RuleIndex`](@ref):
+Bundle a collection of [`CompiledRule`](@ref)s (from [`mmrule`](@ref))
+into an immutable `RuleSet` — builds the dispatch index once,
+shareable globally. `index` selects the [`RuleIndex`](@ref):
 [`BucketIndex`](@ref) (default) or [`DiscrimNet`](@ref).
+
+SymbolicUtils.jl exports a different `RuleSet`; qualifying
+`MatchMaker.RuleSet` (or `using MatchMaker: RuleSet`) disambiguates.
 """
-function compile_rules(
+function RuleSet(
         rules::AbstractVector{CompiledRule},
         ::Type{index} = BucketIndex,
     ) where {index <: RuleIndex}
     rs = collect(CompiledRule, rules)
-    return RuleSet(rs, _make_index(index, rs))
+    return RuleSet{index}(rs, _make_index(index, rs))
 end
 
 _make_index(::Type{BucketIndex}, rs) = _build_index(rs)

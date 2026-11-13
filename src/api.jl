@@ -185,6 +185,7 @@ struct MatchIterator
     eng::MatchEngine
 end
 Base.IteratorSize(::Type{MatchIterator}) = Base.SizeUnknown()
+Base.eltype(::Type{MatchIterator}) = MarkersMap
 function Base.iterate(it::MatchIterator, state = nothing)
     next_match!(it.eng) || return nothing
     return materialize(SubstitutionView(it.eng, it.eng.steps)), nothing
@@ -202,6 +203,7 @@ struct BoundMatchIterator
     eng::MatchEngine
 end
 Base.IteratorSize(::Type{BoundMatchIterator}) = Base.SizeUnknown()
+Base.eltype(::Type{BoundMatchIterator}) = BoundMatch
 function Base.iterate(it::BoundMatchIterator, state = nothing)
     next_match!(it.eng) || return nothing
     return (
@@ -318,6 +320,7 @@ struct BoundMatchAtIterator
     eng::MatchEngine
 end
 Base.IteratorSize(::Type{BoundMatchAtIterator}) = Base.SizeUnknown()
+Base.eltype(::Type{BoundMatchAtIterator}) = Tuple{BoundMatch, BasicSymbolic{SymReal}}
 
 # Continue the inner enumeration at the bound site, else reset! onward
 # to the next node producing a match; returns the node's index or 0.
