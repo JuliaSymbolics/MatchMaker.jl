@@ -67,8 +67,8 @@ instantiate(slot(t) + y, subst)
 
 ## Rewriting
 
-`mmrule` compiles `lhs => rhs` pairs; `RuleSet` bundles them
-into an immutable rule set; a `RuleWorkspace` owns the mutable state and is
+`mmrule` compiles `lhs => rhs` pairs; `ruleset` bundles them into an
+immutable `RuleSet`; a `RuleWorkspace` owns the mutable state and is
 the rewriter callable:
 
 ```@example tut
@@ -87,6 +87,31 @@ to a fixed point:
 ```@example tut
 rewrite(ws, sin(x + y) * sin(p + q))
 fixpoint_rewrite(ws, sin(x + y) + cos(p + q))
+```
+
+## Choosing a rule index
+
+`ruleset(rules, index)` picks the dispatch structure that selects
+candidate rules at each site. Two are provided:
+
+- **`BucketIndex`** (the default) buckets rules by root-head signature
+  and checks a subject's root in O(1). Tiny build cost; the right
+  default for small and medium rule sets.
+- **`DiscrimNet`** builds a shared trie over every pattern's preorder
+  obligations. It pays more up front, but survives better where many
+  rules share a root head yet differ in literals or deeper structure —
+  the shape of real simplify rule sets at tens-to-hundreds of rules.
+  It only ever *over*-approximates candidates (the match engine still
+  verifies each survivor), so it is never less correct, and in practice
+  never slower once the net amortizes.
+
+```@example tut
+net_rules = ruleset(CompiledRule[
+    mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
+    mmrule(sin(slot(a)) => slot(a)),
+], DiscrimNet)
+ws_net = RuleWorkspace(net_rules)
+ws_net(x + y)
 ```
 
 ## Operation traits
