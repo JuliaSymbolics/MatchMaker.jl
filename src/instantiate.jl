@@ -76,9 +76,10 @@ function instantiate(template::BasicSymbolic{SymReal}, subst)
         elseif newop === (*)
             out[i] = SymbolicUtils.mul_worker(SymReal, newargs)
         else
-            out[i] = BSImpl.Term{SymReal}(
-                newop, newargs; type = symtype(t), shape = SymbolicUtils.shape(t)
-            )
+            # `t`'s static symtype would propagate the declared var type
+            # into the result — `maketerm` re-derives type/shape from the
+            # actual bound args, keeping cancellation `isequal` intact
+            out[i] = maketerm(typeof(t), newop, newargs, metadata(t))
         end
     end
     return out[root]

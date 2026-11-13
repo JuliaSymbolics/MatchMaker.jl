@@ -232,6 +232,13 @@ end
     # maxiterations bounds the loop
     @test fixpoint_rewrite(ws_cyc, x + y; maxiterations = 2) !== nothing
 
+    # untyped slot: instantiated RHS keeps the bound value's symtype, so
+    # cancellation isequal sees identical terms (#6)
+    ws_untyped = RuleWorkspace(
+        compile_rules(CompiledRule[mmrule(cos(-slot(s)) => cos(slot(s)))])
+    )
+    @test isequal(fixpoint_rewrite(ws_untyped, cos(-x) - cos(x)), CS(0))
+
     # dirty propagation: a convergent deep subject — results equal a
     # naive full-rewrite loop oracle
     ws_deep = RuleWorkspace(
