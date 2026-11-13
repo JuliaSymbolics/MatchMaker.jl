@@ -11,6 +11,7 @@ makedocs(
         "Home" => "index.md",
         "Tutorial" => "tutorial.md",
         "User guide" => "guide.md",
+        "Limitations" => "limitations.md",
         "API reference" => [
             "Patterns" => "api/patterns.md",
             "Traits" => "api/traits.md",
