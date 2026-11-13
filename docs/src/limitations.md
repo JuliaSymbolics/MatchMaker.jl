@@ -26,25 +26,27 @@ returns `1` before SymbolicUtils is involved. There is no `exp(0)` term
 left to match, so `mmrule(exp(0) => 1)` cannot observe it
 ([#7](https://github.com/JuliaSymbolics/MatchMaker.jl/issues/7)).
 
-The workaround is a slot with a value-checking predicate — the predicate
-receives the bound term, and plain Julia values are compared with
-`isequal`:
+The fix is to write the literal *symbolically*: `exp(Const{SymReal}(0))`
+wraps `0` in a symbolic constant, so the `exp` call survives as a term
+and matches literally:
 
 ```julia
-@syms x u
-zero_lit = mmrule(exp(slot(u)) => 0;
-                  vars = Dict(u => slotspec(t -> isequal(t, Const{SymReal}(0)))))
-ws = RuleWorkspace(compile_rules(CompiledRule[zero_lit]))
-ws(exp(Const{SymReal}(0)))   # Const{SymReal}(0) — the symbolic exp(0) term
-ws(exp(x))                   # nothing — predicate rejected the binding
+@syms x
+r = mmrule(exp(Const{SymReal}(0)) => 1)
+ws = RuleWorkspace(compile_rules(CompiledRule[r]))
+ws(exp(Const{SymReal}(0)))   # 1 — the symbolic exp(0) term matched
+ws(exp(x))                   # nothing — no literal `0` argument
 ```
 
-Two details make this work:
+The same applies to subjects: rewriting `exp(0)` means building it as
+`exp(Const{SymReal}(0))`. Two related details:
 
-- the subject `exp(0)` must be *built symbolically* — `exp(Const{SymReal}(0))` —
-  so it survives as an `exp` call term;
-- `mmrule(lhs => 0)` treats a non-symbolic, non-callable RHS as a literal —
-  it is wrapped in `Const` rather than called.
+- `mmrule(lhs => 1)` treats a non-symbolic, non-callable RHS as a
+  literal — it is wrapped in `Const` rather than called;
+- when you need "the literal `0` *inside* a bigger pattern" rather than
+  an all-literal LHS, a `slotspec` predicate comparing bound terms with
+  `isequal` does the job — but prefer the literal `Const` form, which is
+  simpler and indexable.
 
 ## `-x` and `-x*y` have different shapes
 
