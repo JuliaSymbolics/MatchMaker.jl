@@ -67,12 +67,12 @@ instantiate(slot(t) + y, subst)
 
 ## Rewriting
 
-`mmrule` compiles `lhs => rhs` pairs; `compile_rules` builds an
-immutable `RuleSet`; a `RuleWorkspace` owns the mutable state and is
+`mmrule` compiles `lhs => rhs` pairs; `RuleSet` bundles them
+into an immutable rule set; a `RuleWorkspace` owns the mutable state and is
 the rewriter callable:
 
 ```@example tut
-rules = compile_rules(CompiledRule[
+rules = ruleset(CompiledRule[
     mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
     mmrule(sin(slot(a)) => slot(a)),
 ])

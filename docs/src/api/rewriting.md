@@ -4,8 +4,8 @@ CurrentModule = MatchMaker
 
 # Rewriting
 
-`mmrule` compiles rules; `compile_rules` builds an immutable
-`RuleSet`; a `RuleWorkspace` owns the mutable state and is itself the
+`mmrule` compiles rules; `ruleset` bundles them
+into an immutable rule set; a `RuleWorkspace` owns the mutable state and is itself the
 first-match rewriter callable. `rewrite`/`fixpoint_rewrite` are the
 native tree passes.
 
@@ -21,7 +21,7 @@ RhsT
 ## Compiled rule sets and dispatch
 
 ```@docs
-compile_rules
+ruleset
 RuleSet
 RuleIndex
 BucketIndex

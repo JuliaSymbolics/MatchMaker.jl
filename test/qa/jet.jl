@@ -13,7 +13,7 @@ const _BS = BasicSymbolic{SymReal}
 d = MarkersMap(x => x)
 
 _rw = mmrule(slot(x) + slot(x) => slot(x) * slot(x))
-_rw_ws = RuleWorkspace(compile_rules(CompiledRule[_rw]))
+_rw_ws = RuleWorkspace(ruleset(CompiledRule[_rw]))
 
 @testset "JET" begin
     for (f, tt) in (
@@ -44,9 +44,9 @@ _rw_ws = RuleWorkspace(compile_rules(CompiledRule[_rw]))
             (MatchMaker._compile_rhs, Tuple{_BS, Matcher}),
             (MatchMaker._rhs_eval, Tuple{RhsPlan, MatchEngine}),
             (MatchMaker._apply_rhs, Tuple{CompiledRule, MatchEngine}),
-            (compile_rules, Tuple{Vector{CompiledRule}}),
+            (ruleset, Tuple{Vector{CompiledRule}}),
             (
-                compile_rules,
+                ruleset,
                 Tuple{Vector{CompiledRule}, Type{DiscrimNet}},
             ),
             (MatchMaker._build_index, Tuple{Vector{CompiledRule}}),

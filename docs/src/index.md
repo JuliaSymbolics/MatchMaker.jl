@@ -31,7 +31,7 @@ using MatchMaker, SymbolicUtils
 ## The mental model
 
 1. **Compile once** — [`compile_pattern`](@ref) builds a [`Matcher`](@ref)
-   (or [`mmrule`](@ref)/[`compile_rules`](@ref) for rewriting); the
+   (or [`mmrule`](@ref)/[`ruleset`](@ref) for rewriting); the
    compiled form is immutable and shareable.
 2. **Match at sites** — the match functions drive a [`MatchEngine`](@ref)
    over the pattern; results arrive as bindings keyed by variable `Sym`.

@@ -20,7 +20,7 @@ const CS = SymbolicUtils.Const{SymReal}
     @test_throws ArgumentError mmrule(slot(a) => slot(b))
 
     # workspace callable: first match in declaration order
-    rs = compile_rules(
+    rs = ruleset(
         CompiledRule[
             mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
             mmrule(segment(s) + slot(t) => segment(s)),
@@ -42,7 +42,7 @@ const CS = SymbolicUtils.Const{SymReal}
 
     # non-callable rhs is wrapped as a literal Const (#7)
     ws_const = RuleWorkspace(
-        compile_rules(CompiledRule[mmrule(slot(a) + 1 => 0)])
+        ruleset(CompiledRule[mmrule(slot(a) + 1 => 0)])
     )
     @test isequal(ws_const(x + 1), CS(0))
     @test ws_const(x + y) === nothing
@@ -52,7 +52,7 @@ const CS = SymbolicUtils.Const{SymReal}
         exp(slot(u)) => 0;
         vars = Dict(u => slotspec(t -> isequal(t, CS(0)))),
     )
-    ws_zero = RuleWorkspace(compile_rules(CompiledRule[zero_only]))
+    ws_zero = RuleWorkspace(ruleset(CompiledRule[zero_only]))
     @test isequal(ws_zero(exp(CS(0))), CS(0))
     @test ws_zero(exp(CS(1))) === nothing
 
@@ -65,13 +65,13 @@ const CS = SymbolicUtils.Const{SymReal}
         )
     )
     mul = mmrule(slot(a) + slot(b) => slot(a) * slot(b))
-    ws2 = RuleWorkspace(compile_rules(CompiledRule[only_equal, mul]))
+    ws2 = RuleWorkspace(ruleset(CompiledRule[only_equal, mul]))
     @test isequal(ws2(x + y), x * y)   # callable -> nothing -> r2 fires
     e = x + x
     @test ws2(e) === nothing           # x+x is a Mul — no + head
 
     # same engine is reset and reused across sites — bindings don't leak
-    rs3 = compile_rules(
+    rs3 = ruleset(
         CompiledRule[
             mmrule(slot(a) + slot(b) => slot(b)),
         ]
@@ -112,7 +112,7 @@ end
     r_mul = mmrule(slot(a) * slot(b) => slot(a))
     r_any = mmrule(slot(a) => a)                 # bare slot — any node
     r_leaf = mmrule(CS(3) => CS(4))              # literal root
-    rs = compile_rules(CompiledRule[r_add, r_mul, r_any, r_leaf])
+    rs = ruleset(CompiledRule[r_add, r_mul, r_any, r_leaf])
     idx = rs.index
 
     @test haskey(idx.by_op, +) && haskey(idx.by_op, *)
@@ -141,7 +141,7 @@ end
         slot(f)(slot(a)) => slot(a);
         vars = Dict(a => slotspec())
     )
-    idx2 = compile_rules(CompiledRule[r_hd]).index
+    idx2 = ruleset(CompiledRule[r_hd]).index
     @test collect(idx2.any_head) == Int32[1]
 end
 
@@ -149,7 +149,7 @@ end
     @syms x y z a b p q h(a, b)
 
     r_mul = mmrule(slot(a) + slot(b) => slot(a) * slot(b))
-    rs = compile_rules(CompiledRule[r_mul])
+    rs = ruleset(CompiledRule[r_mul])
     ws = RuleWorkspace(rs)
 
     # bottom-up: adds nested under a non-AC head rewrite before the parent
@@ -163,7 +163,7 @@ end
     # :pre vs :post differ on whether the parent sees original children:
     # h(x+y, x*y) — :pre parent sees unequal args, :post sees x*y==x*y
     ws_pair = RuleWorkspace(
-        compile_rules(
+        ruleset(
             CompiledRule[
                 r_mul,
                 mmrule(h(slot(a), slot(a)) => slot(a)),   # non-linear h rule
@@ -176,7 +176,7 @@ end
 
     # callable rhs producing non-symbolic values gets Const-wrapped
     r_num = mmrule(CS(1) + slot(a) => (v -> 42))
-    ws_num = RuleWorkspace(compile_rules(CompiledRule[r_num]))
+    ws_num = RuleWorkspace(ruleset(CompiledRule[r_num]))
     @test isequal(ws_num(CS(1) + x), CS(42))
 
     # fixpoint: iterate until stable — a+b -> a*b has no + left
@@ -202,20 +202,20 @@ end
     # multi-iteration convergence — h strips after children rewrite
     @test isequal(
         fixpoint_rewrite(
-            RuleWorkspace(compile_rules(mkrules())),
+            RuleWorkspace(ruleset(mkrules())),
             h(sin(x + y), sin(p + q))
         ),
         x * y
     )
     # result is stable — re-running fixes nothing
     @test isequal(
-        fixpoint_rewrite(RuleWorkspace(compile_rules(mkrules())), x * y),
+        fixpoint_rewrite(RuleWorkspace(ruleset(mkrules())), x * y),
         x * y
     )
     # :pre order still works via the naive loop
     @test isequal(
         fixpoint_rewrite(
-            RuleWorkspace(compile_rules(mkrules())),
+            RuleWorkspace(ruleset(mkrules())),
             h(sin(x + y), sin(p + q)); order = :pre
         ),
         x * y
@@ -223,7 +223,7 @@ end
 
     # 2-cycle terminates on the first repeated term
     ws_cyc = RuleWorkspace(
-        compile_rules(
+        ruleset(
             CompiledRule[
                 mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
                 mmrule(slot(a) * slot(b) => slot(a) + slot(b)),
@@ -235,7 +235,7 @@ end
 
     # 3-cycle terminates
     ws_cyc3 = RuleWorkspace(
-        compile_rules(
+        ruleset(
             CompiledRule[
                 mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
                 mmrule(slot(a) * slot(b) => h(slot(a), slot(b))),
@@ -251,14 +251,14 @@ end
     # untyped slot: instantiated RHS keeps the bound value's symtype, so
     # cancellation isequal sees identical terms (#6)
     ws_untyped = RuleWorkspace(
-        compile_rules(CompiledRule[mmrule(cos(-slot(s)) => cos(slot(s)))])
+        ruleset(CompiledRule[mmrule(cos(-slot(s)) => cos(slot(s)))])
     )
     @test isequal(fixpoint_rewrite(ws_untyped, cos(-x) - cos(x)), CS(0))
 
     # dirty propagation: a convergent deep subject — results equal a
     # naive full-rewrite loop oracle
     ws_deep = RuleWorkspace(
-        compile_rules(
+        ruleset(
             CompiledRule[
                 mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
                 mmrule(sin(slot(a)) => slot(a)),
@@ -279,7 +279,7 @@ end
         return x
     end
     ws_naive = RuleWorkspace(
-        compile_rules(
+        ruleset(
             CompiledRule[
                 mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
                 mmrule(sin(slot(a)) => slot(a)),
@@ -298,7 +298,7 @@ end
     @syms x y z a b p q
 
     ws = RuleWorkspace(
-        compile_rules(
+        ruleset(
             CompiledRule[
                 mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
                 mmrule(slot(a) * slot(a) => slot(a)^CS(2)),
@@ -343,8 +343,8 @@ end
         mmrule(slot(a) * CS(1) => slot(a)),   # a*1 canonicalizes → bare slot
         mmrule(CS(3) => CS(4)),
     ]
-    rs_b = compile_rules(rules)
-    rs_n = compile_rules(rules, DiscrimNet)
+    rs_b = ruleset(rules)
+    rs_n = ruleset(rules, DiscrimNet)
     @test rs_n.index isa DiscrimNet
 
     ws_b = RuleWorkspace(rs_b)
@@ -384,7 +384,7 @@ end
     sub = h(sin(x + y), p * q) + cos(w) * (a + b + c) + sin(p + q)
     @test isequal(rewrite(ws_b, sub), rewrite(ws_n, sub))
     ws2b = RuleWorkspace(
-        compile_rules(
+        ruleset(
             CompiledRule[
                 mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
                 mmrule(sin(slot(a)) => slot(a)),
@@ -392,7 +392,7 @@ end
         )
     )
     ws2n = RuleWorkspace(
-        compile_rules(
+        ruleset(
             CompiledRule[
                 mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
                 mmrule(sin(slot(a)) => slot(a)),
@@ -407,7 +407,7 @@ end
     # net_cache: a DAG-shared subterm evaluates once — h(x+y, x+y)
     # visits the same interned node from two trie states' descents
     ws3 = RuleWorkspace(
-        compile_rules(
+        ruleset(
             CompiledRule[
                 mmrule(h(slot(a), slot(a)) => slot(a)),
             ], DiscrimNet
@@ -474,8 +474,8 @@ end
             push!(rules, mmrule(pat => pat; vars))
         end
         isempty(rules) && continue
-        rs_b = compile_rules(rules)
-        rs_n = compile_rules(rules, DiscrimNet)
+        rs_b = ruleset(rules)
+        rs_n = ruleset(rules, DiscrimNet)
         ws_b, ws_n = RuleWorkspace(rs_b), RuleWorkspace(rs_n)
         for _ in 1:8
             t = rand_term(rng, 3)

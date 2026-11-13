@@ -40,6 +40,7 @@ include("instantiate.jl")
 include("api.jl")
 include("rules.jl")
 include("printing.jl")
+include("deprecations.jl")
 
 export slot, segment, optional,
     is_marker_term, is_marker_op,
@@ -56,7 +57,8 @@ export slot, segment, optional,
     boundmatches_at, matches_at,
     instantiate,
     mmrule, CompiledRule, RhsPlan, RhsT,
-    RuleSet, RuleIndex, BucketIndex, DiscrimNet, RuleWorkspace, compile_rules,
+    RuleSet, RuleIndex, BucketIndex, DiscrimNet, RuleWorkspace, ruleset,
+    compile_rules,
     rewrite, fixpoint_rewrite,
     FrameStatus,
     @slots, @segments

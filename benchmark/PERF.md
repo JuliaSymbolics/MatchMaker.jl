@@ -41,7 +41,7 @@ Julia 1.13, at `perf/seg-args` (post-`ArgsT` segment binds).
 
 ### DiscrimNet vs BucketIndex (same suite cases)
 
-`compile_rules(rules; index = DiscrimNet)` — Phase-2 shared-frontier
+`ruleset(rules, DiscrimNet)` — Phase-2 shared-frontier
 trie + `net_cache` memoization, same workloads:
 
 | case | BucketIndex | DiscrimNet | ratio |

@@ -450,7 +450,7 @@ const RW_SU_RULES = [
     (@rule ~a + ~b + ~c => ~a),
     (@rule ~a * ~b * ~c => ~a),
 ]
-const RW_RS = compile_rules(RW_MM_RULES)
+const RW_RS = ruleset(RW_MM_RULES)
 const RW_WS = RuleWorkspace(RW_RS)
 const RW_SU_CHAIN = Chain(RW_SU_RULES)
 const RW_SU_POST = Postwalk(RW_SU_CHAIN)
@@ -465,7 +465,7 @@ const RW_MM_FP_RULES = CompiledRule[
     mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
     mmrule(sin(slot(a)) => slot(a)),
 ]
-const RW_WS_FP = RuleWorkspace(compile_rules(RW_MM_FP_RULES))
+const RW_WS_FP = RuleWorkspace(ruleset(RW_MM_FP_RULES))
 const RW_SU_FP = Fixpoint(
     Postwalk(
         Chain(
@@ -477,9 +477,9 @@ const RW_SU_FP = Fixpoint(
     )
 )
 # Phase-2: the same workloads through the DiscrimNet index
-const RW_WS_NET = RuleWorkspace(compile_rules(RW_MM_RULES, DiscrimNet))
+const RW_WS_NET = RuleWorkspace(ruleset(RW_MM_RULES, DiscrimNet))
 const RW_WS_NET_FP =
-    RuleWorkspace(compile_rules(RW_MM_FP_RULES, DiscrimNet))
+    RuleWorkspace(ruleset(RW_MM_FP_RULES, DiscrimNet))
 
 SUITE["rewrite"] = BenchmarkGroup()
 SUITE["rewrite"]["site: mm ws(x)"] =
@@ -551,10 +551,10 @@ const DN_MM_RULES = CompiledRule[
     mmrule(h(sin(slot(a)), slot(b)) => slot(b)),
     mmrule(h(slot(a), sin(slot(b))) => slot(a)),
 ]
-const DN_WS_B = RuleWorkspace(compile_rules(DN_MM_RULES))
-const DN_WS_N = RuleWorkspace(compile_rules(DN_MM_RULES, DiscrimNet))
-const DN_WS_B2 = RuleWorkspace(compile_rules(DN_MM_RULES))
-const DN_WS_N2 = RuleWorkspace(compile_rules(DN_MM_RULES, DiscrimNet))
+const DN_WS_B = RuleWorkspace(ruleset(DN_MM_RULES))
+const DN_WS_N = RuleWorkspace(ruleset(DN_MM_RULES, DiscrimNet))
+const DN_WS_B2 = RuleWorkspace(ruleset(DN_MM_RULES))
+const DN_WS_N2 = RuleWorkspace(ruleset(DN_MM_RULES, DiscrimNet))
 
 # single site: h(x,7) — bucket: ~10 same-op candidates pay engine runs;
 # net: literal edge prunes to ~2
@@ -578,7 +578,7 @@ const DN_FP_DEEP_RULES = CompiledRule[
     mmrule(h(slot(a), slot(b)) => slot(a)),
     mmrule(g(slot(a), slot(b)) => slot(a) * slot(b)),
 ]
-const DN_WS_FP_DEEP = RuleWorkspace(compile_rules(DN_FP_DEEP_RULES))
+const DN_WS_FP_DEEP = RuleWorkspace(ruleset(DN_FP_DEEP_RULES))
 sub_dn_fpdeep = h(sin(sin(sin(x + y))), cos(g(sin(p + q), sin(a + b)))) +
     sin(sin(w + z)) + g(cos(x + y), sin(p + q))
 
