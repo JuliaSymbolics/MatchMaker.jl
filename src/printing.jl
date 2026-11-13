@@ -2,42 +2,23 @@
 ### Pretty-printing
 ###
 
-# Marker terms (`slot`/`segment`/`optional`) print in yellow inside
-# compiled patterns and rules. Non-color IO (logs, `sprint`) falls back
-# to plain text automatically.
-
-function _contains_marker(t::BasicSymbolic{SymReal})
-    is_marker_term(t) && return true
-    iscall(t) || return false
-    op = operation(t)
-    op isa BasicSymbolic{SymReal} && _contains_marker(op) && return true
-    return any(_contains_marker, arguments(t))
+# Marker terms print in yellow wherever SymbolicUtils' own display
+# machinery renders them — via the `show_call` hook. Non-color IO
+# (logs, `sprint`) falls back to plain text automatically.
+function SymbolicUtils.show_call(
+        io::IO, f::typeof(slot), x::BasicSymbolic{SymReal}
+    )
+    return printstyled(io, "slot(", arguments(x)[1], ")"; color = :yellow)
 end
-
-# Print a pattern/template term, coloring marker calls yellow. Calls
-# containing a marker print `op(arg, …)` prefix-style so the marker stays
-# visible wherever it sits in the tree.
-function _show_pattern(io::IO, t::BasicSymbolic{SymReal})
-    if is_marker_term(t)
-        return printstyled(
-            io, nameof(operation(t)), "(", arguments(t)[1], ")"; color = :yellow
-        )
-    elseif iscall(t) && _contains_marker(t)
-        op = operation(t)
-        if op isa BasicSymbolic{SymReal}
-            _show_pattern(io, op)
-        else
-            print(io, op)
-        end
-        print(io, "(")
-        for (i, a) in enumerate(arguments(t))
-            i > 1 && print(io, ", ")
-            _show_pattern(io, a)
-        end
-        return print(io, ")")
-    else
-        return print(io, t)
-    end
+function SymbolicUtils.show_call(
+        io::IO, f::typeof(segment), x::BasicSymbolic{SymReal}
+    )
+    return printstyled(io, "segment(", arguments(x)[1], ")"; color = :yellow)
+end
+function SymbolicUtils.show_call(
+        io::IO, f::typeof(optional), x::BasicSymbolic{SymReal}
+    )
+    return printstyled(io, "optional(", arguments(x)[1], ")"; color = :yellow)
 end
 
 ###
@@ -45,7 +26,7 @@ end
 ###
 
 Base.show(io::IO, m::Matcher) =
-    (print(io, "Matcher("); _show_pattern(io, m.ir[m.root]); print(io, ")"))
+    (print(io, "Matcher("); print(io, m.ir[m.root]); print(io, ")"))
 
 Base.show(io::IO, p::NodePlanT) = MData.show_variant(io, p)
 Base.show(io::IO, v::VarSpecT) = MData.show_variant(io, v)
@@ -56,7 +37,7 @@ Base.show(io::IO, v::VarSpecT) = MData.show_variant(io, v)
 
 function Base.show(io::IO, e::MatchEngine)
     print(io, "MatchEngine(")
-    _show_pattern(io, e.pat.ir[e.pat.root])
+    print(io, e.pat.ir[e.pat.root])
     if 0 < e.sroot <= length(e.subj)
         print(io, " on ")
         print(io, e.subj[e.sroot])
@@ -82,11 +63,11 @@ Base.show(io::IO, b::Bindings) = print(io, "Bindings(", count(!iszero, b.node), 
 ###
 
 Base.show(io::IO, it::MatchIterator) =
-    (print(io, "matches("); _show_pattern(io, it.eng.pat.ir[it.eng.pat.root]); print(io, ")"))
+    (print(io, "matches("); print(io, it.eng.pat.ir[it.eng.pat.root]); print(io, ")"))
 Base.show(io::IO, it::BoundMatchIterator) =
-    (print(io, "boundmatches("); _show_pattern(io, it.eng.pat.ir[it.eng.pat.root]); print(io, ")"))
+    (print(io, "boundmatches("); print(io, it.eng.pat.ir[it.eng.pat.root]); print(io, ")"))
 Base.show(io::IO, it::BoundMatchAtIterator) =
-    (print(io, "boundmatches_at("); _show_pattern(io, it.eng.pat.ir[it.eng.pat.root]); print(io, ")"))
+    (print(io, "boundmatches_at("); print(io, it.eng.pat.ir[it.eng.pat.root]); print(io, ")"))
 
 ###
 ### Rules
@@ -101,13 +82,13 @@ end
 Base.show(io::IO, c::EngineConstraint) = print(io, "EngineConstraint(<fn>, ", c.var_ids, ")")
 
 Base.show(io::IO, r::RhsPlan) =
-    (print(io, "RhsPlan("); _show_pattern(io, r.ir[r.root]); print(io, ")"))
+    (print(io, "RhsPlan("); print(io, r.ir[r.root]); print(io, ")"))
 
-_show_rhs(io::IO, r::RhsPlan) = _show_pattern(io, r.ir[r.root])
+_show_rhs(io::IO, r::RhsPlan) = print(io, r.ir[r.root])
 _show_rhs(io::IO, ::RhsT) = print(io, "<callable>")
 
 function Base.show(io::IO, r::CompiledRule)
-    _show_pattern(io, r.pat.ir[r.pat.root])
+    print(io, r.pat.ir[r.pat.root])
     print(io, " => ")
     return _show_rhs(io, r.rhs)
 end
