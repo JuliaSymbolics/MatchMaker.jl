@@ -39,6 +39,7 @@ include("matchers/ac.jl")
 include("instantiate.jl")
 include("api.jl")
 include("rules.jl")
+include("printing.jl")
 
 export slot, segment, optional,
     is_marker_term, is_marker_op,
