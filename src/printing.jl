@@ -140,7 +140,7 @@ function Base.show(io::IO, s::NetState)
     parts = String[]
     isempty(s.ops) || push!(parts, "$(length(s.ops)) ops")
     isempty(s.opwilds) || push!(parts, "$(length(s.opwilds)) wilds")
-    isempty(s.literals) || push!(parts, "$(length(s.literals)) lits")
+    isempty(s.literals) || push!(parts, "$(length(s.literals)) literals")
     isempty(s.defers) || push!(parts, "$(length(s.defers)) defers")
     iszero(s.wild) || push!(parts, "wild → $(s.wild)")
     isempty(s.finals) || push!(parts, "finals $(Int.(s.finals))")
