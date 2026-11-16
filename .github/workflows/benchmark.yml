@@ -1,7 +1,11 @@
 name: Benchmark this PR
 
 on:
-  pull_request:
+  # pull_request_target so GITHUB_TOKEN is issued with the declared
+  # permissions in the base-repo context — pull_request gets a read-only
+  # token on fork PRs and the results comment 403s. The job holds
+  # contents:read + pull-requests:write and no secrets.
+  pull_request_target:
     branches:
       - master
     paths-ignore:
