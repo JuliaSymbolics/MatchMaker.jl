@@ -915,6 +915,7 @@ function _fixpoint_post(
         # — eval phase: re-derive `out` for dirty nodes, ascending —
         empty!(modified)
         empty!(stale)
+        sizehint!(stale, length(subj))
         for i in dirty
             new = _rewrite_eval!(ws, out, i)
             if new !== out[i]
@@ -935,8 +936,10 @@ function _fixpoint_post(
             if n_known < length(subj)   # grow for newly interned nodes
                 resize!(out, length(subj))
                 resize!(evaled, length(subj))
+                sizehint!(stale, length(subj))
                 for i in (n_known + 1):Int32(length(subj))
                     out[i] = subj[i]
+                    push!(stale, i)
                 end
                 n_known = Int32(length(subj))
             end

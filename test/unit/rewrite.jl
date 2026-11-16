@@ -295,6 +295,23 @@ end
     @test isequal(fixpoint_rewrite(ws_deep, sub), naive_fp(ws_naive, sub))
 end
 
+@testset "fixpoint :post evaluates fresh descendants" begin
+    # issue #12: a callable RHS builds a term whose *descendants* can
+    # match (cos(a)*cos(a) canonicalizes to cos(a)^2). The incremental
+    # sweeps must schedule freshly interned nodes, not just the chain
+    # head, or the result is not a real fixed point.
+    @syms p a
+    rules = CompiledRule[
+        mmrule(tan(slot(a)) => v -> sin(v[a]) / (cos(v[a]) * cos(v[a]))),
+        mmrule(cos(slot(a))^2 => v -> 1 - sin(v[a])^2),
+    ]
+    post = fixpoint_rewrite(RuleWorkspace(RuleSet(rules)), tan(p))
+    pre = fixpoint_rewrite(RuleWorkspace(RuleSet(rules)), tan(p); order = :pre)
+    @test isequal(post, pre)
+    # the fixpoint invariant: one more rewrite pass must be a no-op
+    @test isequal(rewrite(RuleWorkspace(RuleSet(rules)), post), post)
+end
+
 @testset "SU combinator compatibility" begin
     @syms x y z a b p q
 
