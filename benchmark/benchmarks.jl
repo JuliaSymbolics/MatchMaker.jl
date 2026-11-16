@@ -598,3 +598,23 @@ SUITE["discrimnet"]["fixp: fixpoint net"] =
     @benchmarkable fixpoint_rewrite($DN_WS_N2, $sub_dn_fp)
 SUITE["discrimnet"]["fixp: deep"] =
     @benchmarkable fixpoint_rewrite($DN_WS_FP_DEEP, $sub_dn_fpdeep)
+
+# trig_reduce rule set: the 80 rules of SymbolicUtils' `trig_reduce` (TRIG_REDUCE_RULES), ported in
+# trig_reduce/rules.jl. One rewrite pass over an expanded expression that combines the main rule groups
+# (product-to-sum, power reduction, hyperbolic, cancellations, exponentials).
+include(joinpath(@__DIR__, "trig_reduce", "rules.jl"))
+using .TrigReduceRules: trig_reduce_rules
+
+const TR_MM = trig_reduce_rules()
+const TR_WS = RuleWorkspace(RuleSet(TR_MM))
+const TR_WS_NET = RuleWorkspace(RuleSet(TR_MM, DiscrimNet))
+const TR_SU = Postwalk(Chain(SymbolicUtils.TRIG_REDUCE_RULES))
+const sub_tr = SymbolicUtils.expand(
+    cos(x) * cos(3x) + sin(x) * cos(y) + cos(x)^4 + sin(y)^3 + sinh(x) * cosh(2x) + cosh(y)^2 +
+        tan(x) * cos(x) + sec(x) * csc(y) + exp(x) * exp(y)
+)
+
+SUITE["trig_reduce"] = BenchmarkGroup()
+SUITE["trig_reduce"]["mm rewrite(ws, x)"] = @benchmarkable rewrite($TR_WS, $sub_tr)
+SUITE["trig_reduce"]["mm rewrite(ws, x) net"] = @benchmarkable rewrite($TR_WS_NET, $sub_tr)
+SUITE["trig_reduce"]["su Postwalk(Chain)(x)"] = @benchmarkable $TR_SU($sub_tr)
