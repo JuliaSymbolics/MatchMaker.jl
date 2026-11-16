@@ -937,6 +937,7 @@ function _fixpoint_post(
                 resize!(evaled, length(subj))
                 for i in (n_known + 1):Int32(length(subj))
                     out[i] = subj[i]
+                    push!(stale, i)
                 end
                 n_known = Int32(length(subj))
             end
