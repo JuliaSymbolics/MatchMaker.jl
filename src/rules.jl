@@ -82,7 +82,10 @@ end
 
 A compiled lhs ([`Matcher`](@ref)) plus its `Constraint`s and rhs —
 either an [`RhsPlan`](@ref) template or an [`RhsT`](@ref) callable.
-Built by [`mmrule`](@ref).
+Built by [`mmrule`](@ref) — called implicitly by `convert`, so a
+`CompiledRule[lhs => rhs, ...]` literal or a `push!`/`setindex!` into
+a `Vector{CompiledRule}` compiles bare pairs. Keyword arguments
+(`vars`, `constraints`) require an explicit `mmrule` call.
 """
 struct CompiledRule
     pat::Matcher
@@ -99,6 +102,10 @@ Build a [`CompiledRule`](@ref). `lhs` is compiled via
 other value, which is wrapped as a literal `Const`.
 `vars` maps pattern variables to [`VarSpec`](@ref)s; `constraints` are
 cross-variable checks — see [`Constraint`](@ref).
+
+Called implicitly when a `lhs => rhs` pair is `convert`ed to
+[`CompiledRule`](@ref) — e.g. in a `CompiledRule[pairs...]` literal —
+so `mmrule` is only needed when passing `vars` or `constraints`.
 """
 function mmrule(
         lhs::Pair{BasicSymbolic{SymReal}, T};
@@ -113,6 +120,11 @@ function mmrule(
         _compile_rhs(Const{SymReal}(rhs), pat)
     return CompiledRule(pat, Constraint[constraints...], r)
 end
+
+# Lets `CompiledRule[lhs => rhs, ...]` literals and `push!`/`setindex!`
+# into `Vector{CompiledRule}` compile pairs through `mmrule`. Pairs
+# needing `vars`/`constraints` still require an explicit `mmrule` call.
+Base.convert(::Type{CompiledRule}, x::Pair{BasicSymbolic{SymReal}}) = mmrule(x)
 
 # The rule application: template evals by var id, callable gets the view.
 function _apply_rhs(rule::CompiledRule, eng::MatchEngine)
@@ -501,8 +513,9 @@ end
 """
     RuleSet(rules::AbstractVector{CompiledRule}, index = BucketIndex)
 
-Bundle a collection of [`CompiledRule`](@ref)s (from [`mmrule`](@ref))
-into an immutable `RuleSet` — builds the dispatch index once,
+Bundle a collection of [`CompiledRule`](@ref)s into an immutable
+`RuleSet` — `CompiledRule[lhs => rhs, ...]` literals compile each
+pair via [`mmrule`](@ref). Builds the dispatch index once,
 shareable globally. `index` selects the [`RuleIndex`](@ref):
 [`BucketIndex`](@ref) (default) or [`DiscrimNet`](@ref).
 
