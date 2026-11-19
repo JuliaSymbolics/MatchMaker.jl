@@ -114,6 +114,11 @@ function mmrule(
     return CompiledRule(pat, Constraint[constraints...], r)
 end
 
+# Lets `CompiledRule[lhs => rhs, ...]` literals and `push!`/`setindex!`
+# into `Vector{CompiledRule}` compile pairs through `mmrule`. Pairs
+# needing `vars`/`constraints` still require an explicit `mmrule` call.
+Base.convert(::Type{CompiledRule}, x::Pair{BasicSymbolic{SymReal}}) = mmrule(x)
+
 # The rule application: template evals by var id, callable gets the view.
 function _apply_rhs(rule::CompiledRule, eng::MatchEngine)
     rhs = rule.rhs

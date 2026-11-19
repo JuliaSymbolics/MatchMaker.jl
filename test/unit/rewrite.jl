@@ -20,6 +20,28 @@ const CS = SymbolicUtils.Const{SymReal}
     # rhs var must be an lhs var
     @test_throws ArgumentError mmrule(slot(a) => slot(b))
 
+    # Pair -> CompiledRule convert: bare pairs in typed literals compile
+    # through mmrule (no `vars`/`constraints`, but mixable with them)
+    rules = @inferred CompiledRule[
+        sin(slot(a)) => slot(a),
+        slot(a) + slot(b) => (v -> v[slot(a)]),
+        mmrule(slot(a) * CS(2) => slot(a) + slot(a)),
+    ]
+    @test rules isa Vector{CompiledRule}
+    @test rules[1].rhs isa RhsPlan
+    @test rules[2].rhs isa RhsT
+    @test_throws ArgumentError CompiledRule[slot(a) => slot(b)]
+    ws_pairs = RuleWorkspace(RuleSet(rules))
+    @test isequal(ws_pairs(sin(x)), x)
+    # callable returns the arg bound to a (order is process-dependent)
+    @test any(Base.Fix1(isequal, ws_pairs(x + y)), (x, y))
+    # setindex!/push! into Vector{CompiledRule} convert pairs too
+    rules2 = CompiledRule[]
+    push!(rules2, sin(slot(a)) => slot(a))
+    rules2[1] = cos(slot(a)) => slot(a)
+    @test rules2[1] isa CompiledRule
+    @test isequal(RuleWorkspace(RuleSet(rules2))(cos(x)), x)
+
     # workspace callable: first match in declaration order
     rs = RuleSet(
         CompiledRule[
