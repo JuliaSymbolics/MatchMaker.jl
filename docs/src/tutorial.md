@@ -68,19 +68,22 @@ instantiate(slot(t) + y, subst)
 
 ## Rewriting
 
-`mmrule` compiles `lhs => rhs` pairs; `RuleSet` bundles them into
-an immutable rule set; a `RuleWorkspace` owns the mutable state and is
-the rewriter callable:
+`RuleSet` bundles `lhs => rhs` pairs into an immutable rule set —
+each pair in a `CompiledRule[...]` literal compiles via [`mmrule`](@ref);
+a `RuleWorkspace` owns the mutable state and is the rewriter callable:
 
 ```@example tut
 rules = RuleSet(CompiledRule[
-    mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-    mmrule(sin(slot(a)) => slot(a)),
+    slot(a) + slot(b) => slot(a) * slot(b),
+    sin(slot(a)) => slot(a),
 ])
 ws = RuleWorkspace(rules)
 ws(x + y)          # first match wins: x + y → x * y
 ws(sin(p + q))     # one rule application per call: → p + q
 ```
+
+Rules needing `vars` or `constraints` still take an explicit
+[`mmrule`](@ref) call, which mixes freely into the same literal.
 
 `rewrite` walks the whole tree bottom-up; `fixpoint_rewrite` iterates
 to a fixed point:
@@ -108,8 +111,8 @@ candidate rules at each site. Two are provided:
 
 ```@example tut
 net_rules = RuleSet(CompiledRule[
-    mmrule(slot(a) + slot(b) => slot(a) * slot(b)),
-    mmrule(sin(slot(a)) => slot(a)),
+    slot(a) + slot(b) => slot(a) * slot(b),
+    sin(slot(a)) => slot(a),
 ], DiscrimNet)
 ws_net = RuleWorkspace(net_rules)
 ws_net(x + y)

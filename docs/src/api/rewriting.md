@@ -4,7 +4,8 @@ CurrentModule = MatchMaker
 
 # Rewriting
 
-`mmrule` compiles rules; `RuleSet(rules, index)` bundles them
+`mmrule` compiles rules (bare `lhs => rhs` pairs also convert — see
+[`CompiledRule`](@ref)); `RuleSet(rules, index)` bundles them
 into an immutable rule set; a `RuleWorkspace` owns the mutable state and is itself the
 first-match rewriter callable. `rewrite`/`fixpoint_rewrite` are the
 native tree passes.
