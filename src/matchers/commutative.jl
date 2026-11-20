@@ -56,8 +56,7 @@ function _assign_next!(
         i = cands === nothing ? k : cands[k]
         used[i] && continue
         snode = snbs[sstart + i - 1]
-        isleaf = MData.isa_variant(child_plan, NodePlan.Literal) ||
-            MData.isa_variant(child_plan, NodePlan.Slot)
+        isleaf = _is_leaf_plan(child_plan)
         if isleaf
             if _leaf_obligation!(eng, child_pat, snode)
                 assigned[j] = i

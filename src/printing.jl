@@ -20,6 +20,11 @@ function SymbolicUtils.show_call(
     )
     return printstyled(io, "optional(", arguments(x)[1], ")"; color = :yellow)
 end
+function SymbolicUtils.show_call(
+        io::IO, f::typeof(param), x::BasicSymbolic{SymReal}
+    )
+    return printstyled(io, "param(", arguments(x)[1], ")"; color = :cyan)
+end
 
 ###
 ### Patterns

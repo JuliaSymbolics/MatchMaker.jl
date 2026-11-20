@@ -68,6 +68,9 @@ function _compile_rhs(rhs::BasicSymbolic{SymReal}, pat::Matcher)
             )
             vid_of[i] = vid
         end
+        is_param_term(t) && throw(
+            ArgumentError(lazy"`param` markers in rule rhs are not yet supported")
+        )
         # `symbols` is postorder — a node needs work iff it's a marker or
         # any already-visited dependency does.
         needs[i] = vid_of[i] != 0 ||
@@ -333,14 +336,15 @@ function _build_index(rules::Vector{CompiledRule})
             continue
         end
         if MData.isa_variant(plan, NodePlan.Slot) ||
-                MData.isa_variant(plan, NodePlan.Segment)
-            # bare var — matches any node
+                MData.isa_variant(plan, NodePlan.Segment) ||
+                MData.isa_variant(plan, NodePlan.Param)
+            # bare var or runtime literal — matches any node
             push!(idx.any_head, id)
             continue
         end
         (op, head) = _root_op_head(plan)
-        if head != 0 && is_marker_term(op)
-            # slot-headed call — matches any op
+        if head != 0 && (is_marker_term(op) || is_param_term(op))
+            # slot- or param-headed call — matches any op
             push!(idx.any_head, id)
         else
             push!(get!(() -> SmallV{Int32}(), idx.by_op, op), id)
@@ -455,8 +459,14 @@ function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
             st.wild == 0 && (st.wild = _net_new!(net))
             st.wild
         end
+        NodePlan.Param() => begin
+            # runtime literal — the net can't know the value, so wild
+            st = net.states[σ]
+            st.wild == 0 && (st.wild = _net_new!(net))
+            st.wild
+        end
         NodePlan.Call(; op, head, children) => begin
-            σ = head != 0 && is_marker_term(op) ?
+            σ = head != 0 && (is_marker_term(op) || is_param_term(op)) ?
                 _net_next!(net, net.states[σ].opwilds, length(children)) :
                 _net_next!(
                     net, net.states[σ].ops,
@@ -486,7 +496,8 @@ function _net_defer!(
         plan::NodePlanT, @nospecialize(op), head::Int32
     )
     (lo, hi) = _root_arity(pat, plan)
-    o = op isa BasicSymbolic{SymReal} && is_marker_term(op) ? nothing : op
+    o = op isa BasicSymbolic{SymReal} &&
+        (is_marker_term(op) || is_param_term(op)) ? nothing : op
     ds = net.states[σ].defers
     for d in ds
         d.op === o && d.lo == lo && d.hi == hi && return d.next
@@ -583,7 +594,9 @@ buffer, and the `net_cache`. Build one per [`RuleSet`](@ref) and reuse.
 (ws::RuleWorkspace)(x) -> expr′ | nothing   # first-match rule application
 ```
 
-`ws.maxsteps` is a mutable per-site budget.
+`ws.maxsteps` is a mutable per-site budget. `ws.params` holds the values
+[`param`](@ref) literals match against — replace it between passes with
+[`set_params!`](@ref).
 """
 mutable struct RuleWorkspace
     "The ruleset this workspace serves."
@@ -599,13 +612,19 @@ mutable struct RuleWorkspace
     "Phase-2 memo: (state, subj_node) -> next-state set (§7 —
     persists across iterations; unused under `BucketIndex`)."
     net_cache::Dict{Tuple{Int32, Int32}, SmallV{Int32}}
+    "Runtime values for `param` literals — swap via [`set_params!`](@ref)."
+    params::ParamDict
 end
 
-function RuleWorkspace(rs::RuleSet; maxsteps::Int = typemax(Int))
+function RuleWorkspace(
+        rs::RuleSet;
+        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = ParamDict()
+    )
     return RuleWorkspace(
         rs, maxsteps, IRStructure{SymReal}(),
         Union{Nothing, MatchEngine}[nothing for _ in rs.rules],
-        SmallV{Int32}(), Dict{Tuple{Int32, Int32}, SmallV{Int32}}()
+        SmallV{Int32}(), Dict{Tuple{Int32, Int32}, SmallV{Int32}}(),
+        _as_paramdict(params)
     )
 end
 
@@ -616,6 +635,17 @@ end
 """
 set_rhs!(ws::RuleWorkspace, i::Integer, rhs) =
     (set_rhs!(ws.set, i, rhs); ws)
+
+"""
+    $TYPEDSIGNATURES
+
+Replace `ws`'s `param` value table — engines observe it from the next
+site, so swap between passes. Returns `ws`.
+"""
+function set_params!(ws::RuleWorkspace, params::AbstractDict{Symbol})
+    ws.params = _as_paramdict(params)
+    return ws
+end
 
 # Append candidate rule ids for subject `x` (`sroot` is its node in
 # `ws.subj`): root-head bucket ∪ spills, arity-filtered. `buf` is
@@ -726,12 +756,13 @@ function _engine_for!(ws::RuleWorkspace, id::Int32, sroot::Int32)
         rule = ws.set.rules[id]
         eng = MatchEngine(
             rule.pat, ws.subj, sroot, rule.constraints;
-            maxsteps = ws.maxsteps
+            maxsteps = ws.maxsteps, params = ws.params
         )
         ws.engines[id] = eng
     else
         reset!(eng, ws.subj, sroot)
         eng.maxsteps = ws.maxsteps
+        eng.params = ws.params
     end
     return eng
 end

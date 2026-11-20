@@ -119,4 +119,26 @@ actionable. Milestone scoping lives in DESIGN.md §12.
   sign/divisor-literal slice — it's what makes `x - p` match `x - 2`.
   Skipped cases live in `test/sympy/match.jl`.
 
+## Parameters
+
+Runtime `param(x)` literals resolve against a per-engine
+`Dict{Symbol, BasicSymbolic{SymReal}}` (`ws.params`, `params` kwargs).
+Deferred positions:
+
+- **Params in `Constraint`s.** Constraints resolve their `vars` to
+  pattern-var ids at engine construction; a `param` reference would
+  need a parallel param-id resolution plus evaluation against
+  `eng.params`.
+- **Params in `VarSpec`s.** `slotspec(default = param(t))` — an
+  optional slot binding a runtime value — and param-driven segment
+  bounds are plausible but unimplemented.
+- **Non-symbolic param heads.** `param(f)` head ops work for symbolic
+  operations (the head obligation runs the param leaf check), but
+  `ParamDict` values are `BasicSymbolic`s — a param can't name a bare
+  function like `sin`. Also, `_domain_arity` should not arity-bound a
+  param-headed call (the inner sym's `FnType` is not the resolved
+  op's).
+- **`instantiate` splicing.** Public templates — same extension as
+  rhs `param` support, exposed through `SubstitutionView`.
+
 ## Tests

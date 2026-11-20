@@ -42,9 +42,10 @@ include("rules.jl")
 include("printing.jl")
 include("deprecations.jl")
 
-export slot, segment, optional,
+export slot, segment, optional, param,
     is_marker_term, is_marker_op,
-    is_slot_marker, is_segment_marker, unwrap_varspec, varsym,
+    is_slot_marker, is_segment_marker, is_param_term, is_param_op,
+    unwrap_varspec, varsym,
     VarSpec, slotspec, segmentspec,
     MarkersMap, materialize,
     is_associative, is_commutative, identity_element,
@@ -56,7 +57,7 @@ export slot, segment, optional,
     matches, matchall, boundmatches, boundmatchall, eachmatch,
     boundmatches_at, matches_at,
     instantiate,
-    mmrule, CompiledRule, RhsPlan, RhsT, set_rhs!,
+    mmrule, CompiledRule, RhsPlan, RhsT, set_rhs!, set_params!,
     RuleSet, RuleIndex, BucketIndex, DiscrimNet, RuleWorkspace, compile_rules,
     rewrite, fixpoint_rewrite,
     FrameStatus,

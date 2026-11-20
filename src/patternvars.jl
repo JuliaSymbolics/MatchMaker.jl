@@ -35,12 +35,28 @@ default lives in the spec, not in the tree). See [`slot`](@ref).
 function optional end
 
 """
+    param(x)
+
+Create a *param* marker term wrapping `x`: an exact-match literal whose
+value is read from `params[nameof(x)]` at match time rather than baked
+into the compiled pattern. Not a pattern variable — binds nothing. See
+[`set_params!`](@ref), [`match`](@ref).
+"""
+function param end
+
+"The params table `param` literals resolve against at match time."
+const ParamDict = Dict{Symbol, BasicSymbolic{SymReal}}
+
+_as_paramdict(params::ParamDict) = params
+_as_paramdict(params::AbstractDict{Symbol}) = ParamDict(params)
+
+"""
     _Marker
 
-Union of the three marker-function types — the common signature for their
+Union of the marker-function types — the common signature for their
 call methods and for `promote_symtype`/`promote_shape` extensions.
 """
-const _Marker = Union{typeof(slot), typeof(segment), typeof(optional)}
+const _Marker = Union{typeof(slot), typeof(segment), typeof(optional), typeof(param)}
 
 SymbolicUtils.promote_symtype(::_Marker, t::SymbolicUtils.TypeT) = t
 SymbolicUtils.promote_shape(::_Marker, @nospecialize(s::SymbolicUtils.ShapeT)) = s
@@ -67,6 +83,7 @@ end
 (m::typeof(slot))(x; kw...) = _marker_term(m, x; kw...)
 (m::typeof(segment))(x; kw...) = _marker_term(m, x; kw...)
 (m::typeof(optional))(x; kw...) = _marker_term(m, x; kw...)
+(m::typeof(param))(x; kw...) = _marker_term(m, x; kw...)
 
 ###
 ### Marker predicates and accessors
@@ -93,6 +110,24 @@ is_slot_marker(@nospecialize(op)) = op === slot || op === optional
 Whether `op` declares a *segment-kind* variable.
 """
 is_segment_marker(@nospecialize(op)) = op === segment
+
+"""
+    $TYPEDSIGNATURES
+
+Whether `op` is the runtime-parameter marker `param`. Identity
+comparison only — never allocates.
+"""
+is_param_op(@nospecialize(op)) = op === param
+
+"""
+    $TYPEDSIGNATURES
+
+Whether `x` is a param marker term — a `Term` headed by `param`.
+"""
+is_param_term(x::BasicSymbolic) = @match x begin
+    BSImpl.Term(; f) => f === param
+    _ => false
+end
 
 """
     $TYPEDSIGNATURES

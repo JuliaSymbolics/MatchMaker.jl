@@ -14,6 +14,7 @@ attach predicates, bounds, and defaults.
 slot
 segment
 optional
+param
 ```
 
 ## Variable specs
@@ -38,6 +39,8 @@ is_marker_term
 is_marker_op
 is_slot_marker
 is_segment_marker
+is_param_term
+is_param_op
 unwrap_varspec
 varsym
 ```
