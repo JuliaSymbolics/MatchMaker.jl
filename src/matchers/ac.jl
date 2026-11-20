@@ -17,8 +17,7 @@ function _ac_cand!(
     )
     child_plan = eng.pat.plans[child_pat]
     mk = length(eng.trail)
-    ok = if MData.isa_variant(child_plan, NodePlan.Literal) ||
-            MData.isa_variant(child_plan, NodePlan.Slot)
+    ok = if _is_leaf_plan(child_plan)
         _leaf_obligation!(eng, child_pat, snode)
     elseif eng.pat.is_ground[child_pat]
         isequal(eng.pat.ir[child_pat], eng.subj[snode])

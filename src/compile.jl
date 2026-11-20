@@ -13,6 +13,7 @@ the variant is the match instruction the engine dispatches on.
 # Extended help
 
 - `Literal()` — match iff `isequal`.
+- `Param(name)` — match iff `isequal(params[name], node)`.
 - `Slot(var_id, optional)` — a `slot`/`optional` marker occurrence.
 - `Segment(var_id)` — a `segment` marker occurrence.
 - `Call(op, head, children)` — free head: positional children.
@@ -32,6 +33,10 @@ head-slots like `slot(f)(x)`).
 """
 @data NodePlan begin
     struct Literal end
+    "Exact-match against `params[name]` — a runtime-parameter leaf."
+    struct Param
+        name::Symbol
+    end
     struct Slot
         var_id::Int32
         optional::Bool
@@ -159,6 +164,10 @@ function compile_pattern(
                 NodePlan.Slot(vid, is_opt)
             end
             is_ground[i] = false
+        elseif is_param_term(ex)
+            # non-ground: the value is looked up in `params`, not the IR
+            plans[i] = NodePlan.Param(nameof(_marker_inner(ex)))
+            is_ground[i] = false
         elseif iscall(ex)
             plans[i] = _plan_call!(plans, is_ground, ir, g, ex, i, var_of)
         else
@@ -218,6 +227,14 @@ function _plan_call!(
             _is_slot_term(op) || throw(
                 ArgumentError(
                     lazy"only slot markers may appear in head position, got: $op"
+                )
+            )
+        elseif is_param_term(op)
+            # the resolved op's traits pick the frame at runtime — a
+            # compile-time placeholder can't drive plan selection
+            throw(
+                ArgumentError(
+                    lazy"`param` markers cannot head a call (not yet supported): $op"
                 )
             )
         else

@@ -37,6 +37,7 @@ copy(::RuleSet)
 
 ```@docs
 RuleWorkspace
+set_params!
 rewrite
 fixpoint_rewrite
 ```

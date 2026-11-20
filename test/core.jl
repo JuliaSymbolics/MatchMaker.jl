@@ -16,6 +16,10 @@ end
     include("unit/engine.jl")
 end
 
+@safetestset "parameters" begin
+    include("unit/params.jl")
+end
+
 @safetestset "segments" begin
     include("unit/segments.jl")
 end
