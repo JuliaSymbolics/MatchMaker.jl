@@ -167,6 +167,24 @@ end
     d = ParamDict(:t => x)
     ws = RuleWorkspace(RuleSet(rules); params = d)
     @test ws.params === d
+
+    # descendants of a rewrite result interned by an earlier pass are
+    # still evaluated — `x => sin(y)`, `y => z` must reach `sin(z)`
+    rules = CompiledRule[mmrule(x => sin(y)), mmrule(y => z)]
+    for idx in (BucketIndex, DiscrimNet)
+        ws = RuleWorkspace(RuleSet(rules, idx))
+        @test isequal(rewrite(ws, sin(y)), sin(z))
+        @test isequal(fixpoint_rewrite(ws, x), sin(z))
+    end
+end
+
+@testset "param default table" begin
+    # no params table — `nothing` shares nothing across engines
+    eng = MatchEngine(compile_pattern(param(t)), x, Constraint[])
+    @test eng.params === nothing
+    @test_throws ArgumentError match(param(t), x)
+    ws = RuleWorkspace(RuleSet(CompiledRule[mmrule(x => z)]))
+    @test ws.params === nothing
 end
 
 @testset "param rhs guard" begin

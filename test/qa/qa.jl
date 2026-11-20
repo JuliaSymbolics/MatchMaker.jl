@@ -27,7 +27,7 @@ const NONPUBLIC_EXPLICIT_IMPORTS = (
 # package offers no public spelling.
 const NONPUBLIC_QUALIFIED_ACCESSES = (
     # SymbolicUtils
-    :OrderedDiGraph,
+    :OrderedDiGraph, :get_reachability!,
     # Base
     :RefValue, :SizeUnknown, :materialize,
 )

@@ -51,9 +51,6 @@ function param end
 "The params table `param` literals resolve against at match time."
 const ParamDict = Dict{Symbol, BasicSymbolic{SymReal}}
 
-"Shared empty params table — the read-only default; never mutated."
-const _NO_PARAMS = ParamDict()
-
 _as_paramdict(params::ParamDict) = params
 _as_paramdict(params::AbstractDict{Symbol}) = ParamDict(params)
 

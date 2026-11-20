@@ -612,18 +612,18 @@ mutable struct RuleWorkspace
     persists across iterations; unused under `BucketIndex`)."
     net_cache::Dict{Tuple{Int32, Int32}, SmallV{Int32}}
     "Runtime values for `param` literals — swap via [`set_params!`](@ref)."
-    params::ParamDict
+    params::Union{Nothing, ParamDict}
 end
 
 function RuleWorkspace(
         rs::RuleSet;
-        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = _NO_PARAMS
+        maxsteps::Int = typemax(Int), params::Union{AbstractDict{Symbol}, Nothing} = nothing
     )
     return RuleWorkspace(
         rs, maxsteps, IRStructure{SymReal}(),
         Union{Nothing, MatchEngine}[nothing for _ in rs.rules],
         SmallV{Int32}(), Dict{Tuple{Int32, Int32}, SmallV{Int32}}(),
-        params === _NO_PARAMS ? ParamDict() : _as_paramdict(params)
+        params === nothing ? nothing : _as_paramdict(params)
     )
 end
 
@@ -998,13 +998,14 @@ function _fixpoint_post(
     # live = nodes of the current expression and terms reached while
     # rewriting it — stale nodes left in `subj` by earlier passes are
     # never evaluated (a changed `params` table would misrule them).
-    # `get_reachability!`'s visited mask doubles as the live set.
+    # `get_reachability!`'s visited mask doubles as the live set;
+    # `reach` is the shared scratch for its topological order.
     live = falses(n)
-    dirty = get_reachability!(Int32[], subj, sroot; visited = live)
+    reach = Int32[]
+    dirty = SymbolicUtils.get_reachability!(reach, subj, sroot; visited = live)
     push!(dirty, sroot)
     modified = Int32[]
     stale = BitSet()
-    reach = Int32[]
     seen = Base.IdSet{BasicSymbolic{SymReal}}()
     n_known = n
     steps = 0
@@ -1056,8 +1057,16 @@ function _fixpoint_post(
             steps >= maxiterations && return res
             sroot = populate_ir!(subj, res)
             resize!(live, length(subj))
+            # `res`'s subtree may predate this pass — hashconsed nodes
+            # from earlier expressions are live now but never evaled
+            # under these params; schedule the unevaled ones so their
+            # rules fire before their parents are visited. `live` is
+            # the visited mask, so `reach` only collects new nodes.
             empty!(reach)
-            get_reachability!(reach, subj, sroot; visited = live)
+            SymbolicUtils.get_reachability!(reach, subj, sroot; visited = live)
+            for i in reach
+                (i <= length(evaled) && evaled[i]) || push!(stale, i)
+            end
         end
         # next sweep: stale ∪ halted chain head ∪ new nodes — `stale` is
         # a BitSet, so appending it yields `dirty` sorted + deduped
