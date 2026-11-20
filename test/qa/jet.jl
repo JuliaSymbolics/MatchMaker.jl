@@ -59,6 +59,12 @@ _rw_ws = RuleWorkspace(RuleSet(CompiledRule[_rw]))
                 MatchMaker._make_index,
                 Tuple{Type{DiscrimNet}, Vector{CompiledRule}},
             ),
+            (MatchMaker._make_rhs, Tuple{_BS, Matcher}),
+            (MatchMaker._make_rhs, Tuple{Any, Matcher}),
+            (set_rhs!, Tuple{MatchMaker.RuleSet{BucketIndex}, Int, _BS}),
+            (set_rhs!, Tuple{RuleWorkspace, Int, _BS}),
+            (copy, Tuple{MatchMaker.RuleSet{BucketIndex}}),
+            (copy, Tuple{CompiledRule}),
             # DiscrimNet construction + evaluation internals
             (MatchMaker.NetState, Tuple{}),
             (DiscrimNet, Tuple{}),

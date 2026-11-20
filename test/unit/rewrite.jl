@@ -128,6 +128,61 @@ const CS = SymbolicUtils.Const{SymReal}
     @test isequal(ws4(x + y), match(pat_ab, x + y)[b])
 end
 
+@testset "set_rhs!" begin
+    @syms x y a b
+
+    rs = RuleSet(CompiledRule[mmrule(slot(a) + slot(b) => slot(a) * slot(b))])
+    ws = RuleWorkspace(rs)
+    @test isequal(ws(x + y), x * y)
+
+    # canonical Add arg order is process-dependent — compare against the
+    # matcher's own first result rather than a literal argument
+    m_ab = match(compile_pattern(slot(a) + slot(b)), x + y)
+
+    # the rhs swap keeps the workspace's engine valid
+    eng = ws.engines[1]
+    set_rhs!(rs, 1, slot(a) - slot(b))
+    @test rs.rules[1].rhs isa RhsPlan
+    @test isequal(ws(x + y), m_ab[a] - m_ab[b])
+    @test ws.engines[1] === eng
+
+    # callable rhs via the workspace convenience method
+    @test set_rhs!(ws, 1, v -> v[slot(a)]^2) === ws
+    @test rs.rules[1].rhs isa RhsT
+    @test isequal(ws(x + y), m_ab[a]^2)
+
+    # non-callable rhs wraps as a literal Const
+    set_rhs!(rs, 1, 0)
+    @test isequal(ws(x + y), CS(0))
+
+    # rhs var must be an lhs var; bad index propagates
+    @test_throws ArgumentError set_rhs!(rs, 1, slot(x))
+    @test_throws BoundsError set_rhs!(rs, 2, CS(1))
+
+    # copy forks the rules vector but shares the pattern-derived index
+    rs2 = copy(rs)
+    @test rs2.index === rs.index
+    @test rs2.rules !== rs.rules
+    @test rs2.rules[1] === rs.rules[1]
+    set_rhs!(rs2, 1, slot(a) + slot(b) + CS(1))
+    @test isequal(RuleWorkspace(rs2)(x + y), x + y + 1)
+    @test isequal(ws(x + y), CS(0))          # original untouched
+
+    # same under DiscrimNet
+    rsn = RuleSet(
+        CompiledRule[mmrule(slot(a) + slot(b) => slot(a) * slot(b))],
+        DiscrimNet
+    )
+    wsn = RuleWorkspace(rsn)
+    @test isequal(wsn(x + y), x * y)
+    set_rhs!(wsn, 1, slot(a) - slot(b))
+    @test isequal(wsn(x + y), m_ab[a] - m_ab[b])
+    @test copy(rsn).index === rsn.index
+
+    # CompiledRule is immutable — copy is identity
+    @test copy(rs.rules[1]) === rs.rules[1]
+end
+
 @testset "bucket index" begin
     @syms x y z a b s t f(x)
 

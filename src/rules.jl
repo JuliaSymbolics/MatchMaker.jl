@@ -115,16 +115,26 @@ function mmrule(
     ) where {T}
     (l, rhs) = lhs
     pat = compile_pattern(l; vars)
-    r = rhs isa BasicSymbolic{SymReal} ? _compile_rhs(rhs, pat) :
-        hasmethod(rhs, Tuple{SubstitutionView}) ? RhsT(rhs) :
-        _compile_rhs(Const{SymReal}(rhs), pat)
-    return CompiledRule(pat, Constraint[constraints...], r)
+    return CompiledRule(pat, Constraint[constraints...], _make_rhs(rhs, pat))
 end
 
 # Lets `CompiledRule[lhs => rhs, ...]` literals and `push!`/`setindex!`
 # into `Vector{CompiledRule}` compile pairs through `mmrule`. Pairs
 # needing `vars`/`constraints` still require an explicit `mmrule` call.
 Base.convert(::Type{CompiledRule}, x::Pair{BasicSymbolic{SymReal}}) = mmrule(x)
+
+# An `mmrule`-style rhs against `pat`'s var table.
+_make_rhs(rhs::BasicSymbolic{SymReal}, pat::Matcher) = _compile_rhs(rhs, pat)
+_make_rhs(rhs, pat::Matcher) =
+    hasmethod(rhs, Tuple{SubstitutionView}) ? RhsT(rhs) :
+    _compile_rhs(Const{SymReal}(rhs), pat)
+
+"""
+    $TYPEDSIGNATURES
+
+`CompiledRule` is immutable — `copy` is free.
+"""
+Base.copy(rule::CompiledRule) = rule
 
 # The rule application: template evals by var id, callable gets the view.
 function _apply_rhs(rule::CompiledRule, eng::MatchEngine)
@@ -501,7 +511,8 @@ end
 
 The immutable compiled artifact: the rules plus the dispatch index,
 built once by `RuleSet(rules, index)` and shareable across tasks and
-calls — all mutable state lives in [`RuleWorkspace`](@ref).
+calls — all mutable state lives in [`RuleWorkspace`](@ref). The one
+sanctioned mutation is [`set_rhs!`](@ref).
 """
 struct RuleSet{I <: RuleIndex}
     "Rules in declaration order — application order."
@@ -532,6 +543,29 @@ end
 
 _make_index(::Type{BucketIndex}, rs) = _build_index(rs)
 _make_index(::Type{DiscrimNet}, rs) = _build_net(rs)
+
+"""
+    $TYPEDSIGNATURES
+
+Replace rule `i`'s rhs in place — `rhs` is whatever [`mmrule`](@ref)
+accepts, recompiled against the existing `pat`. Pattern and
+constraints are untouched, so the index and every [`RuleWorkspace`](@ref)
+on `rs` stay valid. Mutate between passes, not concurrently.
+"""
+function set_rhs!(rs::RuleSet, i::Integer, rhs)
+    rule = rs.rules[i]
+    rs.rules[i] =
+        CompiledRule(rule.pat, rule.constraints, _make_rhs(rhs, rule.pat))
+    return rs
+end
+
+"""
+    $TYPEDSIGNATURES
+
+Shallow copy: a fresh `rules` vector sharing the index.
+"""
+Base.copy(rs::RuleSet{I}) where {I <: RuleIndex} =
+    RuleSet{I}(copy(rs.rules), rs.index)
 
 ###
 ### RuleWorkspace (§4)
@@ -574,6 +608,14 @@ function RuleWorkspace(rs::RuleSet; maxsteps::Int = typemax(Int))
         SmallV{Int32}(), Dict{Tuple{Int32, Int32}, SmallV{Int32}}()
     )
 end
+
+"""
+    $TYPEDSIGNATURES
+
+`set_rhs!(ws.set, i, rhs)` — nothing in a workspace caches the rhs.
+"""
+set_rhs!(ws::RuleWorkspace, i::Integer, rhs) =
+    (set_rhs!(ws.set, i, rhs); ws)
 
 # Append candidate rule ids for subject `x` (`sroot` is its node in
 # `ws.subj`): root-head bucket ∪ spills, arity-filtered. `buf` is
