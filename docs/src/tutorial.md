@@ -68,7 +68,7 @@ instantiate(slot(t) + y, subst)
 
 ## Rewriting
 
-`RuleSet` bundles `lhs => rhs` pairs into an immutable rule set —
+`RuleSet` bundles `lhs => rhs` pairs —
 each pair in a `CompiledRule[...]` literal compiles via [`mmrule`](@ref);
 a `RuleWorkspace` owns the mutable state and is the rewriter callable:
 
