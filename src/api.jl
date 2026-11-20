@@ -227,7 +227,7 @@ or `nothing`. `constraints` is a collection of [`Constraint`](@ref)s;
 function match(
         m::Matcher, s::BasicSymbolic{SymReal};
         constraints = Constraint[], maxsteps::Int = typemax(Int),
-        params::AbstractDict{Symbol} = ParamDict()
+        params::AbstractDict{Symbol} = _NO_PARAMS
     )
     eng = MatchEngine(m, s, constraints; maxsteps, params)
     next_match!(eng) || return nothing
@@ -247,7 +247,7 @@ ends when the budget is exhausted (a truncated result set).
 matches(
     m::Matcher, s::BasicSymbolic{SymReal};
     constraints = Constraint[], maxsteps::Int = typemax(Int),
-    params::AbstractDict{Symbol} = ParamDict()
+    params::AbstractDict{Symbol} = _NO_PARAMS
 ) = MatchIterator(MatchEngine(m, s, constraints; maxsteps, params))
 matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     matches(compile_pattern(p), s; kwargs...)
@@ -272,7 +272,7 @@ a few bound values per match.
 boundmatches(
     m::Matcher, s::BasicSymbolic{SymReal};
     constraints = Constraint[], maxsteps::Int = typemax(Int),
-    params::AbstractDict{Symbol} = ParamDict()
+    params::AbstractDict{Symbol} = _NO_PARAMS
 ) = BoundMatchIterator(MatchEngine(m, s, constraints; maxsteps, params))
 boundmatches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     boundmatches(compile_pattern(p), s; kwargs...)
@@ -297,7 +297,7 @@ view is only valid inside `f` — copy with `materialize` to keep results.
 function eachmatch(
         f::F, m::Matcher, s::BasicSymbolic{SymReal};
         constraints = Constraint[], maxsteps::Int = typemax(Int),
-        params::AbstractDict{Symbol} = ParamDict()
+        params::AbstractDict{Symbol} = _NO_PARAMS
     ) where {F}
     eng = MatchEngine(m, s, constraints; maxsteps, params)
     while next_match!(eng)
@@ -365,7 +365,7 @@ deduplicated by `===`-identity; postorder (bottom-up) traversal.
 boundmatches_at(
     m::Matcher, s::BasicSymbolic{SymReal};
     constraints = Constraint[], maxsteps::Int = typemax(Int),
-    params::AbstractDict{Symbol} = ParamDict()
+    params::AbstractDict{Symbol} = _NO_PARAMS
 ) = BoundMatchAtIterator(MatchEngine(m, s, constraints; maxsteps, params))
 boundmatches_at(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     boundmatches_at(compile_pattern(p), s; kwargs...)

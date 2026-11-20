@@ -391,7 +391,7 @@ literals match against.
 function MatchEngine(
         pat::Matcher, s::BasicSymbolic{SymReal},
         constraints::AbstractVector{Constraint};
-        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = ParamDict()
+        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = _NO_PARAMS
     )
     subj = IRStructure{SymReal}()
     sroot = populate_ir!(subj, s)
@@ -409,7 +409,7 @@ engine to new roots with [`reset!`](@ref).
 function MatchEngine(
         pat::Matcher, subj::IRStructure{SymReal}, sroot::Int32,
         constraints::AbstractVector{Constraint};
-        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = ParamDict()
+        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = _NO_PARAMS
     )
     binds = Bindings(pat.nvars)
     trail = Int32[]

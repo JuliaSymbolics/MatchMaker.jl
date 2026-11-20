@@ -229,6 +229,14 @@ function _plan_call!(
                     lazy"only slot markers may appear in head position, got: $op"
                 )
             )
+        elseif is_param_term(op)
+            # the resolved op's traits pick the frame at runtime — a
+            # compile-time placeholder can't drive plan selection
+            throw(
+                ArgumentError(
+                    lazy"`param` markers cannot head a call (not yet supported): $op"
+                )
+            )
         else
             (issym(op) && haskey(var_of, op)) && throw(
                 ArgumentError(

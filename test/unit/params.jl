@@ -5,7 +5,7 @@ using SymbolicUtils: Sym, SymReal, BasicSymbolic, FnType, BSImpl, ArgsT, symtype
 using Moshi.Match: @match
 using Test
 
-@syms x y z t f(x) g(x)
+@syms x y z t u f(x) g(x)
 h = Sym{SymReal}(:h; type = FnType{Tuple{Number, Number}, Number, Nothing})
 @syms a b
 
@@ -46,6 +46,11 @@ end
     @test_throws ArgumentError compile_pattern(bad)
     bad = BSImpl.Term{SymReal}(param, ArgsT{SymReal}((x + y,)); type = Number)
     @test_throws ArgumentError compile_pattern(bad)
+
+    # param heads rejected — the resolved op's traits pick the frame at
+    # runtime, so compile can't select a plan for `param(f)(…)`
+    @test_throws ArgumentError compile_pattern(term(param(f), x))
+    @test_throws ArgumentError mmrule(term(param(f), x) => x)
 end
 
 @testset "param match" begin
@@ -136,6 +141,32 @@ end
         params = ParamDict(:t => x + y)
     )
     @test isequal(ws(x + y), z)
+end
+
+@testset "param workspace history" begin
+    # `ws.subj` accumulates across passes — passes must not re-evaluate
+    # stale nodes against a new params table
+    rules = CompiledRule[
+        mmrule(sin(param(t)) => z),
+        mmrule(cos(param(u)) => x),
+    ]
+    for idx in (BucketIndex, DiscrimNet)
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:t => x))
+        @test isequal(rewrite(ws, sin(x)), z)
+        set_params!(ws, ParamDict(:u => y))
+        @test isequal(rewrite(ws, cos(y)), x)
+    end
+    for idx in (BucketIndex, DiscrimNet)
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:t => x))
+        @test isequal(fixpoint_rewrite(ws, sin(x)), z)
+        set_params!(ws, ParamDict(:u => y))
+        @test isequal(fixpoint_rewrite(ws, cos(y)), x)
+    end
+
+    # a ParamDict table is used live
+    d = ParamDict(:t => x)
+    ws = RuleWorkspace(RuleSet(rules); params = d)
+    @test ws.params === d
 end
 
 @testset "param rhs guard" begin

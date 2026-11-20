@@ -132,12 +132,12 @@ Deferred positions:
 - **Params in `VarSpec`s.** `slotspec(default = param(t))` — an
   optional slot binding a runtime value — and param-driven segment
   bounds are plausible but unimplemented.
-- **Non-symbolic param heads.** `param(f)` head ops work for symbolic
-  operations (the head obligation runs the param leaf check), but
-  `ParamDict` values are `BasicSymbolic`s — a param can't name a bare
-  function like `sin`. Also, `_domain_arity` should not arity-bound a
-  param-headed call (the inner sym's `FnType` is not the resolved
-  op's).
+- **Param heads.** `param(f)(x)` is rejected at compile — the resolved
+  op's traits would pick the frame at runtime (free/seq/comm/AC),
+  segment captures must bind the subject's op (not the placeholder),
+  and `_domain_arity` must not arity-bound the placeholder's `FnType`.
+  Also `ParamDict` values are `BasicSymbolic`s — a param can't name a
+  bare function like `sin`.
 - **`instantiate` splicing.** Public templates — same extension as
   rhs `param` support, exposed through `SubstitutionView`.
 

@@ -41,11 +41,18 @@ Create a *param* marker term wrapping `x`: an exact-match literal whose
 value is read from `params[nameof(x)]` at match time rather than baked
 into the compiled pattern. Not a pattern variable — binds nothing. See
 [`set_params!`](@ref), [`match`](@ref).
+
+A table of type `Dict{Symbol, BasicSymbolic{SymReal}}` is used live —
+other dictionaries are converted once. `param` cannot head a call
+(`param(f)(x)`) — that needs runtime op dispatch, not yet supported.
 """
 function param end
 
 "The params table `param` literals resolve against at match time."
 const ParamDict = Dict{Symbol, BasicSymbolic{SymReal}}
+
+"Shared empty params table — the read-only default; never mutated."
+const _NO_PARAMS = ParamDict()
 
 _as_paramdict(params::ParamDict) = params
 _as_paramdict(params::AbstractDict{Symbol}) = ParamDict(params)
