@@ -509,7 +509,7 @@ end
 """
     RuleSet{I <: RuleIndex}
 
-The immutable compiled artifact: the rules plus the dispatch index,
+The compiled artifact: the rules plus the dispatch index,
 built once by `RuleSet(rules, index)` and shareable across tasks and
 calls — all mutable state lives in [`RuleWorkspace`](@ref). The one
 sanctioned mutation is [`set_rhs!`](@ref).
@@ -524,7 +524,7 @@ end
 """
     RuleSet(rules::AbstractVector{CompiledRule}, index = BucketIndex)
 
-Bundle a collection of [`CompiledRule`](@ref)s into an immutable
+Bundle a collection of [`CompiledRule`](@ref)s into a
 `RuleSet` — `CompiledRule[lhs => rhs, ...]` literals compile each
 pair via [`mmrule`](@ref). Builds the dispatch index once,
 shareable globally. `index` selects the [`RuleIndex`](@ref):
