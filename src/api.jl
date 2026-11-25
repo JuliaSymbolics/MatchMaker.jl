@@ -38,6 +38,8 @@ end
 
 Base.getindex(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
     _check_stale(v)
+    is_param_term(k) &&
+        return _param_value(v.eng, nameof(_marker_inner(k)))
     ks = unwrap_varspec(k)
     vid = v.eng.pat.var_of[ks]
     _var_bound(v.eng, vid) || throw(KeyError(ks))

@@ -138,7 +138,8 @@ Deferred positions:
   and `_domain_arity` must not arity-bound the placeholder's `FnType`.
   Also `ParamDict` values are `BasicSymbolic`s — a param can't name a
   bare function like `sin`.
-- **`instantiate` splicing.** Public templates — same extension as
-  rhs `param` support, exposed through `SubstitutionView`.
+- **`instantiate` splicing.** `instantiate` walks its own template —
+  extend `param` resolution to it (rhs templates and
+  `SubstitutionView` access already resolve params).
 
 ## Tests

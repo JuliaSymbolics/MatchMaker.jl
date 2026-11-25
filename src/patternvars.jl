@@ -43,8 +43,11 @@ into the compiled pattern. Not a pattern variable — binds nothing. See
 [`set_params!`](@ref), [`match`](@ref).
 
 A table of type `Dict{Symbol, BasicSymbolic{SymReal}}` is used live —
-other dictionaries are converted once. `param` cannot head a call
-(`param(f)(x)`) — that needs runtime op dispatch, not yet supported.
+other dictionaries are converted once. `param` markers may also appear
+in a rule's rhs template, where they splice the resolved value (a
+callable rhs reads them via `view[param(x)]`). `param` cannot head a
+*pattern* call (`param(f)(x)`) — that needs runtime op dispatch, not
+yet supported.
 """
 function param end
 

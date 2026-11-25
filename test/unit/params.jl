@@ -187,9 +187,35 @@ end
     @test ws.params === nothing
 end
 
-@testset "param rhs guard" begin
-    # rhs splicing is a later phase — today it errors instead of
-    # emitting a literal `param` term into the output
-    @test_throws ArgumentError mmrule(slot(a) => param(t))
-    @test_throws ArgumentError mmrule(sin(param(t)) => param(t))
+@testset "param rhs" begin
+    # template splices resolve per pass — set_params! rebinds them
+    r = mmrule(slot(a) => param(t) + slot(a))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:t => y))
+    @test isequal(ws(x), x + y)
+    set_params!(ws, ParamDict(:t => z))
+    @test isequal(ws(x), x + z)
+
+    # bare param rhs and param spliced into a head
+    r = mmrule(slot(a) => param(u))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:u => z))
+    @test isequal(ws(x), z)
+    r = mmrule(slot(a) => param(f)(slot(a)))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:f => sin))
+    @test isequal(ws(x), sin(x))
+    set_params!(ws, ParamDict(:f => cos))
+    @test isequal(ws(x), cos(x))
+
+    # a callable rhs reads params off the view
+    r = mmrule(slot(a) => (v -> v[param(t)] + v[a]))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:t => y))
+    @test isequal(ws(x), x + y)
+
+    # an unset param errors at apply, not at compile
+    ws = RuleWorkspace(RuleSet(CompiledRule[mmrule(slot(a) => param(t))]))
+    @test_throws ArgumentError ws(x)
+
+    # a param under a segment-capable head in the rhs
+    r = mmrule(f(slot(a)) => h(slot(a), param(t)))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:t => z))
+    @test isequal(ws(f(x)), h(x, z))
 end

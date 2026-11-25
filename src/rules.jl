@@ -28,19 +28,23 @@ building a `Sym → value` dict.
 # Extended help
 
 `vid_of[i]` is the pattern var id bound at template-IR node `i` (`0` =
-not a marker); `updates` caches exactly the node indices needing
-rebuild on eval — everything else keeps `ir[i]`.
+not a marker); a negative value `-k` is a `param` splice resolved from
+`param_names[k]` at eval. `updates` caches exactly the node indices
+needing rebuild on eval — everything else keeps `ir[i]`.
 """
 struct RhsPlan
     "Template DAG."
     ir::IRStructure{SymReal}
     "Node index of the template root."
     root::Int32
-    "template node -> pattern var id (`0` = not a marker node)."
+    "template node -> pattern var id (`0` = not a marker node); `-k`
+    splices `param_names[k]`'s runtime value."
     vid_of::Vector{Int32}
     "template-IR indices whose subtree contains a marker, sorted —
     the only nodes `_rhs_eval` rebuilds."
     updates::Vector{Int32}
+    "param names indexed by `-vid_of` — the `Dict` key, not the sym."
+    param_names::Vector{Symbol}
 end
 
 """
@@ -57,6 +61,8 @@ function _compile_rhs(rhs::BasicSymbolic{SymReal}, pat::Matcher)
     vid_of = zeros(Int32, n)
     needs = falses(n)
     updates = Int32[]
+    param_of = Dict{Symbol, Int32}()
+    param_names = Symbol[]
     g = ir.dependency_graph
     for i in 1:n
         t = ir[i]
@@ -67,17 +73,20 @@ function _compile_rhs(rhs::BasicSymbolic{SymReal}, pat::Matcher)
                 ArgumentError(lazy"rhs variable $sym is not a pattern variable")
             )
             vid_of[i] = vid
+        elseif is_param_term(t)
+            name = nameof(_marker_inner(t))
+            vid_of[i] = -get!(
+                () -> (push!(param_names, name); Int32(length(param_names))),
+                param_of, name
+            )
         end
-        is_param_term(t) && throw(
-            ArgumentError(lazy"`param` markers in rule rhs are not yet supported")
-        )
         # `symbols` is postorder — a node needs work iff it's a marker or
         # any already-visited dependency does.
         needs[i] = vid_of[i] != 0 ||
             any(j -> needs[j], Graphs.outneighbors(g, i))
         needs[i] && push!(updates, Int32(i))
     end
-    return RhsPlan(ir, root, vid_of, updates)
+    return RhsPlan(ir, root, vid_of, updates, param_names)
 end
 
 """
@@ -157,12 +166,16 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
     specs = eng.pat.var_specs
     for i in plan.updates
         vid = vid_of[i]
-        if vid != 0
+        if vid > 0
             # segment markers keep the `ir[i]` placeholder — the parent's
             # arg loop splices `b.seq[vid]` directly and only materializes
             # on a head mismatch; a bare root is handled at the return.
             MData.isa_variant(specs[vid], VarSpec.Segment) ||
                 (out[i] = _bound_value(eng, vid))
+            continue
+        elseif vid < 0
+            # param splice — resolve against the live params table
+            out[i] = _param_value(eng, plan.param_names[-vid])
             continue
         end
         t = ir[i]
@@ -183,7 +196,7 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
         sizehint!(newargs, length(nbs) - argstart + 1)
         for j in argstart:length(nbs)
             c_vid = vid_of[nbs[j]]
-            if c_vid != 0 &&
+            if c_vid > 0 &&
                     MData.isa_variant(specs[c_vid], VarSpec.Segment)
                 if eng.binds.seg_op[c_vid] === newop
                     # same head — splice the captured arg list; the term
@@ -213,7 +226,7 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
     end
     r = plan.root
     rv = vid_of[r]
-    if rv != 0 && MData.isa_variant(specs[rv], VarSpec.Segment)
+    if rv > 0 && MData.isa_variant(specs[rv], VarSpec.Segment)
         return _bound_value(eng, rv)
     end
     return out[r]
