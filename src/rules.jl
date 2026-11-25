@@ -993,25 +993,6 @@ function fixpoint_rewrite(
     return x
 end
 
-# Postorder walk of `i`'s subtree into `out` — children before
-# parents, `i` itself last — deduplicating through `visited` (the
-# fixpoint's `live` set: already-live subtrees are skipped whole).
-# Local replacement for `SymbolicUtils.get_reachability!`, which is
-# not public at the SU compat floor; this variant also yields the
-# root itself.
-function _reach_walk!(
-        out::Vector{Int32}, subj::IRStructure{SymReal}, i::Int32,
-        visited::BitVector
-    )
-    visited[i] && return out
-    visited[i] = true
-    for nbor in Graphs.outneighbors(subj.dependency_graph, i)
-        _reach_walk!(out, subj, nbor, visited)
-    end
-    push!(out, i)
-    return out
-end
-
 # Mark `i`'s whole subtree live and schedule the still-unevaled nodes
 # for the next sweep, children before parents — `stale`'s ascending
 # order does it, since children index lower. Only subtrees *selected*
@@ -1020,6 +1001,9 @@ end
 # `params` table or a guarded callable would misrule them), and every
 # live-marking is a closed walk so no un-live descendants of shared
 # children remain. `out`/`evaled`/`live` grow to cover anything walked.
+# `live` is `get_reachability!`'s visited mask — already-live subtrees
+# are skipped whole — and `i` itself is marked but not yielded, so it
+# is scheduled explicitly.
 function _live_walk!(
         live::BitVector, stale::BitSet, reach::Vector{Int32},
         out::Vector{BasicSymbolic{SymReal}}, evaled::BitVector,
@@ -1029,12 +1013,13 @@ function _live_walk!(
     resize!(evaled, length(subj))
     resize!(out, length(subj))
     empty!(reach)
-    _reach_walk!(reach, subj, Int32(i), live)
+    SymbolicUtils.get_reachability!(reach, subj, Int32(i); visited = live)
     for j in reach
         evaled[j] && continue
         out[j] = subj[j]
         push!(stale, j)
     end
+    evaled[i] || (out[i] = subj[i]; push!(stale, i))
     return nothing
 end
 
@@ -1063,12 +1048,13 @@ function _fixpoint_post(
     # live = nodes of the current expression and terms reached by the
     # rewrite chain — stale nodes left in `subj` by earlier passes and
     # discarded intermediates interned by dispatch lookups are never
-    # evaluated. `live` doubles as `_reach_walk!`'s visited mask;
-    # `reach` is the shared scratch for its postorder.
+    # evaluated. `live` doubles as `get_reachability!`'s visited mask;
+    # `reach` is the shared scratch for its postorder (which excludes
+    # `sroot` itself — pushed explicitly).
     live = falses(n)
     reach = Int32[]
-    _reach_walk!(reach, subj, sroot, live)
-    dirty = reach
+    dirty = SymbolicUtils.get_reachability!(reach, subj, sroot; visited = live)
+    push!(dirty, sroot)
     modified = Int32[]
     stale = BitSet()
     seen = Base.IdSet{BasicSymbolic{SymReal}}()
