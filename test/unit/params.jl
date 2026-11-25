@@ -219,3 +219,30 @@ end
     ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:t => z))
     @test isequal(ws(f(x)), h(x, z))
 end
+
+@testset "param view membership" begin
+    # indexing and haskey agree: a callable rhs's membership guard sees
+    # the same configured parameters getindex resolves
+    seen = Ref(false)
+    eachmatch(param(t), b; params = ParamDict(:t => b)) do v
+        seen[] = true
+        @test haskey(v, param(t))
+        @test isequal(v[param(t)], b)
+        @test !haskey(v, param(u))
+        @test isempty(materialize(v))   # param binds no vars
+    end
+    @test seen[]
+end
+
+@testset "param fixpoint shared children" begin
+    # the warm-workspace fixpoint case driven by a runtime parameter:
+    # `param(u) => d` matches `c` through the table, and `c` was
+    # interned by an earlier `rewrite` call on the same workspace
+    @syms c d
+    rules = CompiledRule[mmrule(a => g(param(u))), mmrule(param(u) => d)]
+    for idx in (MatchMaker.BucketIndex, MatchMaker.DiscrimNet)
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:u => c))
+        rewrite(ws, c)
+        @test isequal(fixpoint_rewrite(ws, f(a)), f(g(d)))
+    end
+end

@@ -17,6 +17,11 @@ A read-only view of a match's live engine bindings, resolved lazily.
 Valid only until the next `eachmatch`/`iterate` step mutates the
 bindings — copy with [`materialize`](@ref) to keep results. With the
 `strict_views` preference enabled, stale access throws.
+
+Besides pattern vars, `view[param(x)]` / `haskey(view, param(x))`
+resolve [`param`](@ref) markers against the engine's live params
+table — callables can read runtime parameters through the same
+interface as bindings.
 """
 struct SubstitutionView <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
     eng::MatchEngine
@@ -47,6 +52,10 @@ Base.getindex(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
 end
 Base.haskey(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
     _check_stale(v)
+    if is_param_term(k)
+        p = v.eng.params
+        return p !== nothing && haskey(p, nameof(_marker_inner(k)))
+    end
     ks = unwrap_varspec(k)
     haskey(v.eng.pat.var_of, ks) || return false
     return _var_bound(v.eng, v.eng.pat.var_of[ks])

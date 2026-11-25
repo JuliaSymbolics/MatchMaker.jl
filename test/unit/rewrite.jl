@@ -389,6 +389,31 @@ end
     @test isequal(rewrite(RuleWorkspace(RuleSet(rules)), post), post)
 end
 
+@testset "fixpoint schedules shared children of fresh nodes" begin
+    # `rewrite(ws, c)` interns `c` in `ws.subj` first; when the fixpoint
+    # pass then interns `g(c)`, `c` is already "live" but never
+    # evaluated this pass — `c => d` must still fire inside `g(c)`.
+    @syms a c d f(x) g(x)
+    rules = CompiledRule[mmrule(a => g(c)), mmrule(c => d)]
+    for idx in (BucketIndex, DiscrimNet)
+        ws = RuleWorkspace(RuleSet(rules, idx))
+        rewrite(ws, c)
+        @test isequal(fixpoint_rewrite(ws, f(a)), f(g(d)))
+    end
+end
+
+@testset "RhsPlan four-argument constructor" begin
+    # param-free plans keep the pre-param signature — `param_names`
+    # defaults to empty.
+    @syms x
+    rule = mmrule(x => x + 1)
+    plan = rule.rhs::RhsPlan
+    rebuilt = RhsPlan(plan.ir, plan.root, plan.vid_of, plan.updates)
+    @test rebuilt.param_names == Symbol[]
+    rs = RuleSet(CompiledRule[CompiledRule(rule.pat, rule.constraints, rebuilt)])
+    @test isequal(rewrite(RuleWorkspace(rs), x), x + 1)
+end
+
 @testset "SU combinator compatibility" begin
     @syms x y z a b p q
 

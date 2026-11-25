@@ -31,6 +31,9 @@ building a `Sym → value` dict.
 not a marker); a negative value `-k` is a `param` splice resolved from
 `param_names[k]` at eval. `updates` caches exactly the node indices
 needing rebuild on eval — everything else keeps `ir[i]`.
+
+`RhsPlan(ir, root, vid_of, updates)` builds a param-free plan
+(`param_names = Symbol[]`).
 """
 struct RhsPlan
     "Template DAG."
@@ -46,6 +49,10 @@ struct RhsPlan
     "param names indexed by `-vid_of` — the `Dict` key, not the sym."
     param_names::Vector{Symbol}
 end
+
+"`RhsPlan(ir, root, vid_of, updates)` — a param-free template plan."
+RhsPlan(ir, root, vid_of, updates) =
+    RhsPlan(ir, root, vid_of, updates, Symbol[])
 
 """
     $TYPEDSIGNATURES
@@ -986,6 +993,24 @@ function fixpoint_rewrite(
     return x
 end
 
+# Bring `i`'s whole subtree into `live` and schedule the still-unevaled
+# nodes — children precede parents in `stale`'s ascending order. `live`
+# is `get_reachability!`'s visited mask: walks skip already-live
+# subtrees, so every live-marking must go through here — a bare
+# `live[i] = true` can leave un-live descendants of shared children.
+function _live_walk!(
+        live::BitVector, stale::BitSet, reach::Vector{Int32},
+        evaled::BitVector, subj::IRStructure{SymReal}, i::Integer
+    )
+    resize!(live, length(subj))
+    empty!(reach)
+    SymbolicUtils.get_reachability!(reach, subj, Int32(i); visited = live)
+    for j in reach
+        (j <= length(evaled) && evaled[j]) || push!(stale, j)
+    end
+    return nothing
+end
+
 # §7 incremental fixpoint: `out[i]` persists the latest rewrite result
 # of node `i` across iterations — `out[i]` *is* `rewrite(subj[i])`, so
 # the iterate chain `x ↦ out[node(x)]` advances by reading; evaluation
@@ -1057,7 +1082,7 @@ function _fixpoint_post(
                 for i in (n_known + 1):Int32(length(subj))
                     out[i] = subj[i]
                     push!(stale, i)
-                    live[i] = true
+                    _live_walk!(live, stale, reach, evaled, subj, i)
                 end
                 n_known = Int32(length(subj))
             end
@@ -1069,25 +1094,19 @@ function _fixpoint_post(
             steps += 1
             steps >= maxiterations && return res
             sroot = populate_ir!(subj, res)
-            resize!(live, length(subj))
             # `res`'s subtree may predate this pass — hashconsed nodes
             # from earlier expressions are live now but never evaled
             # under these params; schedule the unevaled ones so their
-            # rules fire before their parents are visited. `live` is
-            # the visited mask, so `reach` only collects new nodes.
-            empty!(reach)
-            SymbolicUtils.get_reachability!(reach, subj, sroot; visited = live)
-            for i in reach
-                (i <= length(evaled) && evaled[i]) || push!(stale, i)
-            end
+            # rules fire before their parents are visited.
+            _live_walk!(live, stale, reach, evaled, subj, sroot)
         end
         # next sweep: stale ∪ halted chain head ∪ new nodes — `stale` is
         # a BitSet, so appending it yields `dirty` sorted + deduped
         sroot <= n_known && push!(stale, sroot)
         resize!(live, length(subj))
-        for i in (n_known + 1):length(subj)
-            live[i] = true
+        for i in (n_known + 1):Int32(length(subj))
             push!(stale, i)
+            _live_walk!(live, stale, reach, evaled, subj, i)
         end
         append!(dirty, stale)
     end
