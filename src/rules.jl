@@ -993,20 +993,47 @@ function fixpoint_rewrite(
     return x
 end
 
-# Bring `i`'s whole subtree into `live` and schedule the still-unevaled
-# nodes — children precede parents in `stale`'s ascending order. `live`
-# is `get_reachability!`'s visited mask: walks skip already-live
-# subtrees, so every live-marking must go through here — a bare
-# `live[i] = true` can leave un-live descendants of shared children.
+# Postorder walk of `i`'s subtree into `out` — children before
+# parents, `i` itself last — deduplicating through `visited` (the
+# fixpoint's `live` set: already-live subtrees are skipped whole).
+# Local replacement for `SymbolicUtils.get_reachability!`, which is
+# not public at the SU compat floor; this variant also yields the
+# root itself.
+function _reach_walk!(
+        out::Vector{Int32}, subj::IRStructure{SymReal}, i::Int32,
+        visited::BitVector
+    )
+    visited[i] && return out
+    visited[i] = true
+    for nbor in Graphs.outneighbors(subj.dependency_graph, i)
+        _reach_walk!(out, subj, nbor, visited)
+    end
+    push!(out, i)
+    return out
+end
+
+# Mark `i`'s whole subtree live and schedule the still-unevaled nodes
+# for the next sweep, children before parents — `stale`'s ascending
+# order does it, since children index lower. Only subtrees *selected*
+# by the rewrite chain are walked: dispatch lookups intern discarded
+# candidates whose descendants must never be evaluated (a changed
+# `params` table or a guarded callable would misrule them), and every
+# live-marking is a closed walk so no un-live descendants of shared
+# children remain. `out`/`evaled`/`live` grow to cover anything walked.
 function _live_walk!(
         live::BitVector, stale::BitSet, reach::Vector{Int32},
-        evaled::BitVector, subj::IRStructure{SymReal}, i::Integer
+        out::Vector{BasicSymbolic{SymReal}}, evaled::BitVector,
+        subj::IRStructure{SymReal}, i::Integer
     )
     resize!(live, length(subj))
+    resize!(evaled, length(subj))
+    resize!(out, length(subj))
     empty!(reach)
-    SymbolicUtils.get_reachability!(reach, subj, Int32(i); visited = live)
+    _reach_walk!(reach, subj, Int32(i), live)
     for j in reach
-        (j <= length(evaled) && evaled[j]) || push!(stale, j)
+        evaled[j] && continue
+        out[j] = subj[j]
+        push!(stale, j)
     end
     return nothing
 end
@@ -1033,19 +1060,18 @@ function _fixpoint_post(
         out[i] = subj[i]
     end
     evaled = falses(n)
-    # live = nodes of the current expression and terms reached while
-    # rewriting it — stale nodes left in `subj` by earlier passes are
-    # never evaluated (a changed `params` table would misrule them).
-    # `get_reachability!`'s visited mask doubles as the live set;
-    # `reach` is the shared scratch for its topological order.
+    # live = nodes of the current expression and terms reached by the
+    # rewrite chain — stale nodes left in `subj` by earlier passes and
+    # discarded intermediates interned by dispatch lookups are never
+    # evaluated. `live` doubles as `_reach_walk!`'s visited mask;
+    # `reach` is the shared scratch for its postorder.
     live = falses(n)
     reach = Int32[]
-    dirty = SymbolicUtils.get_reachability!(reach, subj, sroot; visited = live)
-    push!(dirty, sroot)
+    _reach_walk!(reach, subj, sroot, live)
+    dirty = reach
     modified = Int32[]
     stale = BitSet()
     seen = Base.IdSet{BasicSymbolic{SymReal}}()
-    n_known = n
     steps = 0
     while steps < maxiterations
         # — eval phase: re-derive `out` for dirty nodes, ascending —
@@ -1074,18 +1100,6 @@ function _fixpoint_post(
         # — chain phase: follow `x ↦ out[node(x)]` while `out` is fresh —
         empty!(dirty)
         while true
-            if n_known < length(subj)   # grow for newly interned nodes
-                resize!(out, length(subj))
-                resize!(evaled, length(subj))
-                resize!(live, length(subj))
-                sizehint!(stale, length(subj))
-                for i in (n_known + 1):Int32(length(subj))
-                    out[i] = subj[i]
-                    push!(stale, i)
-                    _live_walk!(live, stale, reach, evaled, subj, i)
-                end
-                n_known = Int32(length(subj))
-            end
             (evaled[sroot] && sroot ∉ stale) || break
             res = out[sroot]
             res in seen && return res
@@ -1098,16 +1112,11 @@ function _fixpoint_post(
             # from earlier expressions are live now but never evaled
             # under these params; schedule the unevaled ones so their
             # rules fire before their parents are visited.
-            _live_walk!(live, stale, reach, evaled, subj, sroot)
+            _live_walk!(live, stale, reach, out, evaled, subj, sroot)
         end
-        # next sweep: stale ∪ halted chain head ∪ new nodes — `stale` is
-        # a BitSet, so appending it yields `dirty` sorted + deduped
-        sroot <= n_known && push!(stale, sroot)
-        resize!(live, length(subj))
-        for i in (n_known + 1):Int32(length(subj))
-            push!(stale, i)
-            _live_walk!(live, stale, reach, evaled, subj, i)
-        end
+        # next sweep: stale ∪ halted chain head — `stale` is a BitSet,
+        # so appending it yields `dirty` sorted + deduped
+        push!(stale, sroot)
         append!(dirty, stale)
     end
     return out[sroot]

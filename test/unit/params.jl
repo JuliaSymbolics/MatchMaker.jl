@@ -246,3 +246,26 @@ end
         @test isequal(fixpoint_rewrite(ws, f(a)), f(g(d)))
     end
 end
+
+@testset "param fixpoint discarded intermediates" begin
+    # `f(g(sin(b))) => e` fires at the `f(a)` site, so the interned
+    # `sin(b)` is part of a discarded intermediate — `sin(param(t))`
+    # must never be evaluated, even with no `:t` in the table
+    @syms d e
+    rules = CompiledRule[
+        mmrule(a => g(sin(b))),
+        mmrule(f(g(sin(b))) => e),
+        mmrule(sin(param(t)) => d),
+    ]
+    for idx in (MatchMaker.BucketIndex, MatchMaker.DiscrimNet)
+        # fresh workspace
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:t => b))
+        @test isequal(fixpoint_rewrite(ws, f(a)), e)
+        # warm: `sin(b)` interned under `:t => b`, then the table
+        # swapped out — the param rule must never run
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:t => b))
+        rewrite(ws, sin(b))
+        set_params!(ws, ParamDict())
+        @test isequal(fixpoint_rewrite(ws, f(a)), e)
+    end
+end

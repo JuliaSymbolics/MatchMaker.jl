@@ -28,9 +28,6 @@ const NONPUBLIC_EXPLICIT_IMPORTS = (
 const NONPUBLIC_QUALIFIED_ACCESSES = (
     # SymbolicUtils
     :OrderedDiGraph,
-    # reachability walk that reuses MatchMaker's visited mask/scratch;
-    # `get_reachability` (public) only offers a fresh-buffer version
-    :get_reachability!,
     # Base
     :RefValue, :SizeUnknown, :materialize,
 )

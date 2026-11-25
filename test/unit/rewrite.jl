@@ -402,6 +402,30 @@ end
     end
 end
 
+@testset "fixpoint skips discarded intermediates" begin
+    # the dispatch lookup interns `f(g(sin(b)))` while applying rules
+    # at `f(a)` — but the rule returns `e`, so `sin(b)` is part of a
+    # discarded intermediate and must never be evaluated. If it were
+    # scheduled, the guarded callable below would throw.
+    @syms a b e f(x) g(x)
+    flag = Ref(false)
+    rules = CompiledRule[
+        mmrule(a => (v -> (flag[] = true; g(sin(b))))),
+        mmrule(f(g(sin(b))) => e),
+        mmrule(
+            sin(b) => (
+                v -> flag[] ? error("evaluated a discarded node") : nothing
+            )
+        ),
+    ]
+    for idx in (BucketIndex, DiscrimNet)
+        ws = RuleWorkspace(RuleSet(rules, idx))
+        flag[] = false
+        ws(sin(b))          # prime ws.subj with a callable result
+        @test isequal(fixpoint_rewrite(ws, f(a)), e)
+    end
+end
+
 @testset "RhsPlan four-argument constructor" begin
     # param-free plans keep the pre-param signature — `param_names`
     # defaults to empty.
