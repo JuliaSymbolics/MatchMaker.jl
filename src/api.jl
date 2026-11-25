@@ -221,13 +221,15 @@ end
 
 The first match of pattern `m` (a `Matcher` or a raw expression, compiled
 via [`compile_pattern`](@ref)) against subject `s`, as a [`MarkersMap`](@ref)
-or `nothing`. `constraints` is a collection of [`Constraint`](@ref)s.
+or `nothing`. `constraints` is a collection of [`Constraint`](@ref)s;
+`params` supplies runtime values for [`param`](@ref) literals.
 """
 function match(
         m::Matcher, s::BasicSymbolic{SymReal};
-        constraints = Constraint[], maxsteps::Int = typemax(Int)
+        constraints = Constraint[], maxsteps::Int = typemax(Int),
+        params::AbstractDict{Symbol} = _NO_PARAMS
     )
-    eng = MatchEngine(m, s, constraints; maxsteps)
+    eng = MatchEngine(m, s, constraints; maxsteps, params)
     next_match!(eng) || return nothing
     return materialize(SubstitutionView(eng, eng.steps))
 end
@@ -244,8 +246,9 @@ ends when the budget is exhausted (a truncated result set).
 """
 matches(
     m::Matcher, s::BasicSymbolic{SymReal};
-    constraints = Constraint[], maxsteps::Int = typemax(Int)
-) = MatchIterator(MatchEngine(m, s, constraints; maxsteps))
+    constraints = Constraint[], maxsteps::Int = typemax(Int),
+    params::AbstractDict{Symbol} = _NO_PARAMS
+) = MatchIterator(MatchEngine(m, s, constraints; maxsteps, params))
 matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     matches(compile_pattern(p), s; kwargs...)
 
@@ -268,8 +271,9 @@ a few bound values per match.
 """
 boundmatches(
     m::Matcher, s::BasicSymbolic{SymReal};
-    constraints = Constraint[], maxsteps::Int = typemax(Int)
-) = BoundMatchIterator(MatchEngine(m, s, constraints; maxsteps))
+    constraints = Constraint[], maxsteps::Int = typemax(Int),
+    params::AbstractDict{Symbol} = _NO_PARAMS
+) = BoundMatchIterator(MatchEngine(m, s, constraints; maxsteps, params))
 boundmatches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     boundmatches(compile_pattern(p), s; kwargs...)
 
@@ -292,9 +296,10 @@ view is only valid inside `f` — copy with `materialize` to keep results.
 """
 function eachmatch(
         f::F, m::Matcher, s::BasicSymbolic{SymReal};
-        constraints = Constraint[], maxsteps::Int = typemax(Int)
+        constraints = Constraint[], maxsteps::Int = typemax(Int),
+        params::AbstractDict{Symbol} = _NO_PARAMS
     ) where {F}
-    eng = MatchEngine(m, s, constraints; maxsteps)
+    eng = MatchEngine(m, s, constraints; maxsteps, params)
     while next_match!(eng)
         f(SubstitutionView(eng, eng.steps)) === false && return nothing
     end
@@ -359,8 +364,9 @@ deduplicated by `===`-identity; postorder (bottom-up) traversal.
 """
 boundmatches_at(
     m::Matcher, s::BasicSymbolic{SymReal};
-    constraints = Constraint[], maxsteps::Int = typemax(Int)
-) = BoundMatchAtIterator(MatchEngine(m, s, constraints; maxsteps))
+    constraints = Constraint[], maxsteps::Int = typemax(Int),
+    params::AbstractDict{Symbol} = _NO_PARAMS
+) = BoundMatchAtIterator(MatchEngine(m, s, constraints; maxsteps, params))
 boundmatches_at(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     boundmatches_at(compile_pattern(p), s; kwargs...)
 

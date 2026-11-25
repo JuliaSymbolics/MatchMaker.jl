@@ -454,8 +454,7 @@ function _step_seq!(
         is_seg_pos = MData.isa_variant(child_plan, NodePlan.Segment)
         is_opt_pos = MData.isa_variant(child_plan, NodePlan.Slot) &&
             _is_opt_pos(eng, child_pat)
-        is_leaf_pos = MData.isa_variant(child_plan, NodePlan.Literal) ||
-            MData.isa_variant(child_plan, NodePlan.Slot)
+        is_leaf_pos = _is_leaf_plan(child_plan)
         if is_seg_pos
             vid = @match child_plan begin
                 NodePlan.Segment(; var_id) => var_id

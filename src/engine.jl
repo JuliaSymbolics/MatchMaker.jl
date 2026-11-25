@@ -376,6 +376,8 @@ mutable struct MatchEngine
     steps::Int
     "Step budget; the search ends once `steps` reaches it."
     maxsteps::Int
+    "Runtime values for `param` leaf nodes — workspaces resync it per site."
+    params::ParamDict
 end
 
 """
@@ -383,15 +385,17 @@ end
 
 Build a [`MatchEngine`](@ref) for `pat` on subject `s`. `constraints` is a
 collection of [`Constraint`](@ref)s; variable syms are resolved to ids —
-unknown syms throw `ArgumentError`.
+unknown syms throw `ArgumentError`. `params` supplies the values `param`
+literals match against.
 """
 function MatchEngine(
         pat::Matcher, s::BasicSymbolic{SymReal},
-        constraints::AbstractVector{Constraint}; maxsteps::Int = typemax(Int)
+        constraints::AbstractVector{Constraint};
+        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = _NO_PARAMS
     )
     subj = IRStructure{SymReal}()
     sroot = populate_ir!(subj, s)
-    return MatchEngine(pat, subj, sroot, constraints; maxsteps)
+    return MatchEngine(pat, subj, sroot, constraints; maxsteps, params)
 end
 
 """
@@ -404,7 +408,8 @@ engine to new roots with [`reset!`](@ref).
 """
 function MatchEngine(
         pat::Matcher, subj::IRStructure{SymReal}, sroot::Int32,
-        constraints::AbstractVector{Constraint}; maxsteps::Int = typemax(Int)
+        constraints::AbstractVector{Constraint};
+        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = _NO_PARAMS
     )
     binds = Bindings(pat.nvars)
     trail = Int32[]
@@ -440,19 +445,23 @@ function MatchEngine(
         binds, trail, econstrs,
         falses(length(econstrs)), var_constrs, global_constrs,
         argbuf, segbuf, false, 0,
-        maxsteps
+        maxsteps, _as_paramdict(params)
     )
     _init_root!(eng)
     return eng
 end
 
+"Plans applied inline as leaf obligations — no frame, no children."
+_is_leaf_plan(plan::NodePlanT) =
+    MData.isa_variant(plan, NodePlan.Literal) ||
+    MData.isa_variant(plan, NodePlan.Slot) ||
+    MData.isa_variant(plan, NodePlan.Param)
+
 "Push the root frame for non-leaf root plans (leaf roots run inline in
 `next_match!` — there is no parent to host the obligation)."
 function _init_root!(eng::MatchEngine)
     root_plan = eng.pat.plans[eng.pat.root]
-    isleaf = MData.isa_variant(root_plan, NodePlan.Literal) ||
-        MData.isa_variant(root_plan, NodePlan.Slot)
-    if !isleaf
+    if !_is_leaf_plan(root_plan)
         _push_frame!(
             eng, _acquire_frame!(eng, root_plan, eng.pat.root, eng.sroot)
         )
@@ -671,11 +680,24 @@ function _symtype_ok(
     return cand <: want
 end
 
+"`param` lookup — an unset param is a usage error, not a match failure."
+function _param_value(eng::MatchEngine, name::Symbol)
+    v = get(eng.params, name, nothing)
+    v === nothing && throw(
+        ArgumentError(
+            lazy"pattern param $name has no value — pass `params` or call `set_params!`"
+        )
+    )
+    return v
+end
+
 # Apply the leaf plan at `pnode` against subject node `snode`.
 # Returns whether the obligation succeeded; any binding is trail-recorded.
 function _leaf_obligation!(eng::MatchEngine, pnode::Int32, snode::Int32)
     return @match eng.pat.plans[pnode] begin
         NodePlan.Literal() => isequal(eng.pat.ir[pnode], eng.subj[snode])
+        NodePlan.Param(; name) =>
+            isequal(_param_value(eng, name), eng.subj[snode])
         NodePlan.Slot(; var_id) => _slot_obligation!(eng, var_id, snode)
         _ => error(lazy"leaf obligation got a non-leaf plan at node $pnode")
     end
@@ -846,8 +868,7 @@ function _step_call!(
         cp = children[child_pos[]]
         cs = snbs[sstart + child_pos[] - 1]
         cplan = eng.pat.plans[cp]
-        isleaf = MData.isa_variant(cplan, NodePlan.Literal) ||
-            MData.isa_variant(cplan, NodePlan.Slot)
+        isleaf = _is_leaf_plan(cplan)
         # a ground subtree needs no frames — one isequal decides it (§5.2)
         if eng.pat.is_ground[cp]
             if isequal(eng.pat.ir[cp], eng.subj[cs])
