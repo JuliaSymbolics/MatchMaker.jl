@@ -421,7 +421,7 @@ end
     for idx in (BucketIndex, DiscrimNet)
         ws = RuleWorkspace(RuleSet(rules, idx))
         flag[] = false
-        ws(sin(b))          # prime ws.subj with a callable result
+        ws(sin(b))          # intern sin(b) before the fixpoint pass
         @test isequal(fixpoint_rewrite(ws, f(a)), e)
     end
 end

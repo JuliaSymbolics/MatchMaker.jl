@@ -993,17 +993,9 @@ function fixpoint_rewrite(
     return x
 end
 
-# Mark `i`'s whole subtree live and schedule the still-unevaled nodes
-# for the next sweep, children before parents — `stale`'s ascending
-# order does it, since children index lower. Only subtrees *selected*
-# by the rewrite chain are walked: dispatch lookups intern discarded
-# candidates whose descendants must never be evaluated (a changed
-# `params` table or a guarded callable would misrule them), and every
-# live-marking is a closed walk so no un-live descendants of shared
-# children remain. `out`/`evaled`/`live` grow to cover anything walked.
-# `live` is `get_reachability!`'s visited mask — already-live subtrees
-# are skipped whole — and `i` itself is marked but not yielded, so it
-# is scheduled explicitly.
+# Mark each selected root and its descendants together so the visited
+# mask can skip whole subtrees — and schedule the still-unevaled nodes
+# for the next sweep, children before parents.
 function _live_walk!(
         live::BitVector, stale::BitSet, reach::Vector{Int32},
         out::Vector{BasicSymbolic{SymReal}}, evaled::BitVector,
@@ -1019,6 +1011,7 @@ function _live_walk!(
         out[j] = subj[j]
         push!(stale, j)
     end
+    # `get_reachability!` marks `i` visited but doesn't yield it
     evaled[i] || (out[i] = subj[i]; push!(stale, i))
     return nothing
 end
