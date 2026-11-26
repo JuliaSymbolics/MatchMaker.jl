@@ -189,11 +189,10 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
         nbs = Graphs.outneighbors(g, i)
         op = operation(t)
         argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
-        newop = op
-        if argstart == 2 && vid_of[nbs[1]] != 0
-            # a head bound via extras materializes as Const(op); unwrap
-            newop = unwrap_const(out[nbs[1]])
-        end
+        # `out[nbs[1]]` is the (possibly rebuilt) head — a param nested
+        # inside a computed op splices there even though the head node's
+        # own vid is 0; heads bound via extras materialize as Const(op).
+        newop = argstart == 2 ? unwrap_const(out[nbs[1]]) : op
         # +/* get free splicing + identity-Const elision from
         # add_worker/mul_worker; other heads need it explicit (g(g(x))
         # is not g(x)).
@@ -661,7 +660,8 @@ set_rhs!(ws::RuleWorkspace, i::Integer, rhs) =
 Replace `ws`'s `param` value table — engines observe it from the next
 site, so swap between passes. A `Dict{Symbol, BasicSymbolic{SymReal}}`
 is stored live (mutations are observed); other dictionaries are
-converted. Returns `ws`.
+converted. Mutating the table while a search is suspended is undefined
+behavior (see [`param`](@ref)). Returns `ws`.
 """
 function set_params!(ws::RuleWorkspace, params::AbstractDict{Symbol})
     ws.params = _as_paramdict(params)

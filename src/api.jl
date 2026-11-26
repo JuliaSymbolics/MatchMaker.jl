@@ -21,7 +21,8 @@ bindings — copy with [`materialize`](@ref) to keep results. With the
 Besides pattern vars, `view[param(x)]` / `haskey(view, param(x))`
 resolve [`param`](@ref) markers against the engine's live params
 table — callables can read runtime parameters through the same
-interface as bindings.
+interface as bindings. Mutating that table while a search is
+suspended is undefined behavior (see [`param`](@ref)).
 """
 struct SubstitutionView <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
     eng::MatchEngine
@@ -253,7 +254,9 @@ match(
 
 Lazy iterator of all matches of `m` against `s`; each item is a
 [`MarkersMap`](@ref). `maxsteps` bounds total search steps — the iterator
-ends when the budget is exhausted (a truncated result set).
+ends when the budget is exhausted (a truncated result set). Mutating
+`params` between `iterate` steps is undefined behavior (see
+[`param`](@ref)).
 """
 matches(
     m::Matcher, s::BasicSymbolic{SymReal};
@@ -278,7 +281,8 @@ but each item is a [`BoundMatch`](@ref): a persistent snapshot of the
 index-only binding state that reconstructs segment terms on access.
 Far cheaper per result than materializing a [`MarkersMap`](@ref) —
 use it when collecting many results, or when the consumer reads only
-a few bound values per match.
+a few bound values per match. Mutating `params` between `iterate`
+steps is undefined behavior (see [`param`](@ref)).
 """
 boundmatches(
     m::Matcher, s::BasicSymbolic{SymReal};
@@ -304,6 +308,7 @@ boundmatchall(m, s; kwargs...) = collect(boundmatches(m, s; kwargs...))
 Call `f(::SubstitutionView)` on each successive match of `m` against `s`;
 stop when `f` returns `false`. The zero-allocation hot path (§5.6): the
 view is only valid inside `f` — copy with `materialize` to keep results.
+Mutating `params` inside `f` is undefined behavior (see [`param`](@ref)).
 """
 function eachmatch(
         f::F, m::Matcher, s::BasicSymbolic{SymReal};

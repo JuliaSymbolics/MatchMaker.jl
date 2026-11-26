@@ -218,6 +218,18 @@ end
     r = mmrule(f(slot(a)) => h(slot(a), param(t)))
     ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:t => z))
     @test isequal(ws(f(x)), h(x, z))
+
+    # a param nested inside a *computed op* splices too — the head
+    # node's own vid is 0, so the rebuilt head must come from `out`
+    RetT = FnType{Tuple{Number}, Number, Nothing}
+    gg = Sym{SymReal}(:gg; type = FnType{Tuple{Number}, RetT, Nothing})
+    r = mmrule(slot(a) => term(gg(param(t)), slot(a)))
+    for idx in (MatchMaker.BucketIndex, MatchMaker.DiscrimNet)
+        ws = RuleWorkspace(RuleSet(CompiledRule[r], idx); params = ParamDict(:t => y))
+        @test isequal(ws(x), term(gg(y), x))
+        set_params!(ws, ParamDict(:t => z))
+        @test isequal(ws(x), term(gg(z), x))
+    end
 end
 
 @testset "param view membership" begin

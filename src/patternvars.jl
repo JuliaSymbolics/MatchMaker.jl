@@ -48,6 +48,11 @@ in a rule's rhs template, where they splice the resolved value (a
 callable rhs reads them via `view[param(x)]`). `param` cannot head a
 *pattern* call (`param(f)(x)`) — that needs runtime op dispatch, not
 yet supported.
+
+Mutating a live table while a search is suspended — inside an
+`eachmatch` callback, a callable rhs, or between `iterate` steps of
+[`matches`](@ref)/[`boundmatches`](@ref) — is undefined behavior:
+param reads and the captured search state can disagree.
 """
 function param end
 
