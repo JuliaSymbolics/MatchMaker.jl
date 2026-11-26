@@ -377,7 +377,7 @@ mutable struct MatchEngine
     "Step budget; the search ends once `steps` reaches it."
     maxsteps::Int
     "Runtime values for `param` leaf nodes — workspaces resync it per site."
-    params::ParamDict
+    params::Union{Nothing, ParamDict}
 end
 
 """
@@ -391,7 +391,7 @@ literals match against.
 function MatchEngine(
         pat::Matcher, s::BasicSymbolic{SymReal},
         constraints::AbstractVector{Constraint};
-        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = _NO_PARAMS
+        maxsteps::Int = typemax(Int), params::Union{AbstractDict{Symbol}, Nothing} = nothing
     )
     subj = IRStructure{SymReal}()
     sroot = populate_ir!(subj, s)
@@ -409,7 +409,7 @@ engine to new roots with [`reset!`](@ref).
 function MatchEngine(
         pat::Matcher, subj::IRStructure{SymReal}, sroot::Int32,
         constraints::AbstractVector{Constraint};
-        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = _NO_PARAMS
+        maxsteps::Int = typemax(Int), params::Union{AbstractDict{Symbol}, Nothing} = nothing
     )
     binds = Bindings(pat.nvars)
     trail = Int32[]
@@ -445,7 +445,8 @@ function MatchEngine(
         binds, trail, econstrs,
         falses(length(econstrs)), var_constrs, global_constrs,
         argbuf, segbuf, false, 0,
-        maxsteps, _as_paramdict(params)
+        maxsteps,
+        params === nothing ? nothing : _as_paramdict(params)
     )
     _init_root!(eng)
     return eng
@@ -682,7 +683,8 @@ end
 
 "`param` lookup — an unset param is a usage error, not a match failure."
 function _param_value(eng::MatchEngine, name::Symbol)
-    v = get(eng.params, name, nothing)
+    p = eng.params
+    v = p === nothing ? nothing : get(p, name, nothing)
     v === nothing && throw(
         ArgumentError(
             lazy"pattern param $name has no value — pass `params` or call `set_params!`"

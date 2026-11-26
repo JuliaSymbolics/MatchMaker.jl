@@ -15,7 +15,7 @@ using SymbolicUtils: SymbolicUtils, BasicSymbolic, Sym, Const, SymReal,
     issym, isconst, symtype, shape, BSImpl, ArgsT,
     hasmetadata, getmetadata, setmetadata, is_function_symbolic, SmallV,
     promote_symtype, FnType, IRStructure, populate_ir!, unwrap_const,
-    get_reachability, get_reachability!
+    get_reachability
 using TermInterface: arguments, iscall, operation, maketerm, metadata
 using Moshi.Data: @data
 import Moshi.Data as MData

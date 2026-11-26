@@ -43,16 +43,22 @@ into the compiled pattern. Not a pattern variable — binds nothing. See
 [`set_params!`](@ref), [`match`](@ref).
 
 A table of type `Dict{Symbol, BasicSymbolic{SymReal}}` is used live —
-other dictionaries are converted once. `param` cannot head a call
-(`param(f)(x)`) — that needs runtime op dispatch, not yet supported.
+other dictionaries are converted once. `param` markers may also appear
+in a rule's rhs template, where they splice the resolved value (a
+callable rhs reads them via `view[param(x)]`). `param` cannot head a
+*pattern* call (`param(f)(x)`) — that needs runtime op dispatch, not
+yet supported.
+
+Mutating a live table while a search is suspended — inside an
+`eachmatch` callback, a callable rhs, or between `iterate` steps of
+[`matches`](@ref)/[`boundmatches`](@ref)/
+[`boundmatches_at`](@ref)/[`matches_at`](@ref) — is undefined
+behavior: param reads and the captured search state can disagree.
 """
 function param end
 
 "The params table `param` literals resolve against at match time."
 const ParamDict = Dict{Symbol, BasicSymbolic{SymReal}}
-
-"Shared empty params table — the read-only default; never mutated."
-const _NO_PARAMS = ParamDict()
 
 _as_paramdict(params::ParamDict) = params
 _as_paramdict(params::AbstractDict{Symbol}) = ParamDict(params)

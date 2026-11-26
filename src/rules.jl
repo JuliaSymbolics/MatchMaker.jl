@@ -28,20 +28,31 @@ building a `Sym → value` dict.
 # Extended help
 
 `vid_of[i]` is the pattern var id bound at template-IR node `i` (`0` =
-not a marker); `updates` caches exactly the node indices needing
-rebuild on eval — everything else keeps `ir[i]`.
+not a marker); a negative value `-k` is a `param` splice resolved from
+`param_names[k]` at eval. `updates` caches exactly the node indices
+needing rebuild on eval — everything else keeps `ir[i]`.
+
+`RhsPlan(ir, root, vid_of, updates)` builds a param-free plan
+(`param_names = Symbol[]`).
 """
 struct RhsPlan
     "Template DAG."
     ir::IRStructure{SymReal}
     "Node index of the template root."
     root::Int32
-    "template node -> pattern var id (`0` = not a marker node)."
+    "template node -> pattern var id (`0` = not a marker node); `-k`
+    splices `param_names[k]`'s runtime value."
     vid_of::Vector{Int32}
     "template-IR indices whose subtree contains a marker, sorted —
     the only nodes `_rhs_eval` rebuilds."
     updates::Vector{Int32}
+    "param names indexed by `-vid_of` — the `Dict` key, not the sym."
+    param_names::Vector{Symbol}
 end
+
+"`RhsPlan(ir, root, vid_of, updates)` — a param-free template plan."
+RhsPlan(ir, root, vid_of, updates) =
+    RhsPlan(ir, root, vid_of, updates, Symbol[])
 
 """
     $TYPEDSIGNATURES
@@ -57,6 +68,8 @@ function _compile_rhs(rhs::BasicSymbolic{SymReal}, pat::Matcher)
     vid_of = zeros(Int32, n)
     needs = falses(n)
     updates = Int32[]
+    param_of = Dict{Symbol, Int32}()
+    param_names = Symbol[]
     g = ir.dependency_graph
     for i in 1:n
         t = ir[i]
@@ -67,17 +80,20 @@ function _compile_rhs(rhs::BasicSymbolic{SymReal}, pat::Matcher)
                 ArgumentError(lazy"rhs variable $sym is not a pattern variable")
             )
             vid_of[i] = vid
+        elseif is_param_term(t)
+            name = nameof(_marker_inner(t))
+            vid_of[i] = -get!(
+                () -> (push!(param_names, name); Int32(length(param_names))),
+                param_of, name
+            )
         end
-        is_param_term(t) && throw(
-            ArgumentError(lazy"`param` markers in rule rhs are not yet supported")
-        )
         # `symbols` is postorder — a node needs work iff it's a marker or
         # any already-visited dependency does.
         needs[i] = vid_of[i] != 0 ||
             any(j -> needs[j], Graphs.outneighbors(g, i))
         needs[i] && push!(updates, Int32(i))
     end
-    return RhsPlan(ir, root, vid_of, updates)
+    return RhsPlan(ir, root, vid_of, updates, param_names)
 end
 
 """
@@ -157,23 +173,26 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
     specs = eng.pat.var_specs
     for i in plan.updates
         vid = vid_of[i]
-        if vid != 0
+        if vid > 0
             # segment markers keep the `ir[i]` placeholder — the parent's
             # arg loop splices `b.seq[vid]` directly and only materializes
             # on a head mismatch; a bare root is handled at the return.
             MData.isa_variant(specs[vid], VarSpec.Segment) ||
                 (out[i] = _bound_value(eng, vid))
             continue
+        elseif vid < 0
+            # param splice — resolve against the live params table
+            out[i] = _param_value(eng, plan.param_names[-vid])
+            continue
         end
         t = ir[i]
         nbs = Graphs.outneighbors(g, i)
         op = operation(t)
         argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
-        newop = op
-        if argstart == 2 && vid_of[nbs[1]] != 0
-            # a head bound via extras materializes as Const(op); unwrap
-            newop = unwrap_const(out[nbs[1]])
-        end
+        # `out[nbs[1]]` is the (possibly rebuilt) head — a param nested
+        # inside a computed op splices there even though the head node's
+        # own vid is 0; heads bound via extras materialize as Const(op).
+        newop = argstart == 2 ? unwrap_const(out[nbs[1]]) : op
         # +/* get free splicing + identity-Const elision from
         # add_worker/mul_worker; other heads need it explicit (g(g(x))
         # is not g(x)).
@@ -183,7 +202,7 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
         sizehint!(newargs, length(nbs) - argstart + 1)
         for j in argstart:length(nbs)
             c_vid = vid_of[nbs[j]]
-            if c_vid != 0 &&
+            if c_vid > 0 &&
                     MData.isa_variant(specs[c_vid], VarSpec.Segment)
                 if eng.binds.seg_op[c_vid] === newop
                     # same head — splice the captured arg list; the term
@@ -213,7 +232,7 @@ function _rhs_eval(plan::RhsPlan, eng::MatchEngine)
     end
     r = plan.root
     rv = vid_of[r]
-    if rv != 0 && MData.isa_variant(specs[rv], VarSpec.Segment)
+    if rv > 0 && MData.isa_variant(specs[rv], VarSpec.Segment)
         return _bound_value(eng, rv)
     end
     return out[r]
@@ -612,18 +631,18 @@ mutable struct RuleWorkspace
     persists across iterations; unused under `BucketIndex`)."
     net_cache::Dict{Tuple{Int32, Int32}, SmallV{Int32}}
     "Runtime values for `param` literals — swap via [`set_params!`](@ref)."
-    params::ParamDict
+    params::Union{Nothing, ParamDict}
 end
 
 function RuleWorkspace(
         rs::RuleSet;
-        maxsteps::Int = typemax(Int), params::AbstractDict{Symbol} = _NO_PARAMS
+        maxsteps::Int = typemax(Int), params::Union{AbstractDict{Symbol}, Nothing} = nothing
     )
     return RuleWorkspace(
         rs, maxsteps, IRStructure{SymReal}(),
         Union{Nothing, MatchEngine}[nothing for _ in rs.rules],
         SmallV{Int32}(), Dict{Tuple{Int32, Int32}, SmallV{Int32}}(),
-        params === _NO_PARAMS ? ParamDict() : _as_paramdict(params)
+        params === nothing ? nothing : _as_paramdict(params)
     )
 end
 
@@ -641,7 +660,8 @@ set_rhs!(ws::RuleWorkspace, i::Integer, rhs) =
 Replace `ws`'s `param` value table — engines observe it from the next
 site, so swap between passes. A `Dict{Symbol, BasicSymbolic{SymReal}}`
 is stored live (mutations are observed); other dictionaries are
-converted. Returns `ws`.
+converted. Mutating the table while a search is suspended is undefined
+behavior (see [`param`](@ref)). Returns `ws`.
 """
 function set_params!(ws::RuleWorkspace, params::AbstractDict{Symbol})
     ws.params = _as_paramdict(params)
@@ -973,6 +993,29 @@ function fixpoint_rewrite(
     return x
 end
 
+# Mark each selected root and its descendants together so the visited
+# mask can skip whole subtrees — and schedule the still-unevaled nodes
+# for the next sweep, children before parents.
+function _live_walk!(
+        live::BitVector, stale::BitSet, reach::Vector{Int32},
+        out::Vector{BasicSymbolic{SymReal}}, evaled::BitVector,
+        subj::IRStructure{SymReal}, i::Integer
+    )
+    resize!(live, length(subj))
+    resize!(evaled, length(subj))
+    resize!(out, length(subj))
+    empty!(reach)
+    SymbolicUtils.get_reachability!(reach, subj, Int32(i); visited = live)
+    for j in reach
+        evaled[j] && continue
+        out[j] = subj[j]
+        push!(stale, j)
+    end
+    # `get_reachability!` marks `i` visited but doesn't yield it
+    evaled[i] || (out[i] = subj[i]; push!(stale, i))
+    return nothing
+end
+
 # §7 incremental fixpoint: `out[i]` persists the latest rewrite result
 # of node `i` across iterations — `out[i]` *is* `rewrite(subj[i])`, so
 # the iterate chain `x ↦ out[node(x)]` advances by reading; evaluation
@@ -995,18 +1038,19 @@ function _fixpoint_post(
         out[i] = subj[i]
     end
     evaled = falses(n)
-    # live = nodes of the current expression and terms reached while
-    # rewriting it — stale nodes left in `subj` by earlier passes are
-    # never evaluated (a changed `params` table would misrule them).
-    # `get_reachability!`'s visited mask doubles as the live set.
+    # live = nodes of the current expression and terms reached by the
+    # rewrite chain — stale nodes left in `subj` by earlier passes and
+    # discarded intermediates interned by dispatch lookups are never
+    # evaluated. `live` doubles as `get_reachability!`'s visited mask;
+    # `reach` is the shared scratch for its postorder (which excludes
+    # `sroot` itself — pushed explicitly).
     live = falses(n)
-    dirty = get_reachability!(Int32[], subj, sroot; visited = live)
+    reach = Int32[]
+    dirty = SymbolicUtils.get_reachability!(reach, subj, sroot; visited = live)
     push!(dirty, sroot)
     modified = Int32[]
     stale = BitSet()
-    reach = Int32[]
     seen = Base.IdSet{BasicSymbolic{SymReal}}()
-    n_known = n
     steps = 0
     while steps < maxiterations
         # — eval phase: re-derive `out` for dirty nodes, ascending —
@@ -1035,18 +1079,6 @@ function _fixpoint_post(
         # — chain phase: follow `x ↦ out[node(x)]` while `out` is fresh —
         empty!(dirty)
         while true
-            if n_known < length(subj)   # grow for newly interned nodes
-                resize!(out, length(subj))
-                resize!(evaled, length(subj))
-                resize!(live, length(subj))
-                sizehint!(stale, length(subj))
-                for i in (n_known + 1):Int32(length(subj))
-                    out[i] = subj[i]
-                    push!(stale, i)
-                    live[i] = true
-                end
-                n_known = Int32(length(subj))
-            end
             (evaled[sroot] && sroot ∉ stale) || break
             res = out[sroot]
             res in seen && return res
@@ -1055,18 +1087,15 @@ function _fixpoint_post(
             steps += 1
             steps >= maxiterations && return res
             sroot = populate_ir!(subj, res)
-            resize!(live, length(subj))
-            empty!(reach)
-            get_reachability!(reach, subj, sroot; visited = live)
+            # `res`'s subtree may predate this pass — hashconsed nodes
+            # from earlier expressions are live now but never evaled
+            # under these params; schedule the unevaled ones so their
+            # rules fire before their parents are visited.
+            _live_walk!(live, stale, reach, out, evaled, subj, sroot)
         end
-        # next sweep: stale ∪ halted chain head ∪ new nodes — `stale` is
-        # a BitSet, so appending it yields `dirty` sorted + deduped
-        sroot <= n_known && push!(stale, sroot)
-        resize!(live, length(subj))
-        for i in (n_known + 1):length(subj)
-            live[i] = true
-            push!(stale, i)
-        end
+        # next sweep: stale ∪ halted chain head — `stale` is a BitSet,
+        # so appending it yields `dirty` sorted + deduped
+        push!(stale, sroot)
         append!(dirty, stale)
     end
     return out[sroot]

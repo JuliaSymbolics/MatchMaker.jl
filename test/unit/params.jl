@@ -167,11 +167,133 @@ end
     d = ParamDict(:t => x)
     ws = RuleWorkspace(RuleSet(rules); params = d)
     @test ws.params === d
+
+    # descendants of a rewrite result interned by an earlier pass are
+    # still evaluated — `x => sin(y)`, `y => z` must reach `sin(z)`
+    rules = CompiledRule[mmrule(x => sin(y)), mmrule(y => z)]
+    for idx in (BucketIndex, DiscrimNet)
+        ws = RuleWorkspace(RuleSet(rules, idx))
+        @test isequal(rewrite(ws, sin(y)), sin(z))
+        @test isequal(fixpoint_rewrite(ws, x), sin(z))
+    end
 end
 
-@testset "param rhs guard" begin
-    # rhs splicing is a later phase — today it errors instead of
-    # emitting a literal `param` term into the output
-    @test_throws ArgumentError mmrule(slot(a) => param(t))
-    @test_throws ArgumentError mmrule(sin(param(t)) => param(t))
+@testset "param default table" begin
+    # no params table — `nothing` shares nothing across engines
+    eng = MatchEngine(compile_pattern(param(t)), x, Constraint[])
+    @test eng.params === nothing
+    @test_throws ArgumentError match(param(t), x)
+    ws = RuleWorkspace(RuleSet(CompiledRule[mmrule(x => z)]))
+    @test ws.params === nothing
+end
+
+@testset "param rhs" begin
+    # template splices resolve per pass — set_params! rebinds them
+    r = mmrule(slot(a) => param(t) + slot(a))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:t => y))
+    @test isequal(ws(x), x + y)
+    set_params!(ws, ParamDict(:t => z))
+    @test isequal(ws(x), x + z)
+
+    # bare param rhs and param spliced into a head
+    r = mmrule(slot(a) => param(u))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:u => z))
+    @test isequal(ws(x), z)
+    r = mmrule(slot(a) => param(f)(slot(a)))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:f => sin))
+    @test isequal(ws(x), sin(x))
+    set_params!(ws, ParamDict(:f => cos))
+    @test isequal(ws(x), cos(x))
+
+    # a callable rhs reads params off the view
+    r = mmrule(slot(a) => (v -> v[param(t)] + v[a]))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:t => y))
+    @test isequal(ws(x), x + y)
+
+    # an unset param errors at apply, not at compile
+    ws = RuleWorkspace(RuleSet(CompiledRule[mmrule(slot(a) => param(t))]))
+    @test_throws ArgumentError ws(x)
+
+    # a param under a segment-capable head in the rhs
+    r = mmrule(f(slot(a)) => h(slot(a), param(t)))
+    ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:t => z))
+    @test isequal(ws(f(x)), h(x, z))
+
+    # a param nested inside a *computed op* splices too — the head
+    # node's own vid is 0, so the rebuilt head must come from `out`
+    RetT = FnType{Tuple{Number}, Number, Nothing}
+    gg = Sym{SymReal}(:gg; type = FnType{Tuple{Number}, RetT, Nothing})
+    r = mmrule(slot(a) => term(gg(param(t)), slot(a)))
+    for idx in (MatchMaker.BucketIndex, MatchMaker.DiscrimNet)
+        ws = RuleWorkspace(RuleSet(CompiledRule[r], idx); params = ParamDict(:t => y))
+        @test isequal(ws(x), term(gg(y), x))
+        set_params!(ws, ParamDict(:t => z))
+        @test isequal(ws(x), term(gg(z), x))
+    end
+end
+
+@testset "param occurrence iterators" begin
+    # one live table can drive successive traversals — it is only
+    # mutating mid-enumeration that is undefined
+    subj = f(g(a) + g(b))
+    pat = g(param(t))
+    params = ParamDict(:t => a)
+    for mk in (matches_at, boundmatches_at)
+        got = collect(mk(pat, subj; params))
+        @test length(got) == 1 && isequal(got[1][2], g(a))
+        params[:t] = b
+        got = collect(mk(pat, subj; params))
+        @test length(got) == 1 && isequal(got[1][2], g(b))
+        params[:t] = a
+    end
+end
+
+@testset "param view membership" begin
+    # indexing and haskey agree: a callable rhs's membership guard sees
+    # the same configured parameters getindex resolves
+    seen = Ref(false)
+    eachmatch(param(t), b; params = ParamDict(:t => b)) do v
+        seen[] = true
+        @test haskey(v, param(t))
+        @test isequal(v[param(t)], b)
+        @test !haskey(v, param(u))
+        @test isempty(materialize(v))   # param binds no vars
+    end
+    @test seen[]
+end
+
+@testset "param fixpoint shared children" begin
+    # the warm-workspace fixpoint case driven by a runtime parameter:
+    # `param(u) => d` matches `c` through the table, and `c` was
+    # interned by an earlier `rewrite` call on the same workspace
+    @syms c d
+    rules = CompiledRule[mmrule(a => g(param(u))), mmrule(param(u) => d)]
+    for idx in (MatchMaker.BucketIndex, MatchMaker.DiscrimNet)
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:u => c))
+        rewrite(ws, c)
+        @test isequal(fixpoint_rewrite(ws, f(a)), f(g(d)))
+    end
+end
+
+@testset "param fixpoint discarded intermediates" begin
+    # `f(g(sin(b))) => e` fires at the `f(a)` site, so the interned
+    # `sin(b)` is part of a discarded intermediate — `sin(param(t))`
+    # must never be evaluated, even with no `:t` in the table
+    @syms d e
+    rules = CompiledRule[
+        mmrule(a => g(sin(b))),
+        mmrule(f(g(sin(b))) => e),
+        mmrule(sin(param(t)) => d),
+    ]
+    for idx in (MatchMaker.BucketIndex, MatchMaker.DiscrimNet)
+        # fresh workspace
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:t => b))
+        @test isequal(fixpoint_rewrite(ws, f(a)), e)
+        # warm: `sin(b)` interned under `:t => b`, then the table
+        # swapped out — the param rule must never run
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:t => b))
+        rewrite(ws, sin(b))
+        set_params!(ws, ParamDict())
+        @test isequal(fixpoint_rewrite(ws, f(a)), e)
+    end
 end

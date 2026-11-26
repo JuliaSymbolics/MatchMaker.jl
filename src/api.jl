@@ -17,6 +17,12 @@ A read-only view of a match's live engine bindings, resolved lazily.
 Valid only until the next `eachmatch`/`iterate` step mutates the
 bindings — copy with [`materialize`](@ref) to keep results. With the
 `strict_views` preference enabled, stale access throws.
+
+Besides pattern vars, `view[param(x)]` / `haskey(view, param(x))`
+resolve [`param`](@ref) markers against the engine's live params
+table — callables can read runtime parameters through the same
+interface as bindings. Mutating that table while a search is
+suspended is undefined behavior (see [`param`](@ref)).
 """
 struct SubstitutionView <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
     eng::MatchEngine
@@ -38,6 +44,8 @@ end
 
 Base.getindex(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
     _check_stale(v)
+    is_param_term(k) &&
+        return _param_value(v.eng, nameof(_marker_inner(k)))
     ks = unwrap_varspec(k)
     vid = v.eng.pat.var_of[ks]
     _var_bound(v.eng, vid) || throw(KeyError(ks))
@@ -45,6 +53,10 @@ Base.getindex(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
 end
 Base.haskey(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
     _check_stale(v)
+    if is_param_term(k)
+        p = v.eng.params
+        return p !== nothing && haskey(p, nameof(_marker_inner(k)))
+    end
     ks = unwrap_varspec(k)
     haskey(v.eng.pat.var_of, ks) || return false
     return _var_bound(v.eng, v.eng.pat.var_of[ks])
@@ -227,7 +239,7 @@ or `nothing`. `constraints` is a collection of [`Constraint`](@ref)s;
 function match(
         m::Matcher, s::BasicSymbolic{SymReal};
         constraints = Constraint[], maxsteps::Int = typemax(Int),
-        params::AbstractDict{Symbol} = _NO_PARAMS
+        params::Union{AbstractDict{Symbol}, Nothing} = nothing
     )
     eng = MatchEngine(m, s, constraints; maxsteps, params)
     next_match!(eng) || return nothing
@@ -242,12 +254,14 @@ match(
 
 Lazy iterator of all matches of `m` against `s`; each item is a
 [`MarkersMap`](@ref). `maxsteps` bounds total search steps — the iterator
-ends when the budget is exhausted (a truncated result set).
+ends when the budget is exhausted (a truncated result set). Mutating
+`params` between `iterate` steps is undefined behavior (see
+[`param`](@ref)).
 """
 matches(
     m::Matcher, s::BasicSymbolic{SymReal};
     constraints = Constraint[], maxsteps::Int = typemax(Int),
-    params::AbstractDict{Symbol} = _NO_PARAMS
+    params::Union{AbstractDict{Symbol}, Nothing} = nothing
 ) = MatchIterator(MatchEngine(m, s, constraints; maxsteps, params))
 matches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     matches(compile_pattern(p), s; kwargs...)
@@ -267,12 +281,13 @@ but each item is a [`BoundMatch`](@ref): a persistent snapshot of the
 index-only binding state that reconstructs segment terms on access.
 Far cheaper per result than materializing a [`MarkersMap`](@ref) —
 use it when collecting many results, or when the consumer reads only
-a few bound values per match.
+a few bound values per match. Mutating `params` between `iterate`
+steps is undefined behavior (see [`param`](@ref)).
 """
 boundmatches(
     m::Matcher, s::BasicSymbolic{SymReal};
     constraints = Constraint[], maxsteps::Int = typemax(Int),
-    params::AbstractDict{Symbol} = _NO_PARAMS
+    params::Union{AbstractDict{Symbol}, Nothing} = nothing
 ) = BoundMatchIterator(MatchEngine(m, s, constraints; maxsteps, params))
 boundmatches(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     boundmatches(compile_pattern(p), s; kwargs...)
@@ -293,11 +308,12 @@ boundmatchall(m, s; kwargs...) = collect(boundmatches(m, s; kwargs...))
 Call `f(::SubstitutionView)` on each successive match of `m` against `s`;
 stop when `f` returns `false`. The zero-allocation hot path (§5.6): the
 view is only valid inside `f` — copy with `materialize` to keep results.
+Mutating `params` inside `f` is undefined behavior (see [`param`](@ref)).
 """
 function eachmatch(
         f::F, m::Matcher, s::BasicSymbolic{SymReal};
         constraints = Constraint[], maxsteps::Int = typemax(Int),
-        params::AbstractDict{Symbol} = _NO_PARAMS
+        params::Union{AbstractDict{Symbol}, Nothing} = nothing
     ) where {F}
     eng = MatchEngine(m, s, constraints; maxsteps, params)
     while next_match!(eng)
@@ -361,11 +377,13 @@ end
 Lazy `(BoundMatch, t)` pairs for each match of `m` at each node of
 `s` — occurrence search in the [`boundmatches`](@ref) idiom. Sites
 deduplicated by `===`-identity; postorder (bottom-up) traversal.
+Keep the `params` table unchanged between `iterate` steps (see
+[`param`](@ref)).
 """
 boundmatches_at(
     m::Matcher, s::BasicSymbolic{SymReal};
     constraints = Constraint[], maxsteps::Int = typemax(Int),
-    params::AbstractDict{Symbol} = _NO_PARAMS
+    params::Union{AbstractDict{Symbol}, Nothing} = nothing
 ) = BoundMatchAtIterator(MatchEngine(m, s, constraints; maxsteps, params))
 boundmatches_at(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...) =
     boundmatches_at(compile_pattern(p), s; kwargs...)
@@ -375,6 +393,8 @@ boundmatches_at(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...)
 
 Lazy `(MarkersMap, t)` pairs for each match of `m` at each node of
 `s` — the materializing variant of [`boundmatches_at`](@ref).
+Keep the `params` table unchanged between `iterate` steps (see
+[`param`](@ref)).
 """
 matches_at(m::Matcher, s::BasicSymbolic{SymReal}; kwargs...) =
     Iterators.map(t -> (materialize(t[1]), t[2]), boundmatches_at(m, s; kwargs...))
