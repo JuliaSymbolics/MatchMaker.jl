@@ -74,6 +74,8 @@ function _step_ac!(
     (op, head, nassign) = @match plan begin
         NodePlan.ACCall(; op, head, fixed, slots, optionals, segments) =>
             (op, head, length(fixed) + length(slots))
+        NodePlan.ParamCall(; op, head, fixed, slots) =>
+            (_resolved_call_op(eng, op), head, length(fixed) + length(slots))
         _ => error(lazy"AC frame got a non-ACCall plan at node $pat_node")
     end
     # fresh frames take their trail mark before any obligation runs —

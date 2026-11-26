@@ -299,6 +299,10 @@ function _root_arity(pat::Matcher, plan::NodePlanT)
             _ac_arity(pat, fixed, slots, optionals, segments)
         NodePlan.ACCall(; fixed, slots, optionals, segments) =>
             _ac_arity(pat, fixed, slots, optionals, segments)
+        # param head — the resolved op's frame isn't known until
+        # runtime; the AC-style bounds cover every frame kind
+        NodePlan.ParamCall(; fixed, slots, optionals, segments) =>
+            _ac_arity(pat, fixed, slots, optionals, segments)
         _ => (0, typemax(Int))
     end
 end
@@ -337,6 +341,7 @@ _root_op_head(plan::NodePlanT) = @match plan begin
     NodePlan.SeqCall(; op, head) => (op, head)
     NodePlan.CommCall(; op, head) => (op, head)
     NodePlan.ACCall(; op, head) => (op, head)
+    NodePlan.ParamCall(; op, head) => (op, head)
     _ => (nothing, zero(Int32))
 end
 
@@ -362,7 +367,7 @@ function _build_index(rules::Vector{CompiledRule})
             continue
         end
         (op, head) = _root_op_head(plan)
-        if head != 0 && is_marker_term(op)
+        if head != 0 && (is_marker_term(op) || is_param_term(op))
             # slot-headed call — matches any op
             push!(idx.any_head, id)
         else
@@ -502,6 +507,8 @@ function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
             _net_defer!(net, σ, pat, plan, op, head)
         NodePlan.ACCall(; op, head) =>
             _net_defer!(net, σ, pat, plan, op, head)
+        NodePlan.ParamCall(; head) =>
+            _net_defer!(net, σ, pat, plan, nothing, head)
         NodePlan.Segment() =>
             error("unreachable: segment obligation reached the discrim net")
     end

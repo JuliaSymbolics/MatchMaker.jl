@@ -555,6 +555,42 @@ function _acquire_frame!(
             eng.pool, ACFrame, pat_node, subj_node,
             fixed, slots, optionals, segments
         )
+        NodePlan.ParamCall(; op, children, fixed, slots, optionals, segments) => begin
+            rop = _resolved_call_op(eng, op)
+            ST = symtype(eng.pat.ir[pat_node])
+            if _is_ac_head(rop, ST)
+                pool_acquire!(
+                    eng.pool, ACFrame, pat_node, subj_node,
+                    fixed, slots, optionals, segments
+                )
+            else
+                assoc = _is_associative_head(rop, ST)
+                isempty(optionals) || assoc || throw(
+                    ArgumentError(
+                        lazy"optional occurrence requires the resolved op to be AC/associative, got $rop"
+                    )
+                )
+                if _is_commutative_head(rop, ST)
+                    pool_acquire!(
+                        eng.pool, CommFrame, pat_node, subj_node,
+                        fixed, slots, optionals, segments
+                    )
+                elseif assoc || any(
+                        c -> MData.isa_variant(
+                            eng.pat.plans[c], NodePlan.Segment
+                        ),
+                        children
+                    )
+                    pool_acquire!(
+                        eng.pool, SeqFrame, pat_node, subj_node, length(children)
+                    )
+                else
+                    pool_acquire!(
+                        eng.pool, CallFrame, pat_node, subj_node, length(children)
+                    )
+                end
+            end
+        end
         _ => error(
             lazy"pattern node $pat_node has an unsupported plan for this milestone"
         )
@@ -693,6 +729,13 @@ function _param_value(eng::MatchEngine, name::Symbol)
     return v
 end
 
+# A ParamCall plan's `op` field is the `param(f)` marker term — the
+# stepping paths need the resolved op (frame selection, op equality,
+# `seg_op` binds all key on it).
+function _resolved_call_op(eng::MatchEngine, @nospecialize(op))
+    return unwrap_const(_param_value(eng, nameof(_marker_inner(op))))
+end
+
 # Apply the leaf plan at `pnode` against subject node `snode`.
 # Returns whether the obligation succeeded; any binding is trail-recorded.
 function _leaf_obligation!(eng::MatchEngine, pnode::Int32, snode::Int32)
@@ -807,6 +850,8 @@ function _step_call!(
     plan = eng.pat.plans[pat_node]
     (op, head, children) = @match plan begin
         NodePlan.Call(; op, head, children) => (op, head, children)
+        NodePlan.ParamCall(; op, head, children) =>
+            (_resolved_call_op(eng, op), head, children)
         _ => error(lazy"Call frame got a non-Call plan at node $pat_node")
     end
     snbs = Graphs.outneighbors(eng.subj.dependency_graph, subj_node)
@@ -916,6 +961,8 @@ function _head_obligation!(eng::MatchEngine, head::Int32, @nospecialize(sop))
     end
     return @match eng.pat.plans[head] begin
         NodePlan.Slot(; var_id) => _slot_bind_op!(eng, var_id, sop)
+        NodePlan.Param(; name) =>
+            isequal(unwrap_const(_param_value(eng, name)), sop)
         _ => false
     end
 end

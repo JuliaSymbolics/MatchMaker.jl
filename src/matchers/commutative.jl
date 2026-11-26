@@ -279,6 +279,7 @@ function _step_comm!(
     plan = eng.pat.plans[pat_node]
     (op, head) = @match plan begin
         NodePlan.CommCall(; op, head) => (op, head)
+        NodePlan.ParamCall(; op, head) => (_resolved_call_op(eng, op), head)
         _ => error(lazy"Comm frame got a non-CommCall plan at node $pat_node")
     end
     snbs = Graphs.outneighbors(eng.subj.dependency_graph, subj_node)

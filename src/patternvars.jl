@@ -45,9 +45,10 @@ into the compiled pattern. Not a pattern variable — binds nothing. See
 A table of type `Dict{Symbol, BasicSymbolic{SymReal}}` is used live —
 other dictionaries are converted once. `param` markers may also appear
 in a rule's rhs template, where they splice the resolved value (a
-callable rhs reads them via `view[param(x)]`). `param` cannot head a
-*pattern* call (`param(f)(x)`) — that needs runtime op dispatch, not
-yet supported.
+callable rhs reads them via `view[param(x)]`). A `param` marker may
+also *head* a pattern call — `param(f)(x)` — where the resolved op's
+traits pick the match semantics at runtime (free, associative,
+commutative, or AC), so one pattern covers heads of different kinds.
 
 Mutating a live table while a search is suspended — inside an
 `eachmatch` callback, a callable rhs, or between `iterate` steps of

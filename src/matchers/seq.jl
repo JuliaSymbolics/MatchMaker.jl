@@ -349,6 +349,8 @@ function _step_seq!(
     plan = eng.pat.plans[pat_node]
     (op, head, children) = @match plan begin
         NodePlan.SeqCall(; op, head, children) => (op, head, children)
+        NodePlan.ParamCall(; op, head, children) =>
+            (_resolved_call_op(eng, op), head, children)
         _ => error(lazy"Seq frame got a non-SeqCall plan at node $pat_node")
     end
     n = length(children)

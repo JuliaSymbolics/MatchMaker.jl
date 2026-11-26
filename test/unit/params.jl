@@ -47,10 +47,27 @@ end
     bad = BSImpl.Term{SymReal}(param, ArgsT{SymReal}((x + y,)); type = Number)
     @test_throws ArgumentError compile_pattern(bad)
 
-    # param heads rejected — the resolved op's traits pick the frame at
-    # runtime, so compile can't select a plan for `param(f)(…)`
-    @test_throws ArgumentError compile_pattern(term(param(f), x))
-    @test_throws ArgumentError mmrule(term(param(f), x) => x)
+    # param-headed calls compile to ParamCall — both the positional
+    # child list and the classified groups, for runtime frame selection
+    pv = Sym{SymReal}(:op; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    m = compile_pattern(term(param(pv), slot(x), segment(t)))
+    @test !m.is_ground[m.root]
+    @match m.plans[m.root] begin
+        NodePlan.ParamCall(; op, head, children, fixed, slots, optionals, segments) => begin
+            @test is_param_term(op)
+            @test head != 0
+            @test length(children) == 2
+            @test isempty(fixed) && isempty(optionals)
+            @test length(slots) == 1 && length(segments) == 1
+        end
+        _ => @test false
+    end
+    # the head node itself is a Param leaf — `_head_obligation!`
+    # resolves it against the params table
+    @match m.plans[m.plans[m.root].head] begin
+        NodePlan.Param(name) => @test name === :op
+        _ => @test false
+    end
 end
 
 @testset "param match" begin
@@ -295,5 +312,54 @@ end
         rewrite(ws, sin(b))
         set_params!(ws, ParamDict())
         @test isequal(fixpoint_rewrite(ws, f(a)), e)
+    end
+end
+
+@testset "param heads" begin
+    # `param(op)(…)` — the resolved op's traits pick the frame at
+    # runtime: free → Call, segments/associative → Seq, commutative →
+    # Comm, AC → AC. The head obligation resolves against the params
+    # table like any param leaf.
+    pv = Sym{SymReal}(:op; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    hv = Sym{SymReal}(:hv; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    @syms c
+
+    for idx in (MatchMaker.BucketIndex, MatchMaker.DiscrimNet)
+        rules = CompiledRule[mmrule(term(param(pv), slot(x), slot(y)) => x)]
+        ws = RuleWorkspace(
+            RuleSet(rules, idx); params = ParamDict(:op => hv)
+        )
+
+        # free op → Call frame: positional slots, exact arity
+        ms = match(rules[1].pat, hv(a, b); params = ws.params)
+        @test isequal(ms[x], a) && isequal(ms[y], b)
+        @test match(rules[1].pat, hv(a); params = ws.params) === nothing
+        @test match(rules[1].pat, a + b; params = ws.params) === nothing
+
+        # AC op → AC frame: unordered slots, wrong-op subject rejected
+        set_params!(ws, ParamDict(:op => (+)))
+        ms = match(rules[1].pat, a + b; params = ws.params)
+        @test (isequal(ms[x], a) && isequal(ms[y], b)) ||
+            (isequal(ms[x], b) && isequal(ms[y], a))
+        @test match(rules[1].pat, a * b; params = ws.params) === nothing
+        @test match(rules[1].pat, a + b + c; params = ws.params) === nothing
+
+        rules2 = CompiledRule[mmrule(term(param(pv), a, segment(u)) => x)]
+
+        # AC op: the segment binds under the subject's op
+        set_params!(ws, ParamDict(:op => (+)))
+        ms = match(rules2[1].pat, a + b + c; params = ws.params)
+        @test isequal(ms[u], b + c)
+        @test match(rules2[1].pat, b + c; params = ws.params) === nothing
+
+        # free op → Seq frame: `u` rebuilds under `hv`, the subject's
+        # op — not the `param` placeholder
+        set_params!(ws, ParamDict(:op => hv))
+        ms = match(rules2[1].pat, hv(a, b, c); params = ws.params)
+        @test isequal(ms[u], hv(b, c))
+        @test match(rules2[1].pat, hv(b, c); params = ws.params) === nothing
+
+        # unset param is a usage error at the head too
+        @test_throws ArgumentError match(rules2[1].pat, hv(a, b))
     end
 end
