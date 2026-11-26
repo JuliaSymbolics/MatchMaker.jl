@@ -232,6 +232,22 @@ end
     end
 end
 
+@testset "param occurrence iterators" begin
+    # one live table can drive successive traversals — it is only
+    # mutating mid-enumeration that is undefined
+    subj = f(g(a) + g(b))
+    pat = g(param(t))
+    params = ParamDict(:t => a)
+    for mk in (matches_at, boundmatches_at)
+        got = collect(mk(pat, subj; params))
+        @test length(got) == 1 && isequal(got[1][2], g(a))
+        params[:t] = b
+        got = collect(mk(pat, subj; params))
+        @test length(got) == 1 && isequal(got[1][2], g(b))
+        params[:t] = a
+    end
+end
+
 @testset "param view membership" begin
     # indexing and haskey agree: a callable rhs's membership guard sees
     # the same configured parameters getindex resolves

@@ -51,8 +51,9 @@ yet supported.
 
 Mutating a live table while a search is suspended — inside an
 `eachmatch` callback, a callable rhs, or between `iterate` steps of
-[`matches`](@ref)/[`boundmatches`](@ref) — is undefined behavior:
-param reads and the captured search state can disagree.
+[`matches`](@ref)/[`boundmatches`](@ref)/
+[`boundmatches_at`](@ref)/[`matches_at`](@ref) — is undefined
+behavior: param reads and the captured search state can disagree.
 """
 function param end
 

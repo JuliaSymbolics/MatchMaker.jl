@@ -377,6 +377,8 @@ end
 Lazy `(BoundMatch, t)` pairs for each match of `m` at each node of
 `s` — occurrence search in the [`boundmatches`](@ref) idiom. Sites
 deduplicated by `===`-identity; postorder (bottom-up) traversal.
+Keep the `params` table unchanged between `iterate` steps (see
+[`param`](@ref)).
 """
 boundmatches_at(
     m::Matcher, s::BasicSymbolic{SymReal};
@@ -391,6 +393,8 @@ boundmatches_at(p::BasicSymbolic{SymReal}, s::BasicSymbolic{SymReal}; kwargs...)
 
 Lazy `(MarkersMap, t)` pairs for each match of `m` at each node of
 `s` — the materializing variant of [`boundmatches_at`](@ref).
+Keep the `params` table unchanged between `iterate` steps (see
+[`param`](@ref)).
 """
 matches_at(m::Matcher, s::BasicSymbolic{SymReal}; kwargs...) =
     Iterators.map(t -> (materialize(t[1]), t[2]), boundmatches_at(m, s; kwargs...))
