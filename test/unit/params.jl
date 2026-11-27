@@ -428,3 +428,27 @@ end
         @test ws(ov(a + c, y)) === nothing   # `ov`'s second child is literal
     end
 end
+
+@testset "param instantiate" begin
+    # `instantiate` splices params from the `params` kwarg — same
+    # resolution semantics as an rhs template, but table lookups are
+    # one-shot, not live
+    m = MarkersMap(x => y)
+    @test isequal(instantiate(f(param(t)), m; params = ParamDict(:t => z)), f(z))
+    @test isequal(instantiate(param(t), m; params = ParamDict(:t => z)), z)
+    @test_throws ArgumentError instantiate(f(param(t)), m)
+    @test_throws ArgumentError instantiate(f(param(t)), m; params = ParamDict())
+
+    # param head splice: `param(pv)(x)` rebuilds under the resolved op
+    pv = Sym{SymReal}(:op; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    @test isequal(
+        instantiate(
+            term(param(pv), slot(x)), m; params = ParamDict(:op => sin)
+        ),
+        sin(y)
+    )
+    # a non-ParamDict table converts once
+    @test isequal(
+        instantiate(f(param(t)), m; params = Dict(:t => z)), f(z)
+    )
+end
