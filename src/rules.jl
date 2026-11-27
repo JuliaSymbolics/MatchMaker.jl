@@ -299,10 +299,6 @@ function _root_arity(pat::Matcher, plan::NodePlanT)
             _ac_arity(pat, fixed, slots, optionals, segments)
         NodePlan.ACCall(; fixed, slots, optionals, segments) =>
             _ac_arity(pat, fixed, slots, optionals, segments)
-        # param head — the resolved op's frame isn't known until
-        # runtime; the AC-style bounds cover every frame kind
-        NodePlan.ParamCall(; fixed, slots, optionals, segments) =>
-            _ac_arity(pat, fixed, slots, optionals, segments)
         _ => (0, typemax(Int))
     end
 end
@@ -507,8 +503,15 @@ function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
             _net_defer!(net, σ, pat, plan, op, head)
         NodePlan.ACCall(; op, head) =>
             _net_defer!(net, σ, pat, plan, op, head)
-        NodePlan.ParamCall(; head) =>
-            _net_defer!(net, σ, pat, plan, nothing, head)
+        NodePlan.ParamCall() => begin
+            # the resolved op's traits (and identity coercion /
+            # flattening) are runtime decisions — the net can't
+            # filter, so consume one subject node and defer to the
+            # engine, like a slot
+            st = net.states[σ]
+            st.wild == 0 && (st.wild = _net_new!(net))
+            st.wild
+        end
         NodePlan.Segment() =>
             error("unreachable: segment obligation reached the discrim net")
     end
@@ -788,9 +791,11 @@ function _engine_for!(ws::RuleWorkspace, id::Int32, sroot::Int32)
         )
         ws.engines[id] = eng
     else
+        # resync before reset: `_init_root!` may resolve param-headed
+        # plans against the params table
+        eng.params = ws.params
         reset!(eng, ws.subj, sroot)
         eng.maxsteps = ws.maxsteps
-        eng.params = ws.params
     end
     return eng
 end

@@ -223,7 +223,7 @@ end
     @test isequal(ws(x), cos(x))
 
     # a callable rhs reads params off the view
-    r = mmrule(slot(a) => (v -> v[param(t)] + v[a]))
+    r = mmrule(slot(a) => (v -> getparam(v, :t) + v[a]))
     ws = RuleWorkspace(RuleSet(CompiledRule[r]); params = ParamDict(:t => y))
     @test isequal(ws(x), x + y)
 
@@ -265,16 +265,19 @@ end
     end
 end
 
-@testset "param view membership" begin
-    # indexing and haskey agree: a callable rhs's membership guard sees
-    # the same configured parameters getindex resolves
+@testset "param view accessor" begin
+    # the dictionary surface describes only bindings — params live
+    # outside it and are read through `getparam`
     seen = Ref(false)
     eachmatch(param(t), b; params = ParamDict(:t => b)) do v
         seen[] = true
-        @test haskey(v, param(t))
-        @test isequal(v[param(t)], b)
-        @test !haskey(v, param(u))
+        @test isequal(getparam(v, :t), b)
+        @test !haskey(v, param(t))
+        @test_throws KeyError v[param(t)]
+        @test isempty(keys(v))
+        @test length(v) == 0
         @test isempty(materialize(v))   # param binds no vars
+        @test_throws ArgumentError getparam(v, :u)
     end
     @test seen[]
 end
@@ -361,5 +364,67 @@ end
 
         # unset param is a usage error at the head too
         @test_throws ArgumentError match(rules2[1].pat, hv(a, b))
+
+        # rebinding re-picks the frame: warm under `+` (unordered),
+        # then swap to the free `hv` — positional semantics apply
+        rules3 = CompiledRule[mmrule(term(param(pv), a, b) => x)]
+        ws3 = RuleWorkspace(
+            RuleSet(rules3, idx); params = ParamDict(:op => (+))
+        )
+        @test isequal(ws3(b + a), x)   # comm: operand order is free
+        set_params!(ws3, ParamDict(:op => hv))
+        @test ws3(hv(b, a)) === nothing   # free: order is fixed
+        @test isequal(ws3(hv(a, b)), x)
+        # an unset param errors at apply; restoring the table restores
+        # matching on the same cached engine
+        set_params!(ws3, ParamDict())
+        @test_throws ArgumentError ws3(hv(a, b))
+        set_params!(ws3, ParamDict(:op => hv))
+        @test isequal(ws3(hv(a, b)), x)
+    end
+end
+
+@testset "param head index coercion" begin
+    # index filtering can't see the resolved op, so it must not
+    # reject subjects whose arity/shape only the engine's coercion
+    # and flattening rules can decide
+    pv = Sym{SymReal}(:op; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    assoc = Sym{SymReal}(:assoc; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    assoc = set_operation_traits(assoc; associative = true)
+    ov = Sym{SymReal}(:ov; type = FnType{Tuple{Vararg{Number}}, Number, Nothing})
+    @syms c d
+
+    for idx in (MatchMaker.BucketIndex, MatchMaker.DiscrimNet)
+        # identity coercion: bare `a` coerces to `+(a)` under an AC
+        # head — the optional slot takes its default
+        rules = CompiledRule[
+            mmrule(
+                term(param(pv), optional(x), a) => d;
+                vars = Dict(x => slotspec(nothing; default = 0)),
+            ),
+        ]
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:op => (+)))
+        @test isequal(ws(a), d)
+        @test isequal(ws(a + b), d)
+
+        # assoc flattening: raw arity 2, flattened arity 3
+        rules = CompiledRule[
+            mmrule(term(param(pv), slot(x), slot(y), slot(z)) => d),
+        ]
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:op => assoc))
+        @test isequal(ws(assoc(a, assoc(b, c))), d)
+        @test ws(assoc(a, b)) === nothing
+        set_params!(ws, ParamDict(:op => (+)))
+        @test isequal(ws(a + (b + c)), d)   # + nests the same way
+
+        # param head nested inside a positional call — the net must
+        # still reach it through the wild transition
+        rules = CompiledRule[
+            mmrule(term(ov, term(param(pv), slot(x), slot(y)), b) => d),
+        ]
+        ws = RuleWorkspace(RuleSet(rules, idx); params = ParamDict(:op => (+)))
+        @test isequal(ws(ov(a + c, b)), d)
+        @test ws(ov(a * c, b)) === nothing   # coerces to +(a*c): 1 arg ≠ 2 slots
+        @test ws(ov(a + c, y)) === nothing   # `ov`'s second child is literal
     end
 end
