@@ -132,8 +132,5 @@ Deferred positions:
 - **Params in `VarSpec`s.** `slotspec(default = param(t))` — an
   optional slot binding a runtime value — and param-driven segment
   bounds are plausible but unimplemented.
-- **`instantiate` splicing.** `instantiate` walks its own template —
-  extend `param` resolution to it (rhs templates and
-  `SubstitutionView` access already resolve params).
 
 ## Tests

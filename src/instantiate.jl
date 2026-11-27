@@ -9,6 +9,8 @@ Rebuild `template`, replacing marker terms with their bound values from
 splice `arguments(bound)` into the parent's argument list (a `Const`
 segment binding contributes zero arguments); a head marker
 (`slot(f)(…)`) substitutes the raw bound operation.
+[`param`](@ref) markers splice their resolved value from `params`
+(a `Dict{Symbol, …}` — used once, not kept live).
 
 # Extended help
 
@@ -17,7 +19,11 @@ no recursion. For templates without segment or head markers,
 `SymbolicUtils.IRSubstituter` gives the same result; `instantiate` is
 required for splicing and head substitution.
 """
-function instantiate(template::BasicSymbolic{SymReal}, subst)
+function instantiate(
+        template::BasicSymbolic{SymReal}, subst;
+        params::Union{AbstractDict{Symbol}, Nothing} = nothing
+    )
+    p = params === nothing ? nothing : _as_paramdict(params)
     ir = IRStructure{SymReal}()
     root = populate_ir!(ir, template)
     g = ir.dependency_graph
@@ -31,6 +37,17 @@ function instantiate(template::BasicSymbolic{SymReal}, subst)
             out[i] = subst[varsym(t)]
             continue
         end
+        if is_param_term(t)
+            name = nameof(_marker_inner(t))
+            v = p === nothing ? nothing : get(p, name, nothing)
+            v === nothing && throw(
+                ArgumentError(
+                    lazy"pattern param $name has no value — pass `params`"
+                )
+            )
+            out[i] = v
+            continue
+        end
         if !iscall(t)
             out[i] = t
             continue
@@ -39,9 +56,10 @@ function instantiate(template::BasicSymbolic{SymReal}, subst)
         op = operation(t)
         argstart = op isa BasicSymbolic{SymReal} ? 2 : 1
         newop = op
-        if argstart == 2 && is_marker_term(op)
+        if argstart == 2 && (is_marker_term(op) || is_param_term(op))
             bound = out[nbs[1]]
-            # a head bound via extras materializes as Const(op); unwrap
+            # a head bound via extras or params materializes as
+            # Const(op); unwrap
             newop = @match bound begin
                 BSImpl.Const(; val) => val
                 _ => bound
