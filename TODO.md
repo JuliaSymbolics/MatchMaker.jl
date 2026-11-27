@@ -132,13 +132,6 @@ Deferred positions:
 - **Params in `VarSpec`s.** `slotspec(default = param(t))` — an
   optional slot binding a runtime value — and param-driven segment
   bounds are plausible but unimplemented.
-- **Param heads.** `param(f)(x)` in a *pattern* is rejected at compile
-  — the resolved op's traits would pick the frame at runtime
-  (free/seq/comm/AC), segment captures must bind the subject's op (not
-  the placeholder), and `_domain_arity` must not arity-bound the
-  placeholder's `FnType`. A template rhs can use `ParamDict(:f => sin)`
-  to supply the operation — the table stores the function as a symbolic
-  constant and rhs evaluation unwraps it.
 - **`instantiate` splicing.** `instantiate` walks its own template —
   extend `param` resolution to it (rhs templates and
   `SubstitutionView` access already resolve params).

@@ -337,6 +337,7 @@ _root_op_head(plan::NodePlanT) = @match plan begin
     NodePlan.SeqCall(; op, head) => (op, head)
     NodePlan.CommCall(; op, head) => (op, head)
     NodePlan.ACCall(; op, head) => (op, head)
+    NodePlan.ParamCall(; op, head) => (op, head)
     _ => (nothing, zero(Int32))
 end
 
@@ -362,7 +363,7 @@ function _build_index(rules::Vector{CompiledRule})
             continue
         end
         (op, head) = _root_op_head(plan)
-        if head != 0 && is_marker_term(op)
+        if head != 0 && (is_marker_term(op) || is_param_term(op))
             # slot-headed call — matches any op
             push!(idx.any_head, id)
         else
@@ -502,6 +503,15 @@ function _net_insert!(net::DiscrimNet, pat::Matcher, i::Int32, σ::Int32)
             _net_defer!(net, σ, pat, plan, op, head)
         NodePlan.ACCall(; op, head) =>
             _net_defer!(net, σ, pat, plan, op, head)
+        NodePlan.ParamCall() => begin
+            # the resolved op's traits (and identity coercion /
+            # flattening) are runtime decisions — the net can't
+            # filter, so consume one subject node and defer to the
+            # engine, like a slot
+            st = net.states[σ]
+            st.wild == 0 && (st.wild = _net_new!(net))
+            st.wild
+        end
         NodePlan.Segment() =>
             error("unreachable: segment obligation reached the discrim net")
     end
@@ -781,9 +791,11 @@ function _engine_for!(ws::RuleWorkspace, id::Int32, sroot::Int32)
         )
         ws.engines[id] = eng
     else
+        # resync before reset: `_init_root!` may resolve param-headed
+        # plans against the params table
+        eng.params = ws.params
         reset!(eng, ws.subj, sroot)
         eng.maxsteps = ws.maxsteps
-        eng.params = ws.params
     end
     return eng
 end

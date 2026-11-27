@@ -35,6 +35,7 @@ _rw_ws = RuleWorkspace(RuleSet(CompiledRule[_rw]))
             (segmentspec, Tuple{}),
             (Base.getindex, Tuple{MarkersMap, _BS}),
             (Base.haskey, Tuple{MarkersMap, _BS}),
+            (getparam, Tuple{SubstitutionView, Symbol}),
             (set_operation_traits, Tuple{_BS}),
             (compile_pattern, Tuple{_BS}),
             (match, Tuple{_BS, _BS}),

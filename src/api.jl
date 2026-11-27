@@ -18,10 +18,10 @@ Valid only until the next `eachmatch`/`iterate` step mutates the
 bindings — copy with [`materialize`](@ref) to keep results. With the
 `strict_views` preference enabled, stale access throws.
 
-Besides pattern vars, `view[param(x)]` / `haskey(view, param(x))`
-resolve [`param`](@ref) markers against the engine's live params
-table — callables can read runtime parameters through the same
-interface as bindings. Mutating that table while a search is
+The dictionary surface describes only pattern-variable bindings —
+`keys`/`length`/`materialize` agree with `getindex`/`haskey`. Runtime
+[`param`](@ref) parameters live outside that namespace: read them via
+[`getparam`](@ref). Mutating the params table while a search is
 suspended is undefined behavior (see [`param`](@ref)).
 """
 struct SubstitutionView <: AbstractDict{BasicSymbolic{SymReal}, BasicSymbolic{SymReal}}
@@ -44,8 +44,6 @@ end
 
 Base.getindex(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
     _check_stale(v)
-    is_param_term(k) &&
-        return _param_value(v.eng, nameof(_marker_inner(k)))
     ks = unwrap_varspec(k)
     vid = v.eng.pat.var_of[ks]
     _var_bound(v.eng, vid) || throw(KeyError(ks))
@@ -53,14 +51,23 @@ Base.getindex(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
 end
 Base.haskey(v::SubstitutionView, k::BasicSymbolic{SymReal}) = begin
     _check_stale(v)
-    if is_param_term(k)
-        p = v.eng.params
-        return p !== nothing && haskey(p, nameof(_marker_inner(k)))
-    end
     ks = unwrap_varspec(k)
     haskey(v.eng.pat.var_of, ks) || return false
     return _var_bound(v.eng, v.eng.pat.var_of[ks])
 end
+
+"""
+    getparam(view::SubstitutionView, name::Symbol)
+
+Resolve runtime parameter `name` against the view's live params
+table — the callable-rhs counterpart of [`param`](@ref) marker terms
+in a template rhs. Throws `ArgumentError` when `name` has no value.
+"""
+getparam(v::SubstitutionView, name::Symbol) = begin
+    _check_stale(v)
+    _param_value(v.eng, name)
+end
+
 function Base.iterate(v::SubstitutionView, state = 1)
     _check_stale(v)
     nvars = v.eng.pat.nvars

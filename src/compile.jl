@@ -70,6 +70,18 @@ head-slots like `slot(f)(x)`).
         optionals::SmallV{Int32}
         segments::SmallV{Int32}
     end
+    # `param(f)(…)` — the resolved op's traits pick the frame at
+    # runtime (§4.10), so the plan carries both the positional child
+    # list (Call/Seq frames) and the classified groups (Comm/AC).
+    struct ParamCall
+        op::Any
+        head::Int32
+        children::SmallV{Int32}
+        fixed::SmallV{Int32}
+        slots::SmallV{Int32}
+        optionals::SmallV{Int32}
+        segments::SmallV{Int32}
+    end
 end
 
 # The `@data` ADT type (the module is `NodePlan`; its variants live inside).
@@ -220,6 +232,7 @@ function _plan_call!(
     nbs = Graphs.outneighbors(g, i)
 
     head = zero(Int32)
+    start = op isa BasicSymbolic{SymReal} ? 2 : 1
     if op isa BasicSymbolic{SymReal}
         # symbolic op prefixes outneighbors (IRStructure invariant)
         head = Int32(nbs[1])
@@ -230,12 +243,30 @@ function _plan_call!(
                 )
             )
         elseif is_param_term(op)
-            # the resolved op's traits pick the frame at runtime — a
-            # compile-time placeholder can't drive plan selection
-            throw(
-                ArgumentError(
-                    lazy"`param` markers cannot head a call (not yet supported): $op"
-                )
+            children = SmallV{Int32}()
+            fixed = SmallV{Int32}()
+            slots = SmallV{Int32}()
+            optionals = SmallV{Int32}()
+            segments = SmallV{Int32}()
+            for k in start:length(nbs)
+                c = Int32(nbs[k])
+                cex = ir[c]
+                if _is_segment_term(cex)
+                    push!(segments, c)
+                elseif _is_optional_term(cex)
+                    push!(optionals, c)
+                elseif _is_slot_term(cex)
+                    push!(slots, c)
+                else
+                    _check_bare!(cex, var_of)
+                    push!(fixed, c)
+                end
+                push!(children, c)
+                is_ground[i] &= is_ground[c]
+            end
+            is_ground[i] = false
+            return NodePlan.ParamCall(
+                op, head, children, fixed, slots, optionals, segments
             )
         else
             (issym(op) && haskey(var_of, op)) && throw(
@@ -251,7 +282,6 @@ function _plan_call!(
     assoc = ac || _is_associative_head(op, ST)
     comm = ac || _is_commutative_head(op, ST)
 
-    start = op isa BasicSymbolic{SymReal} ? 2 : 1
     if ac || comm
         fixed = SmallV{Int32}()
         slots = SmallV{Int32}()
